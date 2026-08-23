@@ -183,7 +183,7 @@ export default function ConsoleInstallModal({
         role="dialog"
         aria-modal="true"
         aria-label="Install game"
-        className="relative mx-auto w-[clamp(340px,40vw,480px)] overflow-hidden rounded-2xl border border-(--color-border)/30 bg-(--color-surface)/95 shadow-2xl shadow-black/60 backdrop-blur-2xl"
+        className="lf-surface relative mx-auto w-[clamp(340px,40vw,480px)] overflow-hidden rounded-2xl border border-(--color-border)/30 shadow-2xl shadow-black/60"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close X */}
@@ -296,7 +296,7 @@ function HintPill({ label, primary }: { label: string; primary?: boolean }) {
     <span className="inline-flex items-center gap-1.5 text-xs text-(--color-muted)/70">
       <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold leading-none ${
         primary
-          ? "bg-(--color-accent) text-white"
+          ? "bg-(--color-accent) text-(--color-accent-text)"
           : "bg-white/[0.09] text-white/60"
       }`}>
         {m[1]}

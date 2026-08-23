@@ -122,6 +122,12 @@ export function getImageLoadCacheSize(): number {
   return imageLoadCache.size;
 }
 
+export function invalidateImageLoadCacheForApp(appId: string): void {
+  for (const key of imageLoadCache.keys()) {
+    if (key.includes(appId)) imageLoadCache.delete(key);
+  }
+}
+
 function imgLog(...args: unknown[]) {
   if (DEBUG_IMG_CACHE) {
     console.log("[IMG]", ...args);

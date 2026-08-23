@@ -12,7 +12,7 @@
  * Check Update:
  *   HubcapDB-only (only provider with update-checking capability).
  *   Same function chain as StoreGameDetailsPage.handleCheckForUpdates:
- *     fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus → notifyProviderStatusWritten
+ *     fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus (saves to disk + notifies store)
  *
  * Steam Install:
  *   Only opens steam://install when getLauncherGamePrimaryAction returns "install"
@@ -28,7 +28,7 @@ import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import {
   getUpdateStatus,
-  notifyProviderStatusWritten,
+
 } from "../../services/providerStatusStore";
 import {
   fetchHubcapAppStatus,
@@ -43,6 +43,12 @@ import {
 import { installSteamApp } from "../../services/tauri";
 import { installTrackerService } from "../../services/installTrackingService";
 import { showError, showSuccess, showWarning } from "../../components/toast/GameToast";
+import {
+  DEBRID_INSTALL_ENABLED,
+  DEBRID_LIBRARY_ENABLED,
+  DEBUG_DEBRID_INSTALL,
+} from "../../features/debrid/debridFeatureFlag";
+import { pickInstallUriWithoutDialog } from "../../services/debridInstallChoice";
 
 const DEBUG_CONSOLE_ACTIONS = false;
 
@@ -52,6 +58,8 @@ export type ConsolePrimaryAction =
   | "update"
   | "check-update"
   | "up-to-date"
+  | "installing"
+  | "select-exe"
   | "blocked"
   | "unavailable";
 
@@ -193,6 +201,15 @@ export function getConsoleGameActionModel(game: LibraryGame): ConsoleGameActionM
     if (!updateStatus || updateStatus === "unknown" || updateStatus === "provider-unavailable" || updateStatus === "auth-required") {
       showCheckUpdateRow = true;
     }
+  } else if (baseAction === "installing") {
+    action = "installing";
+    enabled = false;
+    reason = "Installer is running";
+    showBlockedRow = true;
+    blockedRowReason = "Game is being installed";
+  } else if (baseAction === "select-exe") {
+    action = "select-exe";
+    enabled = true;
   } else if (baseAction === "missing-path") {
     action = "blocked";
     enabled = false;
@@ -248,6 +265,8 @@ export function getConsolePrimaryActionLabel(action: ConsolePrimaryAction): stri
     case "update": return "Update Available";
     case "check-update": return "Check Update";
     case "up-to-date": return "Up to Date";
+    case "installing": return "Installing";
+    case "select-exe": return "Select Executable";
     case "blocked": return "Play";
     case "unavailable": return "Play";
   }
@@ -260,6 +279,8 @@ export function getConsolePrimaryActionIcon(action: ConsolePrimaryAction): strin
     case "update": return "refresh";
     case "check-update": return "search";
     case "up-to-date": return "check";
+    case "installing": return "spinner";
+    case "select-exe": return "search";
     case "blocked": return "play";
     case "unavailable": return "play";
   }
@@ -325,7 +346,7 @@ async function resolveCachedSource(appId: string): Promise<PackageSource | null>
 /**
  * Check for updates via HubcapDB (the only provider with update-checking capability).
  * Same function chain as StoreGameDetailsPage.handleCheckForUpdates:
- *   fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus → notifyProviderStatusWritten
+ *   fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus (saves to disk + notifies store)
  */
 async function handleConsoleCheckUpdates(
   game: LibraryGame,
@@ -390,8 +411,6 @@ async function handleConsoleCheckUpdates(
         steamRoot: settings.steamRoot || undefined,
       },
     );
-
-    await notifyProviderStatusWritten(appId, providerId);
 
     if (DEBUG_CONSOLE_ACTIONS) {
       console.log(
@@ -469,6 +488,47 @@ export async function handleConsolePrimaryAction(
       }
 
       case "install": {
+        // Debrid install (download + extract)
+        if (game.source === "debrid" && DEBRID_INSTALL_ENABLED && DEBRID_LIBRARY_ENABLED) {
+          try {
+            const { getRepacksForAppId } = await import("../../services/repackCatalogService");
+            const repacks = await getRepacksForAppId(Number(appId));
+            if (repacks.length === 0) {
+              showWarning("No Debrid repack sources found.", { id: `console-debrid-nosrc-${appId}`, duration: 3000 });
+              return { action, success: false, error: "no-repacks" };
+            }
+            const rawEntry = repacks[0];
+            const downloadUri = pickInstallUriWithoutDialog(rawEntry.downloadUris);
+            if (!downloadUri) {
+              showWarning("No download URI available for this Debrid game.", { id: `console-debrid-nouri-${appId}`, duration: 3000 });
+              return { action, success: false, error: "no-download-uri" };
+            }
+            if (DEBUG_DEBRID_INSTALL) {
+              console.log(`[DEBRID][CONSOLE_INSTALL] appId=${appId} repacks=${repacks.length} using=${rawEntry.repacker}`);
+            }
+            options.addJob({
+              id: `debrid-install-${rawEntry.id}-${Date.now()}`,
+              type: "debrid-install",
+              title: game.title,
+              status: "queued",
+              progress: 0,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              providerGameId: rawEntry.id,
+              downloadUri,
+              installerType: rawEntry.installerType || "zip",
+              appId,
+              artworkUrl: game.imageUrl,
+            } as any);
+            showSuccess(`Queued Debrid install (${rawEntry.repacker})`, { id: `console-debrid-queued-${appId}`, duration: 3000 });
+            return { action, success: true };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            showError(`Debrid install failed: ${msg}`, { id: `console-debrid-error-${appId}`, duration: 3000 });
+            return { action, success: false, error: msg };
+          }
+        }
+
         // Reuse Library/GameDetails install flow (installSteamApp + installTrackerService)
         if (!appId || !appId.match(/^\d+$/)) {
           showWarning("This game cannot be installed through Steam because it has no AppID.", {
@@ -525,6 +585,36 @@ export async function handleConsolePrimaryAction(
           { id: `console-update-nosrc-${appId}`, duration: 4000 },
         );
         return { action, success: false, error: "no-source" };
+      }
+
+      case "select-exe": {
+        try {
+          const { open } = await import("@tauri-apps/plugin-dialog");
+          const { updateDebridGame } = await import("../../services/debridGameStore");
+          const selected = await open({
+            title: "Select game executable",
+            filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
+            defaultPath: game.installDir || "C:\\",
+            multiple: false,
+          });
+          if (selected && game.providerGameId) {
+            updateDebridGame(game.providerGameId, game.installDir || "", selected);
+            showSuccess("Game executable set. Ready to play!");
+          }
+          return { action, success: !!selected };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          showError(`File picker failed: ${msg}`);
+          return { action, success: false, error: msg };
+        }
+      }
+
+      case "installing": {
+        showWarning("Game is still installing", {
+          id: `console-installing-${appId}`,
+          duration: 2500,
+        });
+        return { action, success: false, error: "installing" };
       }
 
       case "check-update": {

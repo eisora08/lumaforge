@@ -1,4 +1,4 @@
-import { getFileMetadata, readScanState, writeScanState, readProviderStatus, writeProviderStatus, hubcapAppStatus } from "./tauri";
+﻿import { getFileMetadata, readScanState, writeScanState, readProviderStatus, writeProviderStatus, hubcapAppStatus } from "./tauri";
 import type { FileMetadata, ScanState } from "./tauri";
 import type { ProviderStatusFile, ProviderStatusLocal, ProviderStatusRemote } from "./tauri";
 import { normalizeProviderId } from "./providerStatusService";
@@ -8,6 +8,7 @@ import {
   applyScanResults as storeApplyScanResults,
   notifyProviderStatusWritten as storeNotifyProviderStatusWritten,
   getLastResultHash as storeGetLastResultHash,
+  isAppIdInstalled as storeIsAppIdInstalled,
 } from "./providerStatusStore";
 
 // Re-export the reactive store's public API so existing components keep working.
@@ -18,6 +19,9 @@ export {
   getUpdateCount,
   getUpdateEntries,
   getUpdateEntry,
+  setInstalledAppIds,
+  isAppIdInstalled,
+  isInstalledFilterReady,
   getTotalScanned,
   getLastResultHash,
   hasNewUpdatesSinceLastNotification,
@@ -242,7 +246,7 @@ function computeResult(
     return { status: "unknown", reason: "no-local-data-for-comparison" };
   }
 
-  // Local metadata from Lua file — skip fileSize comparison
+  // Local metadata from Lua file â€” skip fileSize comparison
   if (local.metadataSource === "local-lua-file") {
     if (remote.fileModified && local.fileModifiedAtInstall) {
       const remoteTs = new Date(remote.fileModified).getTime();
@@ -254,7 +258,19 @@ function computeResult(
     return { status: "up-to-date", reason: "local-lua-not-older" };
   }
 
-  // Local metadata from remote/package baseline — compare both modified + size
+  // Unknown metadata source (null/lost) - skip fileSize comparison
+  if (!local.metadataSource || local.metadataSource === "unknown") {
+    if (remote.fileModified && local.fileModifiedAtInstall) {
+      const remoteTs = new Date(remote.fileModified).getTime();
+      const localTs = new Date(local.fileModifiedAtInstall).getTime();
+      if (!isNaN(remoteTs) && !isNaN(localTs) && remoteTs > localTs) {
+        return { status: "update-available", reason: "remote-newer-than-unknown-local" };
+      }
+    }
+    return { status: "up-to-date", reason: "unknown-local-not-older" };
+  }
+
+  // Local metadata from remote/package baseline â€” compare both modified + size
   if (remote.fileModified && local.fileModifiedAtInstall) {
     const remoteTs = new Date(remote.fileModified).getTime();
     const localTs = new Date(local.fileModifiedAtInstall).getTime();
@@ -317,7 +333,18 @@ async function saveProviderStatusForLua(
   };
 
   try {
-    await writeProviderStatus(appId, normalizedId, JSON.stringify(status));
+    const statusJson = JSON.stringify(status);
+    await writeProviderStatus(appId, normalizedId, statusJson);
+    // Dual-write: also persist to SQLite for fast boot reads
+    try {
+      const { upsertProviderStatus } = await import("./tauri");
+      await upsertProviderStatus({
+        appId,
+        providerId: normalizedId,
+        data: statusJson,
+        updatedAt: Date.now(),
+      });
+    } catch { /* non-critical */ }
     console.log(`[PACKAGE_SCAN][SAVE] appid=${appId} provider=${normalizedId} result=${result.status} reason=${result.reason}`);
     hubcapLog(`[WRITE] appid=${appId} path=store/provider-status/${appId}/${normalizedId}.json remotePresent=${remote !== null} result=${result.status}`);
   } catch (err) {
@@ -373,7 +400,7 @@ export async function runInstalledLuaScan(options: ScanOptions): Promise<ScanSum
         console.log(`[PACKAGE_SCAN][SKIP] reason=recent-check lastScanAt=${state.lastScanAt} intervalHours=${state.intervalHours || SCAN_INTERVAL_HOURS}`);
         // Still update in-memory status from existing provider-status files
         await refreshInMemoryStatus(luaDir, hubcapConfig);
-        // Re-check games with stale "unknown/no-remote-data" status — provider may now have data
+        // Re-check games with stale "unknown/no-remote-data" status â€” provider may now have data
         if (hubcapConfig?.apiKey && hubcapConfig?.baseUrl) {
           await recheckStaleUnknownGames(luaDir, hubcapConfig);
         }
@@ -399,6 +426,12 @@ export async function runInstalledLuaScan(options: ScanOptions): Promise<ScanSum
   const results: ScanResult[] = [];
   for (const entry of entries) {
     const { appId, filePath } = entry;
+
+    // Skip non-installed games — orphaned Lua files should not trigger provider checks
+    if (!storeIsAppIdInstalled(appId)) {
+      hubcapLog(`[LOCAL] appid=${appId} SKIP reason=not-installed`);
+      continue;
+    }
 
     // Read local Lua file metadata
     const luaMeta = await readLuaFileMetadata(filePath);
@@ -499,6 +532,9 @@ async function recheckStaleUnknownGames(
   let rechecked = 0;
 
   for (const entry of entries) {
+    // Skip non-installed games
+    if (!storeIsAppIdInstalled(entry.appId)) continue;
+
     try {
       const statusFile = await readProviderStatus(entry.appId, "hubcapdb");
       // Only re-check games with stale unknown status (no remote data)
@@ -522,7 +558,7 @@ async function recheckStaleUnknownGames(
         }
         rechecked++;
       } else if (!statusFile) {
-        // No hubcapdb.json at all — first-time check
+        // No hubcapdb.json at all â€” first-time check
         hubcapLog(`[RECHECK_STALE] appid=${entry.appId} reason=no-status-file`);
         const luaMeta = await readLuaFileMetadata(entry.filePath);
         if (!luaMeta) continue;
@@ -551,6 +587,9 @@ async function refreshInMemoryStatus(luaDir: string, _hubcapConfig?: { baseUrl: 
   storeClearAllEntries();
 
   for (const entry of entries) {
+    // Never surface status for non-installed Lua files (matches main scan + recheck)
+    if (!storeIsAppIdInstalled(entry.appId)) continue;
+
     // Try hubcapdb first, then fallback
     try {
       const statusFile = await readProviderStatus(entry.appId, "hubcapdb");

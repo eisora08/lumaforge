@@ -70,6 +70,7 @@ function useResolvedUrl(url: string | null | undefined, appId?: string): { url: 
         const absPath = await resolveRelativeAchievementImagePath(appId, url);
         const exists = await checkFileExists(absPath);
         if (cancelled) return;
+        console.log(`[ACH][ICON_RESOLVE] appid=${appId} icon=${url} resolved=${absPath} exists=${exists}`);
         if (exists) {
           const finalUrl = localPathToUrl(absPath);
           if (!cancelled) setResolved({ url: finalUrl ?? url, exists: true });

@@ -190,6 +190,7 @@ async function showGameToast(
     {
       id: options.id,
       duration,
+      position: "top-right",
       style: {
         zIndex: TOAST_Z_INDEX,
       },

@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use super::sqlite_cache::SqliteStoreDb;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OwnedGame {
     pub appid: u32,
@@ -50,8 +52,8 @@ fn get_cache_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_dir.join("steam_owned_cache.json"))
 }
 
-fn build_client() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+async fn build_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(8))
@@ -61,10 +63,11 @@ fn build_client() -> Result<reqwest::blocking::Client, String> {
 }
 
 #[tauri::command]
-pub fn fetch_steam_owned_games(
+pub async fn fetch_steam_owned_games(
     app_handle: AppHandle,
     api_key: String,
     steam_id: String,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<OwnedGame>, String> {
     let cache_path = get_cache_path(&app_handle)?;
     let now = SystemTime::now()
@@ -82,7 +85,7 @@ pub fn fetch_steam_owned_games(
         }
     }
 
-    let client = build_client()?;
+    let client = build_client().await?;
     let url = format!(
         "{}?key={}&steamid={}&include_appinfo=true&include_played_free_games=true&format=json",
         API_URL, api_key, steam_id
@@ -91,6 +94,7 @@ pub fn fetch_steam_owned_games(
     let resp = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
 
     let status = resp.status();
@@ -108,17 +112,32 @@ pub fn fetch_steam_owned_games(
 
     let api_resp: OwnedGamesApiResponse = resp
         .json()
+        .await
         .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
     let games = api_resp.response.games;
 
     let cache = OwnedGamesCache {
-        steam_id,
+        steam_id: steam_id.clone(),
         fetched_at: now,
         games: games.clone(),
     };
     if let Ok(json) = serde_json::to_string_pretty(&cache) {
-        let _ = fs::write(&cache_path, json);
+        let _ = fs::write(&cache_path, &json);
+        // Dual-write: persist to SQLite for fast boot reads
+        if let Some(mutex) = &db.0 {
+            if let Ok(guard) = mutex.lock() {
+                let catalog_key = format!("steam-owned:{}", steam_id);
+                let now_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                let _ = guard.execute(
+                    "INSERT OR REPLACE INTO game_catalog_blobs (catalog_key, data_json, updated_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![catalog_key, json, now_ts],
+                );
+            }
+        }
     }
 
     println!("[SteamOwned] fetched {} games", games.len());

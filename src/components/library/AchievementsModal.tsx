@@ -464,7 +464,7 @@ export default function AchievementsModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[9999] grid place-items-center bg-black/80 backdrop-blur-xl lf-modal-overlay"
+      className="fixed inset-0 z-[9999] grid place-items-center bg-black/40"
       aria-modal="true"
       role="dialog"
       aria-label={`Achievements — ${summary.total} total`}
@@ -473,7 +473,7 @@ export default function AchievementsModal({
       <div className="absolute inset-0" onClick={onClose} />
 
       <div
-        className="relative z-10 flex flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-(--color-bg) shadow-2xl lf-modal-panel"
+        className="relative z-10 flex flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface shadow-2xl lf-modal-panel"
         style={{ width: "min(920px, calc(100vw - 48px))", maxHeight: "86vh" }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -1037,6 +1037,19 @@ function GlobalAchievementRow({ achievement, appId }: { achievement: GameAchieve
             <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
               <Unlock className="h-2.5 w-2.5" />
               Unlocked by you
+            </span>
+          </div>
+        )}
+        {!isUnlocked && achievement.progress != null && achievement.maxProgress != null && achievement.maxProgress > 0 && (
+          <div className="mt-1.5 flex items-center gap-2">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+              <div
+                className="h-full rounded-full bg-(--color-accent) transition-all duration-500"
+                style={{ width: `${Math.min(100, Math.round((achievement.progress / achievement.maxProgress) * 100))}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-[10px] tabular-nums text-(--color-muted)/70">
+              {achievement.progress}/{achievement.maxProgress}
             </span>
           </div>
         )}

@@ -47,6 +47,7 @@ const _renderCounts: Record<string, number> = {};
 let _renderSession = 0;
 let _lastRenderLog = 0;
 const RENDER_LOG_INTERVAL = 5000; // ms between auto-logs
+const DEBUG_RENDER_SUMMARY = false;
 
 export function countRender(componentName: string): void {
   _renderCounts[componentName] = (_renderCounts[componentName] ?? 0) + 1;
@@ -75,7 +76,7 @@ export function logRenderSummary(label?: string): void {
     .filter(([, c]) => c > 0)
     .sort(([, a], [, b]) => b - a);
   const top = sorted.slice(0, 20).map(([n, c]) => `${n}=${c}`).join(" ");
-  if (sorted.length > 0) {
+  if (sorted.length > 0 && DEBUG_RENDER_SUMMARY) {
     console.log(`[RENDER][SUM]${label ? ` ${label}` : ""} total=${sorted.reduce((s, [, c]) => s + c, 0)} components=${sorted.length} session=${_renderSession} ${top}`);
   }
 }

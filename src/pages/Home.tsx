@@ -1,107 +1,161 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { countRender } from "../services/perfCounters";
-import { Activity } from "lucide-react";
+
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
+import InProgressSection from "../components/dashboard/InProgressSection";
+import CompletedSection from "../components/dashboard/CompletedSection";
 import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
-import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
 
+import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
+import TopPicksDashboardSection from "../components/dashboard/TopPicksDashboardSection";
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
-import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
-import { getCachedSnapshot } from "../services/startupSnapshotService";
+
+import { getCachedSnapshot, subscribeSnapshotUpdated } from "../services/startupSnapshotService";
+import type { StartupSnapshot } from "../services/startupSnapshotService";
 import { importSnapshotPlaytime } from "../services/playtimeService";
-import { useGameActivity } from "../context/GameActivityContext";
+
 import { useGameSession } from "../context/GameSessionContext";
 import { useSettings } from "../context/SettingsContext";
-import { subscribeCatalogState, getCatalogState, getCachedCatalog, discoverGlobalCatalog } from "../services/globalCatalogService";
+import { subscribeCatalogState, getCatalogState, discoverGlobalCatalog } from "../services/globalCatalogService";
+import { subscribeCatalogSections, getCachedCatalogSections } from "../services/storeCatalogOrchestrator";
 import type { AppPage } from "../types/navigation";
 import type { CatalogStatus } from "../services/globalCatalogService";
+
+const DEBUG_HOME_CATALOG = false;
+
+/* ================================================================== */
+/*  TYPES                                                              */
+/* ================================================================== */
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
 };
 
-type DedupedActivity = {
-  id: string;
-  title: string;
-  count: number;
-  createdAt: number;
-};
 
-function formatTimestamp(ts: number) {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return new Date(ts).toLocaleDateString();
+/* ================================================================== */
+/*  HELPERS                                                            */
+/* ================================================================== */
+
+
+
+function isSectionVisible(sectionId: string, visibility: Record<string, boolean>): boolean {
+  if (sectionId in visibility) return visibility[sectionId];
+  return true;
 }
 
-function deduplicateActivities(activities: { id: string; title: string; createdAt: number }[]): DedupedActivity[] {
-  const seen = new Map<string, DedupedActivity>();
-  for (const a of activities) {
-    const key = a.title;
-    const existing = seen.get(key);
-    if (existing) {
-      existing.count++;
-    } else {
-      seen.set(key, { id: a.id, title: a.title, count: 1, createdAt: a.createdAt });
-    }
-  }
-  return Array.from(seen.values())
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 3);
+function getSectionLimit(sectionId: string, limits: Record<string, number>, fallback: number = 12): number {
+  if (sectionId in limits) return Math.max(2, limits[sectionId]);
+  return fallback;
 }
+
+/* ================================================================== */
+/*  SECTION WRAPPER                                                    */
+/* ================================================================== */
+
+function SectionWrap({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
+}
+
+/* ================================================================== */
+/*  COMPONENT                                                          */
+/* ================================================================== */
 
 export default function Home({ onNavigate }: Props) {
   countRender("Home");
-  const snapshot = useMemo(() => getCachedSnapshot(), []);
-  const { activities } = useGameActivity();
+  const [snapshot, setSnapshot] = useState<StartupSnapshot | null>(() => getCachedSnapshot());
+  
   const { sessions } = useGameSession();
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+  const [orchestratorHasData, setOrchestratorHasData] = useState(() => getCachedCatalogSections().length > 0);
+  const { settings } = useSettings();
 
-  // Track catalog readiness for discovery sections
+  // Re-read snapshot when it's written/updated (one-shot check after boot)
   useEffect(() => {
-    const unsub = subscribeCatalogState((s) => {
-      setCatalogStatus(s.status);
+    return subscribeSnapshotUpdated(() => {
+      const fresh = getCachedSnapshot();
+      setSnapshot((prev) => {
+        if (fresh && (!prev || fresh.updatedAt !== prev.updatedAt)) return fresh;
+        return prev;
+      });
     });
+  }, []);
+
+  const heroEnabled = settings.dashboardHeroEnabled ?? true;
+  const sectionVisibility = settings.dashboardSectionVisibility ?? {};
+  const sectionLimits = settings.dashboardSectionLimits ?? {};
+
+  // Track catalog readiness
+  useEffect(() => {
+    const unsub = subscribeCatalogState((s) => setCatalogStatus(s.status));
     return unsub;
   }, []);
 
-  // Start loading the global catalog unconditionally — do not wait for child sections to mount
+  // Track orchestrator readiness (canonical Store catalog sections)
+  const orchLogRef = useRef<string>("");
   useEffect(() => {
-    discoverGlobalCatalog().catch(() => {});
+    if (DEBUG_HOME_CATALOG && !orchLogRef.current) {
+      const cached = getCachedCatalogSections();
+      console.log(`[HOME][CATALOG] mount orchestratorCached=${cached.length > 0} cachedSections=${cached.length} catalogStatus=${catalogStatus}`);
+    }
+    const unsub = subscribeCatalogSections((sections) => {
+      const hasData = sections.length > 0;
+      setOrchestratorHasData(hasData);
+      if (DEBUG_HOME_CATALOG) {
+        const sectionIds = sections.map((s) => s.sectionId).join(",");
+        const totalGames = sections.reduce((n, s) => n + s.games.length, 0);
+        const key = `${hasData}|${sectionIds}|${totalGames}`;
+        if (orchLogRef.current !== key) {
+          orchLogRef.current = key;
+          console.log(`[HOME][CATALOG] orchestratorReady=${hasData} sections=${sectionIds} totalGames=${totalGames} catalogStatus=${catalogStatus} discoveryReady=${catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error" || hasData}`);
+        }
+      }
+    });
+    return unsub;
+  }, [catalogStatus]);
+
+  useEffect(() => {
+    const idle = () => discoverGlobalCatalog().catch(() => {});
+    if ("requestIdleCallback" in window) {
+      (window as any).requestIdleCallback(idle, { timeout: 5000 });
+    } else {
+      setTimeout(idle, 0);
+    }
   }, []);
 
-  // Log catalog source once when it transitions from loading to ready
   const sourceLogRef = useRef(false);
   useEffect(() => {
     if (sourceLogRef.current) return;
     if (catalogStatus !== "loading") {
       sourceLogRef.current = true;
-      const state = getCatalogState();
-      const normalized = getCachedCatalog();
-      console.log(
-        `[DASH][GLOBAL_CATALOG_SOURCE] source=steamdb.json rawTotal=${state.total} normalizedTotal=${normalized.length}`,
-      );
     }
   }, [catalogStatus]);
 
-  const dashboardDiscoveryReady = catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error";
+  const dashboardDiscoveryReady = catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error" || orchestratorHasData;
 
-  // One-time import of snapshot playtime data into playtime store (after boot)
+  const discoveryLogRef = useRef(false);
+  useEffect(() => {
+    if (dashboardDiscoveryReady && !discoveryLogRef.current) {
+      discoveryLogRef.current = true;
+      if (DEBUG_HOME_CATALOG) {
+        console.log(`[HOME][CATALOG] discoveryReady=true catalogStatus=${catalogStatus} orchestratorHasData=${orchestratorHasData}`);
+      }
+    }
+  }, [dashboardDiscoveryReady, catalogStatus, orchestratorHasData]);
+
   useEffect(() => {
     if (snapshot?.library?.games) {
-      importSnapshotPlaytime(snapshot.library.games).catch(() => {});
+      const games = snapshot.library.games;
+      const idle = () => importSnapshotPlaytime(games).catch(() => {});
+      if ("requestIdleCallback" in window) {
+        (window as any).requestIdleCallback(idle, { timeout: 5000 });
+      } else {
+        setTimeout(idle, 0);
+      }
     }
   }, [snapshot]);
-
-  const { settings } = useSettings();
 
   const runningAppId = useMemo(() => {
     const running = Object.values(sessions).find((s) => s.state === "running");
@@ -120,35 +174,68 @@ export default function Home({ onNavigate }: Props) {
     return ids;
   }, [snapshot, runningAppId]);
 
-  const dedupedActivity = useMemo(() => deduplicateActivities(activities), [activities]);
-
-  const installedCount = snapshot?.library?.games?.filter((g) => g.installed).length ?? 0;
-  const lastSync = snapshot?.updatedAt
-    ? new Date(snapshot.updatedAt * 1000).toLocaleString()
-    : null;
+  
 
   const maxWidth = settings.useExpandedDashboard ? undefined : settings.dashboardContentWidth;
 
   return (
-    <div className="mx-auto w-full px-6 py-6 lg:px-8 xl:px-10 lf-fade-in" style={{ maxWidth: maxWidth ? `${maxWidth}px` : undefined }}>
+    <div className="mx-auto w-full px-6 py-6 lg:px-8 xl:px-10 lf-page-in" style={{ maxWidth: maxWidth ? `${maxWidth}px` : undefined }}>
       <div className="space-y-8">
-        <GameHero onNavigate={onNavigate} />
-        <ContinuePlayingSection
-          snapshot={snapshot}
-          onNavigate={onNavigate}
-          excludeAppId={runningAppId}
-        />
-        <FavoritesSection
-          snapshot={snapshot}
-          onNavigate={onNavigate}
-          excludeAppIds={[runningAppId].filter(Boolean) as string[]}
-        />
-        <RecommendedSection
-          onNavigate={onNavigate}
-          continuePlayingAppIds={continuePlayingAppIds}
-        />
+        {/* ── Hero ──────────────────────────────────────────────── */}
+        {heroEnabled && <GameHero onNavigate={onNavigate} />}
 
-        {/* Global discovery sections — only evaluate when catalog is ready */}
+        {/* ── Library sections ──────────────────────────────────── */}
+        {isSectionVisible("continue-playing", sectionVisibility) && (
+          <SectionWrap>
+            <ContinuePlayingSection
+              snapshot={snapshot}
+              onNavigate={onNavigate}
+              excludeAppId={runningAppId}
+              maxItems={getSectionLimit("continue-playing", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("in-progress", sectionVisibility) && (
+          <SectionWrap>
+            <InProgressSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("in-progress", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("completed", sectionVisibility) && (
+          <SectionWrap>
+            <CompletedSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("completed", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("favorites", sectionVisibility) && (
+          <SectionWrap>
+            <FavoritesSection
+              snapshot={snapshot}
+              onNavigate={onNavigate}
+              excludeAppIds={[runningAppId].filter(Boolean) as string[]}
+              maxItems={getSectionLimit("favorites", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("recommended", sectionVisibility) && (
+          <SectionWrap>
+            <RecommendedSection
+              onNavigate={onNavigate}
+              continuePlayingAppIds={continuePlayingAppIds}
+              maxItems={getSectionLimit("recommended", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {/* ── Catalog discovery sections ────────────────────────── */}
         {!dashboardDiscoveryReady && (
           <section>
             <div className="mb-4 flex items-center justify-between">
@@ -175,22 +262,46 @@ export default function Home({ onNavigate }: Props) {
           </section>
         )}
 
-        {dashboardDiscoveryReady && (
-          <>
-            <TrendingRightNowSection onNavigate={onNavigate} />
-          </>
+        {dashboardDiscoveryReady && isSectionVisible("trending-right-now", sectionVisibility) && (
+          <SectionWrap>
+            <TrendingRightNowSection onNavigate={onNavigate} maxItems={getSectionLimit("trending-right-now", sectionLimits, 8)} />
+          </SectionWrap>
         )}
 
-        <TopPlayedSection
-          snapshot={snapshot}
-          onNavigate={onNavigate}
-          excludeAppIds={[runningAppId].filter(Boolean) as string[]}
-        />
-        <StoreHighlightsSection onNavigate={onNavigate} />
-        <QuickActionsCompact onNavigate={onNavigate} />
+        {dashboardDiscoveryReady && isSectionVisible("featured-picks", sectionVisibility) && (
+          <SectionWrap>
+            <FeaturedPicksSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("featured-picks", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {dashboardDiscoveryReady && isSectionVisible("top-picks", sectionVisibility) && (
+          <SectionWrap>
+            <TopPicksDashboardSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("top-picks", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {/* ── Bottom sections ──────────────────────────────────── */}
+        {isSectionVisible("top-played", sectionVisibility) && (
+          <SectionWrap>
+            <TopPlayedSection
+              snapshot={snapshot}
+              onNavigate={onNavigate}
+              excludeAppIds={[runningAppId].filter(Boolean) as string[]}
+              maxItems={getSectionLimit("top-played", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {/* <QuickActionsCompact onNavigate={onNavigate} /> */}
 
         {/* Compact system strip */}
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-5 py-3">
+        {/* <div className="flex flex-wrap items-center gap-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-5 py-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -224,7 +335,7 @@ export default function Home({ onNavigate }: Props) {
               ))}
             </div>
           )}
-        </div>
+        </div> */}
       </div>
     </div>
   );

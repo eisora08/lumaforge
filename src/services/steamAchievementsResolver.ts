@@ -3,24 +3,31 @@ import {
   fetchSteamPlayerAchievements,
   fetchSteamGlobalAchievementPercentages,
   fetchSteamAchievementSchema,
-  scanSteamAppcacheAchievements,
   readAchievementCache,
   writeAchievementCache,
-  readAchievementsAppSchemaFolder,
-  parseUserGameStatsRaw,
-  parseLibraryCacheAchievements,
+  generateAchievementSchema,
 } from "./tauri";
-import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, SteamAppcacheSchemaEntry, SteamAppcacheParsedProgress, UserGameStatsRawResult, DebugAchievementReport, LibraryCacheProgress } from "./tauri";
+import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, DebugAchievementReport, GenerateSchemaResult } from "./tauri";
 import { achievementStore, isSourceNewerOrEqual } from "./achievementStore";
 import { DEBUG_ACH_VERBOSE } from "./achievementAutoFlags";
-
-const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
-const ACHIEVEMENT_CACHE_VERSION = 6;
-
-// Track previous unlocked state for unlock detection
-const previousUnlockedState = new Map<string, Map<string, boolean>>();
 // Session 403 cache: do not retry GetPlayerAchievements for apps that returned 403
-const cached403Apps = new Set<string>();
+// TTL 30 minutes — transient 403s (rate-limit, temporary privacy) clear after cooldown
+const CACHED_403_TTL_MS = 30 * 60 * 1000;
+const cached403Apps = new Map<string, number>(); // appId → timestamp
+
+function isCached403(appId: string): boolean {
+  const ts = cached403Apps.get(appId);
+  if (ts == null) return false;
+  if (Date.now() - ts > CACHED_403_TTL_MS) {
+    cached403Apps.delete(appId);
+    return false;
+  }
+  return true;
+}
+
+function cache403(appId: string): void {
+  cached403Apps.set(appId, Date.now());
+}
 
 // Temporary diagnostic flag for empty cache investigation (appId 1167630)
 const DEBUG_ACH_DIAG = true;
@@ -55,22 +62,6 @@ function isValidImageSource(value: string | undefined | null): value is string {
   // Reject anything that looks like an apiName (no extension, no slashes, has underscores)
   if (/^[A-Za-z0-9_]+$/.test(value) && !value.includes('.')) return false;
   return true;
-}
-
-function isLocalizationToken(value: string): boolean {
-  const v = value.trim();
-  if (!v) return true;
-  if (/^NEW_ACHIEVEMENT/i.test(v)) return true;
-  if (/_NAME$|_DESC$|_DESCRIPTION$/i.test(v)) return true;
-  // All caps + underscores + digits
-  if (/^[A-Z0-9_]+$/.test(v) && v.includes('_')) return true;
-  // No lowercase and has underscores
-  if (!/[a-z]/.test(v) && v.includes('_')) return true;
-  return false;
-}
-
-function hasValidDisplayName(name: string): boolean {
-  return !isLocalizationToken(name) && /[a-zA-Z]/.test(name) && name.trim().length >= 2;
 }
 
 function normalizeValidAppId(value: unknown): string | null {
@@ -139,22 +130,6 @@ type SchemaAchievement = {
   icongray?: string;
 };
 
-function parseSchema(data: unknown): Map<string, SchemaAchievement> {
-  const map = new Map<string, SchemaAchievement>();
-  try {
-    const d = data as { game?: { availableGameStats?: { achievements?: SchemaAchievement[] } } };
-    const list = d?.game?.availableGameStats?.achievements;
-    if (list) {
-      for (const a of list) {
-        map.set(a.name, a);
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return map;
-}
-
 type PlayerAchievement = {
   apiname: string;
   achieved: number | string;
@@ -204,9 +179,9 @@ function mergeAchievements(params: {
   for (const [apiName] of schemaMap) {
     allApiNames.add(apiName);
   }
-  for (const apiName of Object.keys(globalPctMap)) {
-    allApiNames.add(apiName);
-  }
+  // NOTE: globalPctMap intentionally excluded from allApiNames — it can contain
+  // DLC/test achievements not in the schema, inflating total (42→45). globalPctMap
+  // is only used for rarityPercent values below.
 
   const achievements: GameAchievement[] = [];
   for (const apiName of allApiNames) {
@@ -272,233 +247,7 @@ function buildSchemaOnlySummary(
   };
 }
 
-function buildAppcacheSummary(
-  appId: string,
-  localAchievements: { api_name: string; unlocked: boolean; unlock_time?: number }[],
-  schemaEntries: SteamAppcacheSchemaEntry[],
-  progressAvailable: boolean,
-  parsedProgress?: SteamAppcacheParsedProgress[],
-  parserConfidence?: string,
-): GameAchievementsSummary {
-  // Filter out schema entries with token-only display names (safety net for Rust side)
-  const cleanSchema = schemaEntries.filter((s) => !s.display_name || hasValidDisplayName(s.display_name));
 
-  // Determine if v2 binary parser data should be used
-  const useV2Progress = parserConfidence === "high" || parserConfidence === "medium";
-
-  const v2ProgressMap: Map<string, SteamAppcacheParsedProgress> = new Map();
-  if (useV2Progress && parsedProgress) {
-    for (const p of parsedProgress) {
-      v2ProgressMap.set(p.api_name, p);
-    }
-  }
-
-  const apiNameSet = new Set<string>();
-  for (const a of localAchievements) apiNameSet.add(a.api_name);
-  for (const s of cleanSchema) apiNameSet.add(s.api_name);
-
-  const achievements: GameAchievement[] = [];
-  for (const apiName of apiNameSet) {
-    const local = localAchievements.find((a) => a.api_name === apiName);
-    const schema = cleanSchema.find((s) => s.api_name === apiName);
-    const v2p = v2ProgressMap.get(apiName);
-
-    // Use v2 binary progress when available, otherwise fall back to v1 text parser
-    const unlocked = v2p !== undefined ? v2p.unlocked : (local?.unlocked ?? false);
-    const unlockTime = local?.unlock_time ? local.unlock_time * 1000 : undefined;
-
-    const iconUrl = isValidImageSource(schema?.icon) ? schema!.icon : undefined;
-    const iconGrayUrl = isValidImageSource(schema?.icon_gray) ? schema!.icon_gray : undefined;
-
-    achievements.push({
-      id: apiName,
-      apiName,
-      name: schema?.display_name ?? apiName,
-      description: schema?.description,
-      iconUrl,
-      iconGrayUrl,
-      unlocked,
-      unlockTime,
-      statId: schema?.stat_id,
-      bit: schema?.bit,
-    });
-  }
-
-  achievements.sort((a, b) => {
-    if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-
-  const total = achievements.length;
-
-  return {
-    appId,
-    total,
-    ...(progressAvailable
-      ? {
-          unlocked: achievements.filter((a) => a.unlocked).length,
-          percent: total > 0 ? Math.round((achievements.filter((a) => a.unlocked).length / total) * 100) : 0,
-        }
-      : {}),
-    progressAvailable,
-    achievements,
-    source: "steam-appcache",
-    updatedAt: Date.now(),
-  };
-}
-
-/**
- * Build progress map from librarycache JSON result.
- * Librarycache provides real unlock state, unlock time, and rarity.
- */
-function buildLibraryCacheProgress(
-  libResult: LibraryCacheProgress,
-): { progressMap: Map<string, { unlocked: boolean; unlockTime?: number }>; rarityMap: Map<string, number>; nTotal: number; nAchieved: number } {
-  const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number }>();
-  const rarityMap = new Map<string, number>();
-
-  for (const entry of libResult.entries) {
-    const apiName = entry.str_id ?? "";
-    if (!apiName) continue;
-
-    const unlocked = entry.b_achieved === true;
-    const rawUnlockTime = entry.rt_unlocked ?? 0;
-    // Librarycache rtUnlocked is Unix seconds; frontend expects ms
-    const unlockTime = rawUnlockTime > 0 && rawUnlockTime < 1000000000000 ? rawUnlockTime * 1000 : rawUnlockTime > 0 ? rawUnlockTime : undefined;
-
-    progressMap.set(apiName, { unlocked, unlockTime });
-
-    if (entry.fl_achieved != null) {
-      rarityMap.set(apiName, entry.fl_achieved);
-    }
-  }
-
-  console.debug(`[ACH][LIBRARYCACHE] progressMap=${progressMap.size} entries`);
-  const nTotal = libResult.n_total ?? 0;
-  const nAchieved = libResult.n_achieved ?? 0;
-  console.debug(`[ACH][LIBRARYCACHE] nTotal=${nTotal} nAchieved=${nAchieved}`);
-
-  return { progressMap, rarityMap, nTotal, nAchieved };
-}
-
-function buildLocalProgressFromStats(
-  appId: string,
-  schemaEntries: AppAchievementCacheEntry[],
-  statsResult: UserGameStatsRawResult,
-  globalPctMap: Record<string, number>,
-): { summary: GameAchievementsSummary; progressAvailable: boolean } {
-  const statsMap = new Map<number, number>();
-  for (const p of statsResult.stat_pairs) {
-    statsMap.set(p.stat_id, p.value);
-  }
-
-  const unlockTimeMap = new Map<string, number | undefined>();
-  for (const a of statsResult.achievement_entries) {
-    unlockTimeMap.set(a.api_name, a.unlock_time);
-  }
-
-  let matchedCount = 0;
-  const achievements: GameAchievement[] = [];
-
-  for (const entry of schemaEntries) {
-    let unlocked = false;
-    let statValue = 0;
-
-    if (entry.stat_id != null && entry.bit != null) {
-      statValue = statsMap.get(entry.stat_id) ?? 0;
-      unlocked = (statValue & (1 << entry.bit)) !== 0;
-      matchedCount++;
-    }
-
-    const unlockTime = unlockTimeMap.get(entry.api_name);
-
-    achievements.push({
-      id: entry.api_name,
-      apiName: entry.api_name,
-      name: entry.name,
-      description: entry.description,
-      iconUrl: entry.icon ?? entry.icon_url,
-      iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
-      unlocked,
-      unlockTime: unlockTime != null && unlockTime > 0 ? unlockTime * 1000 : undefined,
-      rarityPercent: globalPctMap[entry.api_name] ?? entry.rarity_percent ?? undefined,
-      statId: entry.stat_id,
-      bit: entry.bit,
-    });
-  }
-
-  const total = achievements.length;
-  const unlockedCount = achievements.filter((a) => a.unlocked).length;
-  const progressAvailable = matchedCount > 0;
-
-  console.debug(`[ACH][PROGRESS] appid=${appId} statsFileFound=${statsResult.file_found} size=${statsResult.file_size}`);
-  console.debug(`[ACH][PROGRESS] parsedStats=${statsResult.stat_pairs.length}`);
-  const schemaWithStatIds = schemaEntries.filter((e) => e.stat_id != null).length;
-  console.debug(`[ACH][PROGRESS] schemaWithStatIds=${schemaWithStatIds}`);
-  console.debug(`[ACH][PROGRESS] matchedStats=${matchedCount}`);
-  console.debug(`[ACH][PROGRESS] unlocked=${unlockedCount}/${total}`);
-  console.debug(`[ACH][PROGRESS] progressAvailable=${progressAvailable}`);
-
-  for (let i = 0; i < Math.min(5, achievements.length); i++) {
-    const a = achievements[i];
-    const entryRaw = schemaEntries.find((e) => e.api_name === a.apiName);
-    const sid = entryRaw?.stat_id;
-    const sv = sid != null ? (statsMap.get(sid) ?? 0) : 0;
-    console.debug(`[ACH][PROGRESS_TEST] apiName=${a.apiName} statId=${sid} bit=${entryRaw?.bit} statValue=${sv} unlocked=${a.unlocked}`);
-  }
-
-  return {
-    summary: {
-      appId,
-      total,
-      ...(progressAvailable
-        ? { unlocked: unlockedCount, percent: total > 0 ? Math.round((unlockedCount / total) * 100) : 0 }
-        : {}),
-      progressAvailable,
-      achievements,
-      source: "schema-only",
-      updatedAt: Date.now(),
-    },
-    progressAvailable,
-  };
-}
-
-function cacheEntryToSummary(
-  appId: string,
-  cacheData: AppAchievementCacheEntry[],
-  pcts: AppAchievementPercentagesEntry[],
-  summaryData: AppAchievementSummaryData,
-): GameAchievementsSummary {
-  const pctMap: Record<string, number> = {};
-  for (const p of pcts) {
-    pctMap[p.name] = p.percent;
-  }
-
-  const achievements: GameAchievement[] = cacheData.map((e) => ({
-    id: e.api_name,
-    apiName: e.api_name,
-    name: e.name,
-    description: e.description,
-    iconUrl: e.icon ?? e.icon_url,
-    iconGrayUrl: e.icon_gray ?? e.icon_gray_url,
-    unlocked: e.unlocked,
-    unlockTime: e.unlock_time ? e.unlock_time * 1000 : undefined,
-    rarityPercent: e.rarity_percent ?? pctMap[e.api_name] ?? undefined,
-    statId: e.stat_id,
-    bit: e.bit,
-  }));
-
-  return {
-    appId,
-    total: summaryData.total,
-    unlocked: summaryData.unlocked,
-    percent: summaryData.percent,
-    progressAvailable: summaryData.progress_available,
-    achievements,
-    source: summaryData.source as GameAchievementsSummary["source"],
-    updatedAt: summaryData.updated_at,
-  };
-}
 
 function summaryToCacheData(summary: GameAchievementsSummary): {
   achievements: AppAchievementCacheEntry[];
@@ -517,6 +266,9 @@ function summaryToCacheData(summary: GameAchievementsSummary): {
     rarity_percent: a.rarityPercent,
     stat_id: a.statId,
     bit: a.bit,
+    progress_stat_id: a.progressStatId,
+    progress_min: a.progressMin,
+    progress_max: a.progressMax,
   }));
 
   const pcts: AppAchievementPercentagesEntry[] = summary.achievements
@@ -573,25 +325,54 @@ const ACHIEVEMENT_IMAGE_DOWNLOAD_CONCURRENCY = 3;
 async function downloadAchievementIconsInBackground(
   appIdStr: string,
   appIdNum: number,
-  iconCdnUrls: string[],
-  grayCdnUrls: string[],
+  achievements: Array<{ apiName: string; iconUrl?: string; iconGrayUrl?: string }>,
+  platform?: string,
 ): Promise<void> {
   const startTime = Date.now();
 
-  // Build work list with correct filenames
+  // Pre-check: which icons already exist on disk?
+  let existingByApiName: Map<string, { icon_exists: boolean; icon_gray_exists: boolean }> | null = null;
+  try {
+    const { resolveAchievementImagePaths } = await import("./tauri");
+    const statuses = await resolveAchievementImagePaths(appIdNum);
+    existingByApiName = new Map(statuses.map((s) => [s.api_name, s]));
+  } catch {
+    // Non-critical — proceed with full download
+  }
+
+  // Build work list with correct filenames, skipping existing
   type WorkItem = { url: string; fileName: string };
   const items: WorkItem[] = [];
+  let skippedExisting = 0;
 
-  for (const url of iconCdnUrls) {
-    const fileName = url.split("/").pop();
-    if (fileName) items.push({ url, fileName });
-  }
-  for (const url of grayCdnUrls) {
-    const baseName = url.split("/").pop();
-    if (baseName) {
-      // Gray icons need _gray suffix to match normalized cache paths
-      const fileName = baseName.replace(/\.jpg$/i, "_gray.jpg").replace(/\.png$/i, "_gray.png");
-      items.push({ url, fileName });
+  for (const a of achievements) {
+    const status = existingByApiName?.get(a.apiName);
+
+    if (a.iconUrl) {
+      if (status?.icon_exists) {
+        skippedExisting++;
+      } else {
+        const iconCdn = resolveIconToCdnUrl(appIdStr, a.iconUrl);
+        if (iconCdn) {
+          const fileName = iconCdn.split("/").pop();
+          if (fileName) items.push({ url: iconCdn, fileName });
+        }
+      }
+    }
+
+    if (a.iconGrayUrl) {
+      if (status?.icon_gray_exists) {
+        skippedExisting++;
+      } else {
+        const grayCdn = resolveIconToCdnUrl(appIdStr, a.iconGrayUrl);
+        if (grayCdn) {
+          const baseName = grayCdn.split("/").pop();
+          if (baseName) {
+            const fileName = baseName.replace(/\.jpg$/i, "_gray.jpg").replace(/\.png$/i, "_gray.png");
+            items.push({ url: grayCdn, fileName });
+          }
+        }
+      }
     }
   }
 
@@ -603,8 +384,8 @@ async function downloadAchievementIconsInBackground(
     return true;
   });
 
-  const totalSources = deduped.length;
-  console.log(`[ACH][IMG_REPAIR_START] appid=${appIdStr} totalSources=${totalSources} queued=${deduped.length} skippedExisting=0`);
+  const totalSources = deduped.length + skippedExisting;
+  console.log(`[ACH][IMG_REPAIR_START] appid=${appIdStr} totalAchievements=${achievements.length} totalSources=${totalSources} queued=${deduped.length} skippedExisting=${skippedExisting}`);
 
   let downloaded = 0;
   let failed = 0;
@@ -621,6 +402,7 @@ async function downloadAchievementIconsInBackground(
           appId: appIdNum,
           url: item.url,
           fileName: item.fileName,
+          platform,
         });
         const elapsed = Date.now() - t0;
         if (result) {
@@ -650,6 +432,72 @@ async function downloadAchievementIconsInBackground(
   console.log(`[ACH][IMG_REPAIR_DONE] appid=${appIdStr} downloaded=${downloaded} skipped=${skipped} failed=${failed} elapsedMs=${totalElapsed}`);
 }
 
+/**
+ * Ensure canonical achievement schema exists for a game.
+ * Reads from disk cache first, generates from KV binary + Steam API if stale/missing.
+ * Returns the full AppAchievementCache (schema + progress + icons).
+ * Reference: Achievements-1.2.2 — single authoritative schema file per game.
+ */
+async function ensureSchemaGenerated(
+  appId: string,
+  steamPath?: string,
+  accountId?: string,
+  apiKey?: string,
+  platform?: string,
+): Promise<import("./tauri").AppAchievementCache | null> {
+  const appIdNum = Number(appId);
+  const SCHEMA_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  try {
+    const cached = await readAchievementCache(appIdNum, platform);
+    // Return cache if: has entries and is fresh (<24h). Accept ANY source including
+    // "schema-only" to avoid infinite regeneration loop.
+    if (cached && cached.achievements.length > 0) {
+      if (cached.summary.updated_at > 0 && Date.now() - (cached.summary.updated_at * 1000) < SCHEMA_TTL_MS) {
+        console.debug(`[ACH][SCHEMA_GEN] appid=${appId} cache-fresh source=${cached.summary.source} entries=${cached.achievements.length} progressAvailable=${cached.summary.progress_available}`);
+        return cached;
+      }
+      console.debug(`[ACH][SCHEMA_GEN] appid=${appId} cache-stale age=${Date.now() - (cached.summary.updated_at * 1000)}ms regenerating`);
+    }
+  } catch { /* cache read failed, generate fresh */ }
+
+  // Step 1: KV binary parser + API enrichment (primary — already works with type fixes)
+  console.log(`[ACH][SCHEMA_GEN] appid=${appId} generating from KV binary... platform=${platform ?? "steam-official"}`);
+  try {
+    const result: GenerateSchemaResult = await generateAchievementSchema({
+      appId: appIdNum,
+      steamPath,
+      steamAccountId: accountId,
+      steamWebApiKey: apiKey,
+      platform,
+    });
+    console.log(`[ACH][SCHEMA_GEN] appid=${appId} result=${result.source} entries=${result.entries_count} icons=${result.icons_downloaded} progress=${result.progress_available}`);
+    if (result.error) {
+      console.warn(`[ACH][SCHEMA_GEN] appid=${appId} error=${result.error}`);
+    }
+    if (result.entries_count > 0) {
+      const generated = await readAchievementCache(appIdNum, platform);
+      if (generated && generated.achievements.length > 0) {
+        const hasStatId = generated.achievements.some(a => a.stat_id != null);
+        const hasDisplayName = generated.achievements.some(a => a.name && a.name !== a.api_name);
+        console.log(`[ACH][SCHEMA_GEN] appid=${appId} KV cache: ${generated.achievements.length} entries progressAvailable=${generated.summary.progress_available} hasStatId=${hasStatId} hasDisplayName=${hasDisplayName}`);
+        // Only return if we have real data (statId or display names)
+        // Don't return text fallback entries (no statId, no display names)
+        if (hasStatId || hasDisplayName) {
+          return generated;
+        }
+        console.log(`[ACH][SCHEMA_GEN] appid=${appId} KV cache has no useful data (no statId, no displayName), continuing to tool fallback`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[ACH][SCHEMA_GEN] appid=${appId} KV parser failed:`, err);
+  }
+
+  // KV parser failed or produced no useful data — no schema available
+  // (generate_emu_config.exe removed — was unreliable and blocked boot)
+  return null;
+}
+
 export async function resolveSteamAchievements(params: {
   appId: string | number;
   steamWebApiKey?: string;
@@ -661,6 +509,9 @@ export async function resolveSteamAchievements(params: {
   skipImageDownload?: boolean;
   steamAchievementsEnabled?: boolean;
   achievementSchemaPath?: string;
+  gameSource?: string; // "steam" | "lua" | "debrid" | "manual" | "epic"
+  platform?: string; // "steam" | "steam-official" — force platform, skip auto-detect
+  installDir?: string; // game install directory — used for Tenoke crack detection
 }): Promise<GameAchievementsSummary> {
   const appIdStr = normalizeValidAppId(params.appId);
 
@@ -675,59 +526,184 @@ export async function resolveSteamAchievements(params: {
   const hasSteamId64 = typeof params.steamId64 === "string" && params.steamId64.trim().length > 0;
   const hasFullAccess = hasApiKey && hasSteamId64;
 
+  // --- Config-based resolution: auto-detect steamPath + accountId ---
+  const { getOrCreateConfig, resolveSteamPath, getAccountId } = await import("./achievementConfigService");
+  const effectiveSteamPath = params.steamPath || await resolveSteamPath();
+
+  // Auto-convert steamId64 → 32-bit accountId when accountId looks like a 64-bit ID
+  const STEAM_ID64_BASE = 76561197960265728n;
+  let effectiveAccountId = params.accountId?.trim() || "";
+  if (effectiveAccountId && /^\d{17,20}$/.test(effectiveAccountId)) {
+    try {
+      const val = BigInt(effectiveAccountId);
+      if (val >= STEAM_ID64_BASE) {
+        const old = effectiveAccountId;
+        effectiveAccountId = (val - STEAM_ID64_BASE).toString();
+        console.log(`[ACH][ACCOUNT_ID] auto-converted steamId64 ${old} → accountId ${effectiveAccountId}`);
+      }
+    } catch { /* not a valid BigInt, use as-is */ }
+  }
+
+  // Auto-detect accountId from config or stats files
+  if (!effectiveAccountId) {
+    const detected = await getAccountId(appIdStr);
+    if (detected) {
+      effectiveAccountId = detected;
+      console.log(`[ACH][ACCOUNT_ID] auto-detected accountId=${effectiveAccountId}`);
+    }
+  }
+
+  // Get or create achievement config for this game
+  let gameConfig = await getOrCreateConfig(appIdStr, undefined, params.gameSource, params.installDir);
+
+  // Try to get game name from snapshot if config has placeholder name
+  if (gameConfig && gameConfig.name.startsWith("Game ")) {
+    try {
+      const { getCachedSnapshot } = await import("./startupSnapshotService");
+      const snapshot = getCachedSnapshot();
+      const snapGame = snapshot?.library?.games?.find((g: any) => g.appId === appIdStr);
+      if (snapGame?.title) {
+        gameConfig.name = snapGame.title;
+        const { writeConfig } = await import("./achievementConfigService");
+        await writeConfig(gameConfig);
+      }
+    } catch { /* snapshot not available */ }
+  }
+
+  // Platform detection — respect explicit user choice, otherwise auto-detect
+  const { detectCrackType, updateConfigForCrack } = await import("./achievementConfigService");
+  let readPlatform = gameConfig?.platform ?? "steam-official";
+  let readSavePath = gameConfig?.save_path ?? "";
+
+  if (params.platform === "steam-official") {
+    // User explicitly chose "Steam Official" — skip crack detection entirely
+    readPlatform = "steam-official";
+    const steamPath = effectiveSteamPath || await (async () => {
+      const { resolveSteamPath } = await import("./achievementConfigService");
+      return resolveSteamPath();
+    })();
+    readSavePath = steamPath ? `${steamPath}\\appcache\\stats` : "";
+    console.log(`[ACH][RESOLVE] appid=${appIdStr} user chose steam-official, skipping crack detect`);
+  } else if (params.platform === "steam") {
+    // User explicitly chose crack — force crack path
+    readPlatform = "steam";
+    const crackResult = await detectCrackType(appIdStr, params.installDir).catch(() => null);
+    if (crackResult?.savePath) {
+      readSavePath = crackResult.savePath;
+      console.log(`[ACH][RESOLVE] appid=${appIdStr} user chose crack, savePath=${readSavePath}`);
+      try {
+        gameConfig = await updateConfigForCrack(appIdStr, readSavePath, gameConfig?.name) ?? gameConfig;
+      } catch { /* config update failed, continue with local vars */ }
+    }
+  } else {
+    // Auto-detect (default behavior)
+    const crackResult = await detectCrackType(appIdStr, params.installDir).catch(() => null);
+    if (crackResult?.savePath) {
+      readPlatform = "steam";
+      readSavePath = crackResult.savePath;
+      console.log(`[ACH][RESOLVE] appid=${appIdStr} crack save detected platform=steam savePath=${readSavePath}`);
+      try {
+        gameConfig = await updateConfigForCrack(appIdStr, readSavePath, gameConfig?.name) ?? gameConfig;
+      } catch { /* config update failed, continue with local vars */ }
+    } else if (!readSavePath || readSavePath.includes("appcache")) {
+      readPlatform = "steam-official";
+      const steamPath = effectiveSteamPath || await (async () => {
+        const { resolveSteamPath } = await import("./achievementConfigService");
+        return resolveSteamPath();
+      })();
+      readSavePath = steamPath ? `${steamPath}\\appcache\\stats` : "";
+    }
+  }
+
+  console.log(`[ACH][RESOLVE] appid=${appIdStr} effectiveAccountId=${effectiveAccountId || "EMPTY"} steamPath=${effectiveSteamPath || "EMPTY"} platform=${readPlatform} savePath=${readSavePath}`);
+
   if (!achievementsEnabled) {
     return disabledSummary(appIdStr);
   }
 
   const lang = params.language ?? "english";
 
-  // --- Resolver source order ---
-  // 1. Disk cache
-  // 2. Achievements App schema folder (local JSON)
-  // 3. Steam API schema (if API key exists)
-  // 4. Global achievement percentages
-  // 5. Librarycache JSON — local real progress, no API key needed
-  // 6. Web API player progress — only if librarycache has no progress
-  // 7. UserGameStats statId/bit matching
-  // 8. Steam appcache VDF fallback
-  // Do not return early unless: invalid appId, achievements disabled
+  // --- Resolver source order (following reference: schema + binary stats) ---
+  // 1. Canonical schema (KV binary + API enrichment) — auto-generated, cached 24h
+  // 2. Global achievement percentages (rarity display)
+  // 3. Binary stats (UserGameStats_*.bin) — primary progress via bitfield extraction
+  // 4. Web API player progress — fallback when forceRefresh=true and no binary stats
 
   let playerAchievements: PlayerAchievement[] = [];
   let schemaMap = new Map<string, SchemaAchievement>();
   let globalPctMap: Record<string, number> = {};
   let playerHttpStatus: string | null = null;
-  let appcacheSummary: GameAchievementsSummary | null = null;
+  let localProgressSummary: GameAchievementsSummary | null = null;
   let appSchemaAchievements: AppAchievementCacheEntry[] | null = null;
 
-
-
-  // 1. Try disk cache first — but do NOT return for schema-only cache, continue to progress sources
-  let cachedSchemaAchievements: AppAchievementCacheEntry[] | null = null;
+  // 1. Canonical schema — single source of truth for achievement list + optional progress
+  // Split by platform: crack → Steam Web API (writes to steam/<appId>/), official → KV binary (writes to steam-official/<appId>/)
+  let generatedCache: import("./tauri").AppAchievementCache | null = null;
   try {
-    const cached = await readAchievementCache(appIdNum);
-    if (DEBUG_ACH_DIAG && !cached) {
-      console.log(`[ACH][DIAG] appid=${appIdStr} cache=empty`);
-    }
-    if (cached && cached.summary.cache_version === ACHIEVEMENT_CACHE_VERSION) {
-      if (!params.forceRefresh && cached.summary.progress_available && Date.now() - cached.summary.updated_at < CACHE_TTL_MS) {
-        const cacheSummary = cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
-        const stored = achievementStore.getSummary(appIdStr);
-        if (stored) {
-          const accept = isSourceNewerOrEqual(cacheSummary.source, cacheSummary.updatedAt, stored.source, stored.updatedAt);
-          if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=${accept} existingSource=${stored.source}`);
-          if (!accept) {
-            if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
-            return stored;
+    if (readPlatform === "steam") {
+      // Crack path: Steam Web API schema → steam/<appId>/ (crack schema — names/icons/descriptions)
+      if (hasApiKey) {
+        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} crack detected, using Steam Web API → steam/${appIdStr}/`);
+        try {
+          const schemaResponse = await fetchSteamAchievementSchema({
+            appId: appIdNum,
+            apiKey: params.steamWebApiKey!,
+            language: params.language,
+          });
+          // Steam GetSchemaForGame/v2 returns { "game": { "availableGameStats": { "achievements": [...] } } }
+          const gameData = (schemaResponse as any)?.game ?? (schemaResponse as any);
+          const achievementList = gameData?.availableGameStats?.achievements ?? gameData?.achievements?.highlighted ?? gameData?.achievements ?? [];
+          if (Array.isArray(achievementList) && achievementList.length > 0) {
+            const entries: import("./tauri").AppAchievementCacheEntry[] = achievementList.map((a: any) => ({
+              id: a.name,
+              api_name: a.name,
+              name: a.displayName ?? a.name ?? "",
+              description: a.description ?? "",
+              icon: a.icon ?? undefined,
+              icon_gray: a.icongray ?? undefined,
+              unlocked: false,
+              unlock_time: undefined,
+            }));
+            await writeAchievementCache(appIdNum, {
+              achievements: entries,
+              achievement_percentages: [],
+              summary: {
+                app_id: appIdStr,
+                total: entries.length,
+                unlocked: 0,
+                percent: 0,
+                progress_available: false,
+                source: "steam-web-api",
+                updated_at: Math.floor(Date.now() / 1000),
+              },
+            }, false, "steam");
+            console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Steam Web API schema: ${entries.length} achievements written to steam/${appIdStr}/`);
+            generatedCache = await readAchievementCache(appIdNum, readPlatform);
+          } else {
+            console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Steam Web API returned no achievements`);
           }
-        } else {
-          if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=true reason=first-summary`);
+        } catch (e) {
+          console.warn(`[ACH][SCHEMA_GEN] appid=${appIdStr} Steam Web API failed: ${String(e)}`);
         }
-        return cacheSummary;
+      } else {
+        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} crack detected but no Steam Web API key — skipping schema`);
       }
-      // Always populate cached schema metadata — even with forceRefresh, this ensures progress
-      // sources like librarycache have schema entries to match against
-      cachedSchemaAchievements = cached.achievements;
-      for (const a of cached.achievements) {
+
+      // Do NOT create steam-official schema for cracked games.
+      // The crack schema (steam/<appId>/) already contains icon URLs from the Steam Web API.
+      // Icon resolution (resolveAchievementIconPath) falls back from steam-official/ to steam/.
+      // Writing to steam-official/ for cracked games would contaminate the official schema
+      // with crack-sourced data and cause cross-platform interference.
+
+      // Read from crack schema (primary for crack progress)
+      generatedCache = generatedCache ?? await readAchievementCache(appIdNum, readPlatform);
+    } else {
+      // Official path: KV binary + API enrichment → writes schema to steam-official/<appId>/
+      generatedCache = await ensureSchemaGenerated(appIdStr, effectiveSteamPath, effectiveAccountId, params.steamWebApiKey, "steam-official");
+    }
+    if (generatedCache && generatedCache.achievements.length > 0) {
+      appSchemaAchievements = generatedCache.achievements;
+      for (const a of generatedCache.achievements) {
         if (!schemaMap.has(a.api_name)) {
           schemaMap.set(a.api_name, {
             name: a.api_name,
@@ -738,72 +714,21 @@ export async function resolveSteamAchievements(params: {
           });
         }
       }
-      if (cached.summary.progress_available) {
-        console.debug(`[ACH][CACHE] App ${appIdStr}: cached progress found; forceRefresh=${!!params.forceRefresh} — using as metadata fallback`);
-      } else if (cached.summary.source === "schema-only") {
-        console.debug(`[ACH][MERGE] schemaOnlyCache=true continuing to progress sources (${cached.achievements.length} schema entries)`);
-      }
-      // Do NOT return on progress_available when forceRefresh, nor on schema-only — continue to progress sources
-    }
-    if (cached && cached.summary) {
-      console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=existing-cache unlocked=${cached.summary.unlocked ?? 0} total=${cached.summary.total ?? 0} progressAvailable=${cached.summary.progress_available} sourceField=${cached.summary.source}`);
+      // Schema progress data is baked-in at generation time — by the time the resolver
+      // runs, the binary stats / librarycache / crack reader may have fresher data.
+      // Skip early return so the pipeline below can produce an authoritative source
+      // (binary-stats, librarycache, crack) with current unlock counts.
+      // Schema data is still used for names/icons/descriptions via schemaMap above.
+      // NOTE: the old early-return with "schema-generated" source was disabled because
+      // the 24h TTL cache in ensureSchemaGenerated could return stale unlock counts,
+      // and the 5-icon download bug (getSummary without platform) prevented image jobs.
+      console.debug(`[ACH][SCHEMA_GEN] appid=${appIdStr} schema-only=${!generatedCache.summary.progress_available} continuing to progress sources`);
     }
   } catch (err) {
-    console.warn(`[ACH][CACHE] App ${appIdStr}: disk cache read failed:`, err);
+    console.warn(`[ACH][SCHEMA_GEN] appid=${appIdStr} failed:`, err);
   }
 
-  // 2. Achievements App schema folder (local JSON) - works without API key
-  if (params.achievementSchemaPath) {
-    try {
-      const appSchema = await readAchievementsAppSchemaFolder(params.achievementSchemaPath, appIdNum);
-      if (appSchema.achievements.length > 0) {
-        appSchemaAchievements = appSchema.achievements;
-        for (const a of appSchema.achievements) {
-          schemaMap.set(a.api_name, {
-            name: a.api_name,
-            displayName: a.name,
-            description: a.description,
-            icon: a.icon ?? a.icon_url,
-            icongray: a.icon_gray ?? a.icon_gray_url,
-          });
-        }
-        for (const p of appSchema.achievement_percentages) {
-          if (globalPctMap[p.name] == null) {
-            globalPctMap[p.name] = p.percent;
-          }
-        }
-        console.debug(`[ACH][SCHEMA] App ${appIdStr}: loaded ${appSchema.achievements.length} achievements from app schema folder`);
-      }
-    } catch (err) {
-      console.warn(`[ACH][SCHEMA] App ${appIdStr}: app schema folder failed:`, err);
-    }
-  }
-
-  // Fallback: use cached schema metadata if no app schema folder provided
-  if (!appSchemaAchievements && cachedSchemaAchievements) {
-    console.debug(`[ACH][MERGE] using cached schema metadata (${cachedSchemaAchievements.length} entries) as fallback`);
-    appSchemaAchievements = cachedSchemaAchievements;
-  }
-
-  // 3. Steam API schema (only if API key exists)
-  if (hasApiKey) {
-    try {
-      const schemaData = await fetchSteamAchievementSchema({
-        appId: appIdNum,
-        apiKey: params.steamWebApiKey!,
-        language: lang,
-      });
-      const apiSchema = parseSchema(schemaData);
-      // Only overwrite if API returned results
-      if (apiSchema.size > 0) {
-        schemaMap = apiSchema;
-      }
-    } catch (err) {
-      console.warn(`[ACH][SCHEMA] App ${appIdStr}: schema API failed:`, err);
-    }
-  }
-
-  // 4. Global achievement percentages
+  // 2. Global achievement percentages (for rarity display only)
   try {
     const globalData = await fetchSteamGlobalAchievementPercentages(appIdNum);
     globalPctMap = parseGlobalPercentages(globalData);
@@ -811,122 +736,317 @@ export async function resolveSteamAchievements(params: {
     console.warn(`[ACH][RARITY] App ${appIdStr}: global percentages failed:`, err);
   }
 
-  // 5. Librarycache JSON progress (local real progress, no API key needed)
-  let localProgressSummary: GameAchievementsSummary | null = null;
-  let progressFromLibraryCache = false;
-  if (DEBUG_ACH_DIAG && !appSchemaAchievements && params.accountId) {
-    console.log(`[ACH][DIAG] appid=${appIdStr} skipped=librarycache reason=no-schema`);
-  }
-  if (params.accountId && appSchemaAchievements) {
-    console.debug(`[ACH][LIBRARYCACHE] appid=${appIdStr} trying librarycache...`);
+  // 2b. Binary-stats — read directly from .bin files (more reliable than librarycache)
+  // Uses appSchemaAchievements (step 1) for icons/names + parseUserGameStatsRaw for bitmask.
+  // Falls through to librarycache (step 3) when .bin is empty or schema unavailable.
+  // SKIP for readPlatform === "steam": user chose crack saves — Steam binary stats are
+  // irrelevant and would overwrite the crack reader result with stale Steam data.
+  if (!localProgressSummary && readPlatform !== "steam" && effectiveSteamPath && effectiveAccountId) {
     try {
-      const libResult = await parseLibraryCacheAchievements({
-        steamPath: params.steamPath,
-        steamAccountId: params.accountId,
+      const { parseUserGameStatsRaw } = await import("./tauri");
+
+      // Read bitmask from .bin file
+      const statsResult = await parseUserGameStatsRaw({
+        steamPath: effectiveSteamPath,
+        steamAccountId: effectiveAccountId,
         appId: appIdNum,
       });
-      if (libResult.progress_available && libResult.n_total && libResult.n_total > 0) {
-        const { progressMap, rarityMap, nTotal, nAchieved } = buildLibraryCacheProgress(libResult);
-        const unlockedNames = Array.from(progressMap.entries()).filter(([_, v]) => v.unlocked).map(([k]) => k);
-        console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=librarycache nTotal=${nTotal} nAchieved=${nAchieved} progressMap=${progressMap.size} found=true`);
-        if (appIdStr === "1167630") console.log(`[ACH][LC_PARSE_RESULT] appid=1167630 nTotal=${nTotal} nAchieved=${nAchieved} progressMap=${progressMap.size} unlockedApiNames=${JSON.stringify(unlockedNames)}`);
-        console.debug(`[ACH][LIBRARYCACHE] appid=${appIdStr} nTotal=${nTotal} nAchieved=${nAchieved} progressMap=${progressMap.size}`);
-        console.debug(`[ACH][MERGE] librarycache progress found total=${nTotal} achieved=${nAchieved} progressMap=${progressMap.size}`);
-        console.debug(`[ACH][MERGE] applying librarycache progress to canonical schema (${appSchemaAchievements.length} entries)`);
-        const achievements: GameAchievement[] = appSchemaAchievements.map((entry) => {
-          const progress = progressMap.get(entry.api_name);
-          const libRarity = rarityMap.get(entry.api_name);
-          const rawUnlockTime = progress?.unlockTime;
-          return {
-            id: entry.api_name,
-            apiName: entry.api_name,
-            name: entry.name,
-            description: entry.description,
-            iconUrl: entry.icon ?? entry.icon_url,
-            iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
-            unlocked: progress?.unlocked ?? false,
-            unlockTime: rawUnlockTime != null && rawUnlockTime > 0 ? rawUnlockTime : undefined,
-            rarityPercent: entry.rarity_percent ?? libRarity ?? undefined,
-          };
-        });
-        const total = appSchemaAchievements.length > 0 ? appSchemaAchievements.length : (nTotal > 0 ? nTotal : 0);
-        const unlocked = nAchieved > 0 ? nAchieved : achievements.filter((a) => a.unlocked).length;
-        localProgressSummary = {
-          appId: appIdStr,
-          achievements,
-          total,
-          unlocked,
-          percent: total > 0 ? Math.round((unlocked / total) * 100) : 0,
-          progressAvailable: true,
-          source: "librarycache",
-          updatedAt: Date.now(),
-          errorReason: undefined,
-        };
-        progressFromLibraryCache = true;
-        console.debug(`[ACH][LIBRARYCACHE] appid=${appIdStr} progress=${unlocked}/${total} source=librarycache`);
-        console.debug(`[ACH][FINAL] source=librarycache total=${total} unlocked=${unlocked} progressAvailable=true`);
-      } else {
-        console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=librarycache nTotal=${libResult.n_total} nAchieved=${libResult.n_achieved ?? 0} found=false`);
-        console.debug(`[ACH][LIBRARYCACHE] appid=${appIdStr} no progress data found (nTotal=${libResult.n_total})`);
-        // Retry once after 500ms if schema exists but librarycache returned no progress
-        if (appSchemaAchievements.length > 0) {
-          await new Promise(r => setTimeout(r, 500));
-          const retryResult = await parseLibraryCacheAchievements({
-            steamPath: params.steamPath,
-            steamAccountId: params.accountId,
-            appId: appIdNum,
-          });
-          if (retryResult.progress_available && retryResult.n_total && retryResult.n_total > 0) {
-            const { progressMap, rarityMap, nTotal, nAchieved } = buildLibraryCacheProgress(retryResult);
-            console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=librarycache-retry nTotal=${nTotal} nAchieved=${nAchieved} progressMap=${progressMap.size} found=true`);
-            console.debug(`[ACH][LIBRARYCACHE] appid=${appIdStr} retrySuccess=true nTotal=${nTotal} nAchieved=${nAchieved}`);
-            const achievements: GameAchievement[] = appSchemaAchievements.map((entry) => {
-              const progress = progressMap.get(entry.api_name);
-              const libRarity = rarityMap.get(entry.api_name);
-              const rawUnlockTime = progress?.unlockTime;
-              return {
-                id: entry.api_name,
-                apiName: entry.api_name,
-                name: entry.name,
-                description: entry.description,
-                iconUrl: entry.icon ?? entry.icon_url,
-                iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
-                unlocked: progress?.unlocked ?? false,
-                unlockTime: rawUnlockTime != null && rawUnlockTime > 0 ? rawUnlockTime : undefined,
-                rarityPercent: entry.rarity_percent ?? libRarity ?? undefined,
-              };
-            });
-            const total = appSchemaAchievements.length > 0 ? appSchemaAchievements.length : (nTotal > 0 ? nTotal : 0);
-            const unlocked = nAchieved > 0 ? nAchieved : achievements.filter((a) => a.unlocked).length;
-            localProgressSummary = {
-              appId: appIdStr,
-              achievements,
-              total,
-              unlocked,
-              percent: total > 0 ? Math.round((unlocked / total) * 100) : 0,
-              progressAvailable: true,
-              source: "librarycache",
-              updatedAt: Date.now(),
-              errorReason: undefined,
-            };
-            progressFromLibraryCache = true;
-            console.debug(`[ACH][LIBRARYCACHE] appid=${appIdStr} progress=${unlocked}/${total} source=librarycache(retry)`);
-          } else {
-            console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=librarycache-retry nTotal=${retryResult.n_total} found=false`);
+
+      if (statsResult.file_found && statsResult.stat_pairs.length > 0) {
+        // Build stat_id → bitmask map
+        const statsMap = new Map<number, number>();
+        const timestampMap = new Map<string, number>();
+        for (const pair of statsResult.stat_pairs) {
+          statsMap.set(pair.stat_id, pair.value);
+          if (pair.unlock_times) {
+            for (const [bit, ts] of Object.entries(pair.unlock_times)) {
+              timestampMap.set(`${pair.stat_id}:${bit}`, ts);
+            }
           }
         }
+
+        if (appSchemaAchievements && appSchemaAchievements.length > 0) {
+          // Schema available — cross-reference schema (with icons) + bitmask
+          const achievements: GameAchievement[] = [];
+          let unlocked = 0;
+          for (const entry of appSchemaAchievements) {
+            let isUnlocked = false;
+            let unlockTime: number | undefined;
+            if (entry.stat_id != null && entry.bit != null) {
+              const ts = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
+              if (ts) {
+                // Timestamp is authoritative (matches Rust generate_achievement_schema logic)
+                isUnlocked = true;
+                unlockTime = ts * 1000;
+              } else {
+                // Fallback: bitmask check
+                const statValue = statsMap.get(entry.stat_id) ?? 0;
+                isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
+              }
+            }
+            if (isUnlocked) unlocked++;
+            achievements.push({
+              id: entry.api_name,
+              apiName: entry.api_name,
+              name: entry.name ?? entry.api_name,
+              description: entry.description,
+              iconUrl: entry.icon,
+              iconGrayUrl: entry.icon_gray,
+              unlocked: isUnlocked,
+              unlockTime,
+              rarityPercent: globalPctMap[entry.api_name] ?? undefined,
+              statId: entry.stat_id,
+              bit: entry.bit,
+            });
+          }
+
+          const total = achievements.length;
+          localProgressSummary = {
+            appId: appIdStr,
+            achievements,
+            total,
+            unlocked,
+            percent: total > 0 ? Math.round((unlocked / total) * 100) : 0,
+            progressAvailable: true,
+            source: "binary-stats",
+            updatedAt: Date.now(),
+          };
+          console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=binary-stats(direct) unlocked=${unlocked}/${total}`);
+        } else {
+          // No schema yet (first boot) — build minimal achievements from bitmask only
+          // Names/icons will be enriched by librarycache fallback or next schema generation
+          console.log(`[ACH][PROGRESS] App ${appIdStr}: binary-stats .bin has data but no schema — building minimal list from bitmask`);
+        }
+      } else {
+        console.log(`[ACH][PROGRESS] App ${appIdStr}: binary-stats .bin not found or empty`);
       }
     } catch (err) {
-      console.warn(`[ACH][LIBRARYCACHE] appid=${appIdStr} parse failed:`, err);
+      console.debug(`[ACH][PROGRESS] App ${appIdStr}: binary-stats direct read failed:`, err);
     }
   }
 
-  // 6. Web API player progress (only if librarycache did not provide progress, unless forceRefresh)
-  const tryWebApi = hasFullAccess && !progressFromLibraryCache && (!cached403Apps.has(appIdStr) || !!params.forceRefresh);
-  if (DEBUG_ACH_DIAG) {
-    console.log(`[ACH][DIAG] appid=${appIdStr} tryWebApi=${tryWebApi} cached403=${cached403Apps.has(appIdStr)} hasFullAccess=${hasFullAccess} forceRefresh=${!!params.forceRefresh}`);
+  // 3. Librarycache — FALLBACK source when binary-stats not available
+  // SKIP for readPlatform === "steam": crack games should not read Steam librarycache data.
+  if (!localProgressSummary && readPlatform !== "steam" && effectiveAccountId && effectiveSteamPath) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const libcacheResult = await invoke<{
+        n_total: number | null;
+        n_achieved: number | null;
+        entries: Array<{ str_id?: string; b_achieved?: boolean; rt_unlocked?: number }>;
+      } | null>(
+        "parse_librarycache_achievements",
+        { steamPath: effectiveSteamPath, steamAccountId: effectiveAccountId, appId: appIdNum }
+      );
+
+      if (libcacheResult && libcacheResult.n_achieved != null && libcacheResult.n_total != null && libcacheResult.n_total > 0) {
+        const libcacheUnlocked = libcacheResult.n_achieved;
+        const libcacheTotal = libcacheResult.n_total;
+
+        console.log(`[ACH][PROGRESS] App ${appIdStr}: librarycache ${libcacheUnlocked}/${libcacheTotal} entries=${libcacheResult.entries?.length ?? 0}`);
+
+        // Build per-achievement unlock map from librarycache entries
+        const libcacheMap = new Map<string, boolean>();
+        for (const entry of libcacheResult.entries ?? []) {
+          if (entry.str_id) {
+            libcacheMap.set(entry.str_id, entry.b_achieved === true);
+          }
+        }
+
+        // Build achievements list with librarycache unlock status
+        // When appSchemaAchievements is empty (first boot, no KV binary),
+        // build from librarycache entries directly — names/icons come later from
+        // writeAchievementCache + downloadAchievementIconsInBackground.
+        let achievements: GameAchievement[];
+        if (appSchemaAchievements && appSchemaAchievements.length > 0) {
+          achievements = appSchemaAchievements.map(entry => {
+            const libAchieved = libcacheMap.get(entry.api_name);
+            return {
+              id: entry.api_name,
+              apiName: entry.api_name,
+              name: entry.name,
+              description: entry.description,
+              iconUrl: entry.icon ?? entry.icon_url,
+              iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
+              unlocked: libAchieved ?? false,
+              rarityPercent: globalPctMap[entry.api_name] ?? entry.rarity_percent ?? undefined,
+              statId: entry.stat_id,
+              bit: entry.bit,
+              progressStatId: entry.progress_stat_id,
+              progressMin: entry.progress_min,
+              progressMax: entry.progress_max,
+            };
+          });
+        } else {
+          // First boot: no KV binary schema — build achievements from librarycache entries alone
+          // str_id is the achievement API name; unlock status from b_achieved
+          // Icons/names will be enriched on next boot via ensureSchemaGenerated
+          const builtFromLibcache: GameAchievement[] = [];
+          for (const entry of libcacheResult.entries ?? []) {
+            if (!entry.str_id) continue;
+            builtFromLibcache.push({
+              id: entry.str_id,
+              apiName: entry.str_id,
+              name: entry.str_id,
+              description: undefined,
+              iconUrl: undefined,
+              iconGrayUrl: undefined,
+              unlocked: entry.b_achieved === false ? false : true,
+              unlockTime: entry.rt_unlocked ? entry.rt_unlocked * 1000 : undefined,
+              rarityPercent: globalPctMap[entry.str_id] ?? undefined,
+            });
+          }
+          achievements = builtFromLibcache;
+          console.log(`[ACH][LIBCACHE_SCHEMA] appid=${appIdStr} built ${achievements.length} achievements from librarycache (no schema available)`);
+        }
+
+        let computedUnlocked = achievements.filter(a => a.unlocked).length;
+
+        // nAchieved is authoritative: when it's higher than our count,
+        // mark remaining achievements as unlocked (hidden achievements
+        // that Steam doesn't list in per-achievement arrays).
+        if (libcacheUnlocked > computedUnlocked) {
+          const remaining = libcacheUnlocked - computedUnlocked;
+          let marked = 0;
+          for (const a of achievements) {
+            if (!a.unlocked && marked < remaining) {
+              a.unlocked = true;
+              marked++;
+              computedUnlocked++;
+            }
+          }
+          if (marked > 0) {
+            console.log(`[ACH][PROGRESS] App ${appIdStr}: marked ${marked} hidden achievements as unlocked from nAchieved`);
+          }
+        }
+
+        localProgressSummary = {
+          appId: appIdStr,
+          achievements,
+          total: libcacheTotal,
+          unlocked: computedUnlocked,
+          percent: libcacheTotal > 0 ? Math.round((computedUnlocked / libcacheTotal) * 100) : 0,
+          progressAvailable: true,
+          source: "librarycache",
+          updatedAt: Date.now(),
+        };
+        console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=librarycache unlocked=${computedUnlocked}/${libcacheTotal}`);
+      } else {
+        console.log(`[ACH][PROGRESS] App ${appIdStr}: librarycache empty or invalid`);
+      }
+    } catch (err) {
+      console.debug(`[ACH][PROGRESS] App ${appIdStr}: librarycache read failed:`, err);
+    }
   }
-  if (tryWebApi) {
+
+  // 4. Binary stats — FALLBACK only when librarycache didn't provide data
+  // But first check if the achievementStore has better data (from previous librarycache read)
+  if (!localProgressSummary) {
+    const cached = achievementStore.getSummary(appIdStr, readPlatform);
+    if (cached && (cached.unlocked ?? 0) > 0 && cached.progressAvailable
+        && !(readPlatform === "steam-official" && cached.source === "crack")) {
+      localProgressSummary = cached;
+      console.log(`[ACH][PROGRESS] App ${appIdStr}: using cached summary ${cached.unlocked}/${cached.total} source=${cached.source}`);
+    }
+  }
+
+  // 3c. Crack achievements (GSE/RUNE/OnlineFix/Goldberg)
+  // Always try crack reader when we have a save path with real achievement data
+  if (readPlatform === "steam" && readSavePath) {
+    console.log(`[ACH][CRACK_READ] appid=${appIdStr} platform=${readPlatform} savePath=${readSavePath}`);
+    try {
+      const { readCrackAchievements } = await import("./crackAchievementReader");
+      const crackData = await readCrackAchievements(readSavePath, appIdStr);
+      if (crackData && crackData.achievements.length > 0) {
+        console.log(`[ACH][CRACK_READ] appid=${appIdStr} found ${crackData.achievements.length} achievements, ${crackData.unlocked}/${crackData.total} unlocked, schemaMap.size=${schemaMap.size}`);
+        // Enrich crack achievements with schema metadata (names, descriptions, icons)
+        // Use normalized matching for Tenoke/OnlineFix name mismatches
+        const enrichNormalize = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
+        const schemaNormalizedMap = new Map<string, SchemaAchievement>();
+        for (const [key, val] of schemaMap.entries()) {
+          schemaNormalizedMap.set(enrichNormalize(key), val);
+        }
+        let enrichedCount = 0;
+        for (const ach of crackData.achievements) {
+          const schema = schemaMap.get(ach.apiName) ?? schemaNormalizedMap.get(enrichNormalize(ach.apiName));
+          if (schema) {
+            ach.name = schema.displayName || ach.name;
+            ach.description = schema.description || ach.description;
+            ach.iconUrl = schema.icon || ach.iconUrl;
+            ach.iconGrayUrl = schema.icongray || ach.iconGrayUrl;
+            enrichedCount++;
+          }
+        }
+        console.log(`[ACH][CRACK_READ] appid=${appIdStr} enriched ${enrichedCount}/${crackData.achievements.length} with schema data`);
+
+        // CRITICAL: RUNE/CODEX/OnlineFix INI formats only list UNLOCKED achievements.
+        // When schemaMap has MORE entries than the crack data, the crack total is wrong
+        // (e.g. 5 unlocked out of 50 total → crack reports 5/5 = 100% instead of 5/50 = 10%).
+        // Rebuild the full achievement list from schemaMap, overlaying crack unlock status.
+        if (schemaMap.size > crackData.achievements.length) {
+          const crackUnlockMap = new Map(crackData.achievements.map(a => [a.apiName, { unlocked: a.unlocked, unlockTime: a.unlockTime }]));
+          // Normalized lookup: lowercase + strip underscores/dashes/spaces for Tenoke/OnlineFix name mismatches
+          const normalizeKey = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
+          const crackNormalizedMap = new Map<string, string>();
+          for (const name of crackUnlockMap.keys()) {
+            crackNormalizedMap.set(normalizeKey(name), name);
+          }
+          const fullAchievements: GameAchievement[] = [];
+          let normalizedMatches = 0;
+          for (const [apiName, schema] of schemaMap.entries()) {
+            // Try exact match first, then normalized match
+            let crackState = crackUnlockMap.get(apiName);
+            if (!crackState) {
+              const normalizedKey = crackNormalizedMap.get(normalizeKey(apiName));
+              if (normalizedKey) {
+                crackState = crackUnlockMap.get(normalizedKey);
+                if (crackState) normalizedMatches++;
+              }
+            }
+            fullAchievements.push({
+              id: apiName,
+              apiName,
+              name: schema.displayName || apiName,
+              description: schema.description,
+              iconUrl: schema.icon,
+              iconGrayUrl: schema.icongray,
+              unlocked: crackState?.unlocked ?? false,
+              unlockTime: crackState?.unlockTime,
+            });
+          }
+          const oldCount = crackData.achievements.length;
+          crackData.achievements = fullAchievements;
+          crackData.total = schemaMap.size;
+          crackData.unlocked = fullAchievements.filter(a => a.unlocked).length;
+          console.log(`[ACH][CRACK_READ] appid=${appIdStr} REBUILT from schema: total=${crackData.total} unlocked=${crackData.unlocked} exact=${crackUnlockMap.size} normalized=${normalizedMatches} (crack had ${oldCount} entries, schemaMap.size=${schemaMap.size})`);
+        }
+
+        // Crack reader found real data — force platform to "steam"
+        readPlatform = "steam";
+        localProgressSummary = {
+          appId: appIdStr,
+          achievements: crackData.achievements,
+          total: crackData.total,
+          unlocked: crackData.unlocked,
+          percent: crackData.total > 0 ? Math.round((crackData.unlocked / crackData.total) * 100) : 0,
+          progressAvailable: true,
+          source: "crack" as GameAchievementsSummary["source"],
+          updatedAt: Date.now(),
+        };
+        console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=crack-${crackData.source} unlocked=${crackData.unlocked}/${crackData.total}`);
+      } else {
+        console.log(`[ACH][CRACK_READ] appid=${appIdStr} crackData=${crackData ? `null or empty (achievements.length=${crackData?.achievements?.length ?? 0})` : "null"}`);
+      }
+    } catch (err) {
+      console.warn(`[ACH][PROGRESS] App ${appIdStr}: crack achievement read failed (non-critical):`, err);
+    }
+  } else {
+    console.log(`[ACH][CRACK_READ] appid=${appIdStr} skipped — platform=${readPlatform} savePath=${readSavePath ?? "null"}`);
+  }
+
+  // 4. Web API player progress — fallback when forceRefresh=true and no binary stats
+  if (!localProgressSummary && params.forceRefresh && hasFullAccess && !isCached403(appIdStr)) {
+    console.debug(`[ACH][PROGRESS] App ${appIdStr}: trying Web API (forceRefresh fallback)...`);
     try {
       const playerData = await fetchSteamPlayerAchievements({
         appId: appIdNum,
@@ -944,140 +1064,20 @@ export async function resolveSteamAchievements(params: {
       console.warn(`[ACH][PROGRESS_API] App ${appIdStr}: player achievements failed:`, msg);
       if (msg.includes("HTTP 403")) {
         playerHttpStatus = "403";
-        cached403Apps.add(appIdStr);
-        console.debug(`[ACH][PROGRESS_API] appid=${appIdStr} status=403 cachedFailure=true`);
+        cache403(appIdStr);
       }
     }
     console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=web-api achievements=${playerAchievements.length} status=${playerHttpStatus ?? "ok"}`);
   }
 
-  const playerProgressFailed = hasFullAccess && playerAchievements.length === 0 && playerHttpStatus !== "403";
-
-  // 7. Local stats progress matching using schema statId/bit (if librarycache and Web API both failed)
-  if (DEBUG_ACH_DIAG && !localProgressSummary && params.accountId && !appSchemaAchievements) {
-    console.log(`[ACH][DIAG] appid=${appIdStr} skipped=local-stats reason=no-schema`);
-  }
-  if (!localProgressSummary && params.accountId && appSchemaAchievements && appSchemaAchievements.some((a) => a.stat_id != null)) {
-    console.debug(`[ACH][PROGRESS] App ${appIdStr}: trying local UserGameStats...`);
-    try {
-      const statsResult = await parseUserGameStatsRaw({
-        steamPath: params.steamPath,
-        steamAccountId: params.accountId,
-        appId: appIdNum,
-      });
-      if (statsResult.file_found && statsResult.stat_pairs.length > 0) {
-        const built = buildLocalProgressFromStats(appIdStr, appSchemaAchievements, statsResult, globalPctMap);
-        if (built.progressAvailable) {
-          localProgressSummary = built.summary;
-          console.debug(`[ACH][PROGRESS] App ${appIdStr}: local stats progress matched ${built.summary.achievements.filter((a) => a.unlocked).length}/${built.summary.total} unlocked`);
-        } else {
-          console.debug(`[ACH][PROGRESS] App ${appIdStr}: local stats found but no statIds matched schema`);
-        }
-      } else {
-        console.debug(`[ACH][PROGRESS] App ${appIdStr}: local stats file not found or empty`);
-      }
-    } catch (err) {
-      console.warn(`[ACH][PROGRESS] App ${appIdStr}: local UserGameStats parse failed:`, err);
-    }
-  }
-
-  // 8. Fallback: old-style appcache scan (when no App schema stats, or no accountId)
-  if (!localProgressSummary && (params.accountId || params.steamPath)) {
-    console.debug(`[ACH][APPCACHE] App ${appIdStr}: trying legacy appcache scan...`);
-    try {
-      const appcacheResult = await scanSteamAppcacheAchievements({
-        appId: appIdNum,
-        steamAccountId: params.accountId,
-        steamPath: params.steamPath,
-      });
-
-      if (appcacheResult.parsed_achievements.length > 0 || appcacheResult.parsed_schema.length > 0) {
-        appcacheSummary = buildAppcacheSummary(
-          appIdStr,
-          appcacheResult.parsed_achievements,
-          appcacheResult.parsed_schema,
-          appcacheResult.progress_available,
-          appcacheResult.parsed_progress,
-          appcacheResult.parser_confidence,
-        );
-        const achUnlocked = appcacheResult.parsed_achievements.filter(a => a.unlocked).length;
-        console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=appcache parsed=${appcacheResult.parsed_achievements.length} unlocked=${achUnlocked} progressAvailable=${appcacheResult.progress_available}`);
-        console.debug(`[ACH][APPCACHE] App ${appIdStr}: appcache gave ${appcacheSummary.achievements.length} achievements, progressAvailable=${appcacheSummary.progressAvailable}`);
-        if (DEBUG_ACH_DIAG) {
-          console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} source=appcache schema_found=${appcacheResult.schema_file_found} schema_entries=${appcacheResult.parsed_schema.length} achievements_parsed=${appcacheResult.parsed_achievements.length} supported=true`);
-        }
-      } else if (appcacheResult.stats_file_found || appcacheResult.schema_file_found) {
-        console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=appcache parsed=0 unlocked=0 progressAvailable=false files-found-unparseable`);
-        console.debug(`[ACH][APPCACHE] App ${appIdStr}: appcache files found but unparseable`);
-        if (DEBUG_ACH_DIAG) {
-          console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} source=appcache schema_found=${appcacheResult.schema_file_found} stats_found=${appcacheResult.stats_file_found} supported=uncertain`);
-        }
-      } else {
-        console.debug(`[ACH][APPCACHE] App ${appIdStr}: no appcache files found`);
-        if (DEBUG_ACH_DIAG) {
-          console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} source=appcache schema_found=${appcacheResult.schema_file_found} stats_found=${appcacheResult.stats_file_found} supported=false`);
-        }
-      }
-    } catch (err) {
-      console.warn(`[ACH][APPCACHE] App ${appIdStr}: local appcache scan failed:`, err);
-    }
-  }
-
-  // 8.5 If appcache built schema but we still don't have progress, try librarycache against it
-  if (!localProgressSummary && params.accountId && appcacheSummary && appcacheSummary.achievements.length > 0) {
-    console.log(`[ACH][REPAIR_PIPELINE] appid=${appIdStr} schemaBuiltFrom=appcache count=${appcacheSummary.achievements.length}`);
-    try {
-      const libResult = await parseLibraryCacheAchievements({
-        steamPath: params.steamPath,
-        steamAccountId: params.accountId,
-        appId: appIdNum,
-      });
-      if (libResult.progress_available && libResult.n_total && libResult.n_total > 0) {
-        const { progressMap, rarityMap: libRarityMap, nTotal, nAchieved } = buildLibraryCacheProgress(libResult);
-        const schemaAchievements = appcacheSummary.achievements;
-        const achievements: GameAchievement[] = schemaAchievements.map((entry) => {
-          const progress = progressMap.get(entry.apiName);
-          const libRarity = libRarityMap.get(entry.apiName);
-          return {
-            id: entry.apiName,
-            apiName: entry.apiName,
-            name: entry.name,
-            description: entry.description,
-            iconUrl: entry.iconUrl ?? entry.iconGrayUrl,
-            iconGrayUrl: entry.iconGrayUrl,
-            unlocked: progress?.unlocked ?? false,
-            unlockTime: progress?.unlockTime != null && progress.unlockTime > 0 ? progress.unlockTime : undefined,
-            rarityPercent: entry.rarityPercent ?? libRarity ?? undefined,
-          };
-        });
-        localProgressSummary = {
-          appId: appIdStr,
-          achievements,
-          total: nTotal > 0 ? nTotal : achievements.length,
-          unlocked: nAchieved > 0 ? nAchieved : achievements.filter((a) => a.unlocked).length,
-          percent: nTotal > 0 ? Math.round(((nAchieved > 0 ? nAchieved : achievements.filter((a) => a.unlocked).length) / nTotal) * 100) : 0,
-          progressAvailable: true,
-          source: "librarycache",
-          updatedAt: Date.now(),
-          errorReason: undefined,
-        };
-        progressFromLibraryCache = true;
-        console.log(`[ACH][REPAIR_PIPELINE] appid=${appIdStr} applyingLibrarycacheAfterSchemaBuild=true`);
-        console.log(`[ACH][REPAIR_PIPELINE] appid=${appIdStr} final=${nAchieved}/${nTotal} source=librarycache progressAvailable=true`);
-      }
-    } catch (err) {
-      console.warn(`[ACH][REPAIR_PIPELINE] appid=${appIdStr} librarycacheAfterAppcache failed:`, err);
-    }
-  }
-
   // --- Determine final source and summary ---
 
   let summary: GameAchievementsSummary;
-  const metadataCount = schemaMap.size;
-  const progressCount = playerAchievements.length;
-  const rarityCount = Object.keys(globalPctMap).length;
 
-  if (playerAchievements.length > 0) {
+  if (localProgressSummary?.progressAvailable) {
+    summary = localProgressSummary;
+    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=${summary.source} reason=local-progress unlocked=${summary.unlocked}/${summary.total}`);
+  } else if (playerAchievements.length > 0) {
     summary = mergeAchievements({
       playerAchievements,
       schemaMap,
@@ -1087,94 +1087,69 @@ export async function resolveSteamAchievements(params: {
       appId: appIdStr,
     });
     console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=steam-web-api reason=player-achievements unlocked=${summary.unlocked}/${summary.total}`);
-  } else if (localProgressSummary?.progressAvailable) {
-    summary = localProgressSummary;
-    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=librarycache reason=local-progress unlocked=${summary.unlocked}/${summary.total}`);
-  } else if (appcacheSummary && appcacheSummary.progressAvailable) {
-    summary = appcacheSummary;
-    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=appcache reason=appcache-progress unlocked=${summary.unlocked}/${summary.total}`);
   } else if (localProgressSummary) {
     summary = localProgressSummary;
-    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=librarycatch-fallback reason=no-progress-field unlocked=${summary.unlocked}/${summary.total}`);
-  } else if (appcacheSummary && appcacheSummary.achievements.length > 0) {
-    appcacheSummary.errorReason = playerHttpStatus === "403" ? "api-403-fallback" : undefined;
-    summary = appcacheSummary;
-    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=appcache-fallback reason=appcache-schema-only unlocked=${summary.unlocked}/${summary.total} progressAvailable=${summary.progressAvailable}`);
+    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=binary-stats-fallback reason=no-progress-field unlocked=${summary.unlocked}/${summary.total}`);
   } else if (schemaMap.size > 0) {
-    const errorReason = playerHttpStatus === "403" ? "api-403-fallback" : playerProgressFailed ? "api-progress-unavailable" : undefined;
+    const errorReason = playerHttpStatus === "403" ? "api-403-fallback" : undefined;
     summary = buildSchemaOnlySummary(appIdStr, schemaMap, globalPctMap, errorReason);
     console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=schema-only reason=no-progress-sources unlocked=0/${summary.total} progressAvailable=false`);
   } else {
     const unavailableReason = playerHttpStatus === "403" ? "api-403" : "no-data";
-    if (DEBUG_ACH_DIAG) {
-      console.log(`[ACH][DIAG] appid=${appIdStr} final=unavailable reason=${unavailableReason} playerAchievements=${playerAchievements.length} schemaMap=${schemaMap.size} localProgress=${!!localProgressSummary} appcache=${!!appcacheSummary}`);
-      console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} final=unavailable reason=${unavailableReason} localProgress=${(localProgressSummary as GameAchievementsSummary | null)?.source ?? "none"} appcache_entries=${appcacheSummary?.achievements?.length ?? 0}`);
-    }
     summary = buildUnavailableSummary(appIdStr, unavailableReason);
     console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=unavailable reason=${unavailableReason}`);
   }
 
   // Debug logs
   const iconCount = summary.achievements.filter(a => a.iconUrl).length;
-  const grayIconCount = summary.achievements.filter(a => a.iconGrayUrl).length;
-  console.debug(`[ACH][RESOLVE] metadata=${metadataCount} progress=${progressCount} rarity=${rarityCount}`);
-  console.debug(`[ACH][FINAL] total=${summary.achievements.length} icons=${iconCount} grayIcons=${grayIconCount} progressAvailable=${summary.progressAvailable}`);
+  const unlockedCount = summary.achievements.filter(a => a.unlocked).length;
+  console.log(`[ACH][RESOLVE_DONE] appid=${appIdStr} total=${summary.achievements.length} unlocked=${unlockedCount}/${summary.total} source=${summary.source} icons=${iconCount} progressAvailable=${summary.progressAvailable}`);
 
-  // Unlock event detection: compare with previous snapshot
-  // PART 3+4: Only detect new unlocks when a previous snapshot exists,
-  //            to avoid toast spam on first load
-  const newlyUnlockedList: UnlockEvent[] = [];
-  if (summary.progressAvailable && summary.achievements.length > 0) {
-    const prevAppState = previousUnlockedState.get(appIdStr);
-    if (prevAppState) {
-      for (const a of summary.achievements) {
-        if (a.unlocked) {
-          const wasUnlocked = prevAppState.get(a.apiName) ?? false;
-          if (!wasUnlocked) {
-            newlyUnlockedList.push({
-              apiName: a.apiName,
-              name: a.name,
-              iconUrl: a.iconUrl,
-              iconGrayUrl: a.iconGrayUrl,
-              unlockTime: a.unlockTime,
-              rarityPercent: a.rarityPercent,
-            });
-          }
+  // Unlock detection handled by achievementStore.applyProgressPatch (snapshot-based).
+  // Resolver does not detect unlocks — it only returns the summary.
+  summary.newlyUnlocked = [];
+
+  // CRITICAL GUARD: Never overwrite existing progress with schema-only data.
+  // If the store already has progress_available=true data, keep it.
+  const existingStore = achievementStore.getSummary(appIdStr, params.platform);
+  if (existingStore?.progressAvailable && !summary.progressAvailable && !params.forceRefresh) {
+    console.log(`[ACH][PROGRESS_PRESERVE] appid=${appIdStr} keeping existing ${existingStore.unlocked}/${existingStore.total} source=${existingStore.source} over schema-only ${summary.unlocked}/${summary.total}`);
+    // Still write the enriched metadata (icons, names) from the new summary to the store,
+    // but preserve the progress counts from the existing store
+    summary = {
+      ...existingStore,
+      achievements: summary.achievements.map(a => {
+        const existingAch = existingStore.achievements?.find(e => e.apiName === a.apiName);
+        if (existingAch?.unlocked) {
+          return { ...a, unlocked: true, unlockTime: existingAch.unlockTime };
         }
-      }
-      if (newlyUnlockedList.length > 0) {
-        console.debug(`[ACH][UNLOCK] appId=${appIdStr} newlyUnlocked=${newlyUnlockedList.length}`, newlyUnlockedList.map(a => a.name));
-      }
-    } else {
-      console.debug(`[ACH][UNLOCK] appId=${appIdStr} first load — saving state, no toasts`);
-    }
-    // Save current state
-    const currentState = new Map<string, boolean>();
-    for (const a of summary.achievements) {
-      currentState.set(a.apiName, a.unlocked);
-    }
-    previousUnlockedState.set(appIdStr, currentState);
+        return a;
+      }),
+      total: existingStore.total || summary.total,
+      unlocked: existingStore.unlocked ?? summary.unlocked,
+      percent: existingStore.percent ?? summary.percent,
+      updatedAt: Date.now(),
+    };
   }
-  summary.newlyUnlocked = newlyUnlockedList;
 
   // Save to disk cache if we have achievements (progress or schema-only)
   // Only write cache with icon migration when forceRefresh=true (explicit manual/developer action)
   const _migrateIcons = params.forceRefresh === true;
-  const _downloadImages = params.forceRefresh === true && !params.skipImageDownload;
   if (DEBUG_ACH_DIAG) {
     console.log(`[ACH][DIAG] appid=${appIdStr} writeCheck achievementsLength=${summary.achievements.length} willWrite=${summary.achievements.length > 0}`);
   }
   if (summary.achievements.length > 0) {
-    // Protect against overwriting cache with schema-only when valid progress exists
-    // (runs for ALL callers, including forceRefresh)
-    if (summary.source === "schema-only" && !summary.progressAvailable) {
+    // Protect against overwriting cache with no-progress result when valid progress exists
+    // Covers: schema-only, appcache-unparseable, any source with progressAvailable=false
+    // SKIP when forceRefresh=true — manual refresh should NOT preserve stale progress
+    if (!summary.progressAvailable && !params.forceRefresh) {
       try {
-        const existing = await readAchievementCache(appIdNum);
-        if (existing?.summary?.progress_available === true && existing.summary.source !== "schema-only") {
+        const existing = await readAchievementCache(appIdNum, readPlatform);
+        if (existing?.summary?.progress_available === true) {
           const existingUnlocked = existing.summary.unlocked ?? 0;
           const existingTotal = existing.summary.total ?? 0;
-          console.debug(`[ACH][CACHE] write protected reason=would-downgrade-progress appid=${appIdStr} (existing progress_available=true source=${existing.summary.source} unlocked=${existingUnlocked}/${existingTotal})`);
-          console.log(`[ACH][PROGRESS_PRESERVE] appid=${appIdStr} reason=no-new-progress existing=${existingUnlocked}/${existingTotal} result=${existingUnlocked}/${existingTotal}`);
+          console.debug(`[ACH][CACHE] write protected reason=would-downgrade-progress appid=${appIdStr} (existing progress_available=true source=${existing.summary.source} unlocked=${existingUnlocked}/${existingTotal} new-source=${summary.source})`);
+          console.log(`[ACH][PROGRESS_PRESERVE] appid=${appIdStr} reason=no-new-progress existing=${existingUnlocked}/${existingTotal} new-source=${summary.source}`);
           // Merge existing progress with refreshed metadata
           const mergedAchievements: GameAchievement[] = summary.achievements.map((a) => {
             const existingA = existing.achievements.find((ea) => ea.api_name === a.apiName);
@@ -1196,12 +1171,12 @@ export async function resolveSteamAchievements(params: {
             progressAvailable: true,
             source: (existing.summary.source === "librarycache" ? "librarycache-stale" : (existing.summary.source + "-stale")) as GameAchievementsSummary["source"],
             updatedAt: Date.now(),
-            errorReason: "schema-only-refresh",
+            errorReason: "no-new-progress-preserved",
           };
           console.debug(`[ACH][CACHE] App ${appIdStr}: merged existing progress (${summary.unlocked}/${summary.total}) with refreshed metadata`);
         } else {
-          // Existing cache is also schema-only (0/N with no progress) — no real progress to preserve
-          console.debug(`[ACH][CACHE] App ${appIdStr}: schema-only result — no existing real progress to preserve`);
+          // Existing cache is also no-progress — safe to overwrite
+          console.debug(`[ACH][CACHE] App ${appIdStr}: no-progress result — no existing real progress to preserve (existing-progress=${existing?.summary?.progress_available ?? false})`);
         }
       } catch (err) {
         console.warn(`[ACH][CACHE] App ${appIdStr}: cache read for downgrade check failed:`, err);
@@ -1217,7 +1192,7 @@ export async function resolveSteamAchievements(params: {
         achievements,
         achievement_percentages: pcts,
         summary: summaryData,
-      }, _migrateIcons);
+      }, _migrateIcons, readPlatform);
       if (appIdStr === "268910") {
         const unlocked = achievements.filter((a: any) => a.unlocked).length;
         console.log(`[ACH][TRACE_DISK_WRITE] appid=268910 unlocked=${unlocked}/${achievements.length} progressAvailable=${summary.progressAvailable} updatedAt=${summaryData.updated_at}`);
@@ -1226,33 +1201,67 @@ export async function resolveSteamAchievements(params: {
     } catch (err) {
       console.warn(`[ACH][CACHE] App ${appIdStr}: failed to write disk cache:`, err);
     }
+
+    // SQLite dual-write — populate achievement tables for fast reads
+    try {
+      const { upsertAchievementSummary, batchUpsertAchievementEntries } = await import("./tauri");
+      const now = Date.now();
+      await Promise.all([
+        upsertAchievementSummary({
+          appId: appIdStr,
+          unlocked: summary.unlocked ?? 0,
+          total: summary.achievements.length > 0 ? summary.achievements.length : (summary.total ?? 0),
+          inProgress: summary.unlocked ?? 0,
+          completionTime: null,
+          lastUnlockAt: null,
+          updatedAt: now,
+        }),
+        batchUpsertAchievementEntries(summary.achievements.map(a => ({
+          appId: appIdStr,
+          apiName: a.apiName,
+          name: a.name,
+          description: a.description ?? null,
+          iconUrl: a.iconUrl ?? null,
+          iconGray: a.iconGrayUrl ?? null,
+          hidden: false,
+          unlocked: a.unlocked,
+          unlockTime: a.unlockTime ? Math.floor(a.unlockTime / 1000) : null,
+          unlockedAt: a.unlockTime ? Math.floor(a.unlockTime / 1000) : null,
+          globalPct: a.rarityPercent ?? null,
+          updatedAt: now,
+        }))),
+      ]);
+      console.debug(`[ACH][SQLITE] resolver dual-write complete appid=${appIdStr}`);
+    } catch (sqlErr) {
+      console.debug(`[ACH][SQLITE] resolver dual-write failed appid=${appIdStr} error=${sqlErr}`);
+    }
   } else if (DEBUG_ACH_DIAG) {
     console.log(`[ACH][DIAG] appid=${appIdStr} writeSkipped reason=empty-achievements`);
   }
 
-  // Image download for manual refresh — fire-and-forget, does NOT block refresh
-  if (_downloadImages && summary.achievements.length > 0) {
-    const iconUrls: string[] = [];
-    const grayUrls: string[] = [];
-    for (const a of summary.achievements) {
-      const iconCdn = a.iconUrl ? resolveIconToCdnUrl(appIdStr, a.iconUrl) : null;
-      if (iconCdn) iconUrls.push(iconCdn);
-      const grayCdn = a.iconGrayUrl ? resolveIconToCdnUrl(appIdStr, a.iconGrayUrl) : null;
-      if (grayCdn) grayUrls.push(grayCdn);
-    }
+  // Image download — fire-and-forget, does NOT block refresh
+  // Always trigger icon downloads when the resolver has achievements with icon URLs,
+  // not just on Manual Refresh. This ensures icons are created on first boot too.
+  if (summary.achievements.length > 0) {
     // Fire background download — NOT awaited, refresh continues immediately
-    downloadAchievementIconsInBackground(appIdStr, appIdNum, iconUrls, grayUrls);
-    console.log(`[ACH][IMG_REPAIR_NON_BLOCKING] appid=${appIdStr} refreshContinued=true`);
+    downloadAchievementIconsInBackground(appIdStr, appIdNum, summary.achievements, readPlatform);
+    console.log(`[ACH][IMG_REPAIR_NON_BLOCKING] appid=${appIdStr} source=${summary.source} icons=${summary.achievements.filter(a => a.iconUrl).length}/${summary.achievements.length} refreshContinued=true`);
   }
 
   // Check store freshness before returning — prefer newer data from watcher/auto-sync
-  const stored = achievementStore.getSummary(appIdStr);
+  // BUT: when user explicitly chose a platform, never override with cross-platform stale data
+  const stored = achievementStore.getSummary(appIdStr, params.platform);
   if (stored) {
-    const accept = isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt);
-    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=${accept} existingSource=${stored.source} existingUnlocked=${stored.unlocked}/${stored.total}`);
-    if (!accept) {
-      if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
-      return stored;
+    const crossPlatformConflict = params.platform === "steam-official" && stored.source === "crack";
+    if (crossPlatformConflict) {
+      console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} SKIP store freshness — user chose steam-official but store has crack data, not overriding`);
+    } else {
+      const accept = isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt);
+      if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=${accept} existingSource=${stored.source} existingUnlocked=${stored.unlocked}/${stored.total}`);
+      if (!accept) {
+        if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
+        return stored;
+      }
     }
   } else {
     if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=true reason=first-summary`);

@@ -182,11 +182,11 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
         role="dialog"
         aria-modal="true"
         aria-label="Edit profile"
-        className={`fixed inset-0 z-50 flex items-center justify-center transition-all duration-200 ease-out ${isAnimating ? "bg-black/0 backdrop-blur-0" : "bg-black/60 backdrop-blur-sm"} ${reducedMotionClass}`}
+        className={`fixed inset-0 z-50 flex items-center justify-center transition-all duration-200 ease-out ${isAnimating ? "bg-black/0" : "bg-black/40"} ${reducedMotionClass}`}
       >
         <div
           ref={panelRef}
-          className={`relative mx-4 w-full max-w-lg flex max-h-[85vh] flex-col overflow-y-auto rounded-2xl border border-(--color-border) bg-(--color-bg) shadow-2xl transition-all duration-200 ease-out ${isAnimating ? "scale-95 translate-y-2 opacity-0" : "scale-100 translate-y-0 opacity-100"} ${reducedMotionClass}`}
+          className={`relative mx-4 w-full max-w-lg flex max-h-[85vh] flex-col overflow-y-auto rounded-2xl border border-(--color-border) lf-surface shadow-2xl transition-all duration-200 ease-out ${isAnimating ? "scale-95 translate-y-2 opacity-0" : "scale-100 translate-y-0 opacity-100"} ${reducedMotionClass}`}
         >
           {/* ====== BANNER + AVATAR PREVIEW (clickable) ====== */}
           <div className="relative shrink-0">
@@ -242,7 +242,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
                 style={{ background: draft.accentMode === "custom" && draft.accentColor ? draft.accentColor : "var(--color-accent)" }}
               />
               {draft.avatarIsGif && (
-                <span className="absolute -top-1 -right-1 rounded bg-(--color-accent)/80 px-1 text-[9px] font-bold text-white">
+                <span className="absolute -top-1 -right-1 rounded bg-(--color-accent)/80 px-1 text-[9px] font-bold text-(--color-accent-text)">
                   GIF
                 </span>
               )}
@@ -329,7 +329,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           </div>
 
           {/* ====== FOOTER ====== */}
-          <div className="sticky bottom-0 flex items-center justify-between border-t border-(--color-border) bg-(--color-bg) px-6 py-4">
+          <div className="sticky bottom-0 flex items-center justify-between border-t border-(--color-border) lf-surface px-6 py-4">
             <button
               onClick={handleReset}
               className="flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-rose-400/80 transition hover:bg-rose-500/10 hover:text-rose-400"
@@ -346,7 +346,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               </button>
               <button
                 onClick={handleSave}
-                className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-white transition hover:opacity-90 active:scale-[0.97]"
+                className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 active:scale-[0.97]"
               >
                 <Check className="h-4 w-4" />
                 Save

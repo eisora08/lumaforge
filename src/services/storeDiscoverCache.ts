@@ -4,14 +4,14 @@
 // ---------------------------------------------------------------------------
 
 /** Increment when scoring/filtering logic changes to force cache rebuild. */
-export const DISCOVER_SCORING_VERSION = 4;
+export const DISCOVER_SCORING_VERSION = 5;
 
 /**
  * Increment when Discovery Index format or scoring changes.
  * Must stay aligned with DISCOVER_SCORING_VERSION so the index is always
  * rebuilt when scoring logic changes.
  */
-export const DISCOVERY_INDEX_VERSION = 4;
+export const DISCOVERY_INDEX_VERSION = 5;
 
 /** Steam genre ID → display name mapping. Used by discovery index for normalization. */
 export const STEAM_GENRE_IDS: Record<string, string> = {
@@ -69,6 +69,7 @@ export type StoreGame = {
   imageUrl?: string;
   platforms: string[];
   sources: any[];
+  developer?: string;
 };
 
 /**
@@ -142,15 +143,17 @@ export type StoreDiscoveryIndex = {
 };
 
 /** Section source tag for honest labeling. */
-export type SectionSource = "catalog" | "personalized" | "genre" | "lua" | "fallback";
+export type SectionSource = "catalog" | "personalized" | "genre" | "lua" | "fallback" | "curated";
 
 /** New model for a single Discover section rail. */
 export type StoreDiscoverSection = {
   id: string;
   title: string;
-  type: "hero" | "featured" | "rail" | "genre" | "more";
+  type: "hero" | "featured" | "rail" | "genre" | "genre-collection" | "more";
   items: StoreGame[];
   source: SectionSource;
+  /** Genre collection cards — each entry is a genre with its top games for the mosaic. */
+  genreGroups?: { genre: string; items: StoreGame[] }[];
 };
 
 export interface StoreSectionModel {
@@ -173,7 +176,7 @@ export interface CacheEntry {
   allStoreSections: StoreSectionModel[];
   featuredGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
   browseGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
-  luaReadyGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
+  luaReadyGames?: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
   builtAt: number;
   /** The compiled Discovery Index (enriched metadata + quality-gated scores). */
   discoveryIndex?: StoreDiscoveryIndex;
@@ -185,6 +188,86 @@ export interface CacheEntry {
 
 let _cachedDiscover: CacheEntry | null = null;
 let _cachedDiscoverVersion = 0;
+
+// Invalidate stale cache with old capsule_184x69.jpg URLs
+const URL_VERSION_KEY = "lumaforge-store-url-version";
+const CURRENT_URL_VERSION = 2;
+try {
+  const stored = parseInt(localStorage.getItem(URL_VERSION_KEY) ?? "0", 10);
+  if (stored < CURRENT_URL_VERSION) {
+    _cachedDiscover = null;
+    localStorage.setItem(URL_VERSION_KEY, String(CURRENT_URL_VERSION));
+  }
+} catch { /* ignore */ }
+
+// Persistent hero source of truth. The module-level _cachedDiscover dies on app
+// restart, so a cold boot used to fall through to the curated baseline while the
+// enriched pool hydrated -> boot != return. This localStorage copy (featured only,
+// <= 8 tiny StoreGame items) survives the restart so boot restores the SAME hero.
+const FEATURED_PERSIST_KEY = "lumaforge-store-featured-v1";
+
+function persistDiscoverFeatured(featured: StoreGame[]): void {
+  if (!featured || featured.length < 4) return;
+  const compact = featured.map((g) => ({
+    appId: g.appId,
+    title: g.title,
+    imageUrl: g.imageUrl,
+    platforms: g.platforms ?? [],
+  }));
+  try {
+    localStorage.setItem(FEATURED_PERSIST_KEY, JSON.stringify(compact));
+  } catch {
+    // Quota/security exceptions must never break the store render path.
+  }
+}
+
+export function getPersistedDiscoverFeatured(): StoreGame[] | null {
+  try {
+    const raw = localStorage.getItem(FEATURED_PERSIST_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length < 4) return null;
+    const items = parsed.filter(
+      (it): it is { appId: string; title: string; imageUrl?: string; platforms: string[] } =>
+        typeof it === "object" && it !== null &&
+        typeof (it as { appId?: unknown }).appId === "string" &&
+        typeof (it as { title?: unknown }).title === "string",
+    );
+    if (items.length < 4) return null;
+    return items.map((g) => ({
+      appId: g.appId,
+      title: g.title,
+      imageUrl: g.imageUrl,
+      platforms: Array.isArray(g.platforms) ? g.platforms : [],
+      sources: [],
+    }));
+  } catch {
+    return null;
+  }
+}
+
+// ── Browse cache (separate from Discover to avoid cross-contamination) ──
+export interface BrowseCacheEntry {
+  catalogFingerprint: string;
+  browseGames: StoreGame[];
+  luaReadyGames?: StoreGame[];
+  builtAt: number;
+}
+
+let _cachedBrowse: BrowseCacheEntry | null = null;
+
+export function setCachedBrowseGames(games: StoreGame[], catalogFingerprint: string): void {
+  _cachedBrowse = {
+    catalogFingerprint,
+    browseGames: games,
+    builtAt: Date.now(),
+  };
+}
+
+export function getCachedBrowseGames(catalogFingerprint: string): BrowseCacheEntry | null {
+  if (!_cachedBrowse || _cachedBrowse.catalogFingerprint !== catalogFingerprint) return null;
+  return _cachedBrowse;
+}
 
 function computeFingerprint(catalog: { appid: number; name: string }[]): string {
   if (catalog.length === 0) return "empty";
@@ -229,13 +312,10 @@ export function setCachedStoreDiscover(entry: CacheEntry): void {
       console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=complete-cache-exists currentPartial=${!!entry.isPartialCache} currentFeatured=${entry.featuredGames.length} currentSections=${entry.discoverSections.length} existingSections=${existing.discoverSections.length}`);
       return;
     }
-    if (existing && isCacheComplete(existing) && existing.catalogFingerprint === entry.catalogFingerprint) {
-      console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=complete-cache-exists fingerprint=matched`);
-      return;
-    }
   }
   entry.status = isComplete ? "complete" : "partial";
   _cachedDiscover = entry;
+  persistDiscoverFeatured(entry.featuredGames);
 }
 
 export function isDiscoverCacheComplete(entry: CacheEntry | null): boolean {
@@ -309,4 +389,21 @@ export function setCachedStoreMetadata(meta: Record<number, Record<string, unkno
 
 export function clearCachedStoreMetadata(): void {
   _cachedStoreMetadata = null;
+}
+
+// ── Module-level review summary cache (survives mount/unmount) ──
+// Same pattern as metadata — prevents a full discoverSections rebuild on remount
+// when the fingerprint jumps from 0 reviews to N reviews.
+let _cachedReviewSummaries: Record<number, Record<string, unknown>> | null = null;
+
+export function getCachedReviewSummaries(): Record<number, Record<string, unknown>> | null {
+  return _cachedReviewSummaries;
+}
+
+export function setCachedReviewSummaries(summaries: Record<number, Record<string, unknown>>): void {
+  _cachedReviewSummaries = summaries;
+}
+
+export function clearCachedReviewSummaries(): void {
+  _cachedReviewSummaries = null;
 }

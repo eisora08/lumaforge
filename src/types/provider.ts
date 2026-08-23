@@ -1,9 +1,8 @@
 export type ApiProviderId =
   | "hubcapdb"
   | "ryuu"
-  | "twentytwo-cloud"
-  | "sushi"
-  | "custom";
+  | "custom"
+  | "repack";
 
 export type ProviderCapability =
   | "search"
@@ -39,6 +38,7 @@ export type ApiProviderDefinition = {
 
   capabilities: ProviderCapability[];
   supportedFileTypes: PackageFileType[];
+  apiKeyUrl?: string;
 };
 
 export type ApiProviderUserSettings = {

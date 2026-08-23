@@ -26,6 +26,9 @@ export type AppSettings = {
   igdbClientId: string;
   igdbClientSecret: string;
 
+  debridProviders: DebridProviderConfig;
+  debridEndpoint: string;
+
   googleSearchApiKey: string;
   googleSearchCx: string;
   bingSearchApiKey: string;
@@ -39,11 +42,12 @@ export type AppSettings = {
   achievementToastEnabled: boolean;
   achievementNativeNotificationsEnabled: boolean;
   achievementOverlayNotificationsEnabled: boolean;
+  launcherAchievementOverlayEnabled: boolean;
   gameSessionOverlayEnabled: boolean;
+  gameSessionHudEnabled: boolean;
   overlayNotificationPosition: "top-right" | "top-left" | "bottom-right" | "bottom-left" | "top-center" | "bottom-center";
   achievementAutoSyncEnabled: boolean;
   achievementAutoSyncIntervalSeconds: number;
-
   libraryCardArtworkMode: "landscape" | "poster";
   libraryCardSize: number;
   libraryGridGap: number;
@@ -60,10 +64,47 @@ export type AppSettings = {
   libraryLandscapeGap: number;
   maxLandscapeColumns: number;
 
+  cardCornerRadius: number;
+  hideCardLabels: boolean;
+
+  // ── Dashboard Home Layout ──────────────────────────────────────────
+  dashboardHeroEnabled: boolean;
+  dashboardHeroAutoRotate: boolean;
+  dashboardHeroRotateSeconds: number;
+  dashboardHeroSources: string[];
+  dashboardHeroMaxSources: number;
+  dashboardSectionVisibility: Record<string, boolean>;
+  dashboardSectionLimits: Record<string, number>;
+  dashboardDeferredRendering: boolean;
+  dashboardInitialVisibleSections: number;
+
   mediaCacheProfile: "minimal" | "playnite-balanced" | "full";
 
   gameScanFolders: string[];
   scanLocalGames: boolean;
+
+  launchMode: "desktop" | "console";
+  startupWindowMode: "windowed" | "maximized" | "fullscreen";
+  startWithWindows: boolean;
+  startMaximized: boolean;
+  startInTray: boolean;
+  closeToTray: boolean;
+  showDashboardOnStartup: boolean;
+  disableAutoUpdates: boolean;
+};
+
+export type DebridProviderConfig = {
+  torboxApiKey: string;
+  realDebridApiKey: string;
+  allDebridApiKey: string;
+  premiumizeApiKey: string;
+};
+
+export const DEFAULT_DEBRID_PROVIDER_CONFIG: DebridProviderConfig = {
+  torboxApiKey: "",
+  realDebridApiKey: "",
+  allDebridApiKey: "",
+  premiumizeApiKey: "",
 };
 
 export type AppSettingsKey = keyof AppSettings;

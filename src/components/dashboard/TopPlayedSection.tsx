@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Trophy } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
+import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { getCachedPlaytimeStore, getPlaytimeSecondsForAppId, getPlaytimeEntryByAppId } from "../../services/playtimeService";
 import { useSettings } from "../../context/SettingsContext";
-import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
-
-const DEBUG_MEDIA_DASH = false;
-const DEBUG_NAME_DASH = false;
+import { resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
+import {
+  type DashboardDisplayGame,
+  snapshotToDisplayGame,
+  manualToDisplayGame,
+  getNonSnapshotGamesForDashboard,
+  getCardImageCandidate,
+} from "../../services/dashboardManualGames";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
+import { resolveGameMediaUrl } from "../../services/gameCacheService";
+import { subscribePlaytimeStore } from "../../services/playtimeService";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
@@ -17,46 +23,68 @@ type Props = {
   snapshot: StartupSnapshot | null;
   onNavigate?: (page: AppPage) => void;
   excludeAppIds?: string[];
+  maxItems?: number;
 };
 
-function getTopPlayed(
+function getTopPlayedGames(
   snapshotGames: SnapshotGame[],
+  nonSnapshotGames: Array<{ id: string; title: string; libraryId?: string; source?: string }>,
+  libraryGames: LibraryGame[],
   excludeAppIds?: string[],
-): SnapshotGame[] {
+  maxItems?: number,
+): DashboardDisplayGame[] {
   const exclude = new Set(excludeAppIds ?? []);
+  const result: DashboardDisplayGame[] = [];
+  const seen = new Set<string>();
 
-  const playtimeStore = getCachedPlaytimeStore();
-  const playtimeMap: Record<string, number> = {};
-  if (playtimeStore) {
-    for (const [, entry] of Object.entries(playtimeStore.games)) {
-      if (entry.appId) {
-        playtimeMap[entry.appId] = entry.totalPlaytimeSeconds;
-      }
-    }
+  const libGameByAppId = new Map<string, LibraryGame>();
+  for (const lg of libraryGames) {
+    if (lg.appId) libGameByAppId.set(lg.appId, lg);
   }
 
-  const scored = snapshotGames
-    .filter((g) => g.appId && !exclude.has(g.appId))
-    .map((g) => {
-      const totalSeconds = playtimeMap[g.appId!] ?? (g.playtime ? g.playtime * 60 : 0);
-      const ptEntry = getPlaytimeEntryByAppId(g.appId);
-      const sessionCount = ptEntry?.sessions?.length ?? 0;
-      return { game: g, totalSeconds, sessionCount };
-    })
-    .sort((a, b) => {
-      if (b.totalSeconds !== a.totalSeconds) return b.totalSeconds - a.totalSeconds;
-      if (b.sessionCount !== a.sessionCount) return b.sessionCount - a.sessionCount;
-      return 0;
-    });
+  // Snapshot games
+  for (const sg of snapshotGames) {
+    if (!sg.appId || exclude.has(sg.appId) || seen.has(sg.appId)) continue;
+    seen.add(sg.appId);
+    const libGame = libGameByAppId.get(sg.appId);
+    result.push(snapshotToDisplayGame(sg as any, new Set(), libGame));
+  }
 
-  return scored.slice(0, 10).map((s) => s.game);
+  // Non-snapshot games (manual + Epic + future)
+  for (const mg of nonSnapshotGames) {
+    const sid = mg.libraryId || mg.id;
+    if (seen.has(sid)) continue;
+    seen.add(sid);
+    result.push(manualToDisplayGame(mg as any, new Set(), mg.source ?? undefined));
+  }
+
+  // Sort by total playtime descending
+  result.sort((a, b) => b.totalPlaytimeSeconds - a.totalPlaytimeSeconds);
+
+  return result.slice(0, maxItems ?? 10);
 }
 
-export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }: Props) {
+function formatPlaytime(seconds: number): string {
+  if (seconds <= 0) return "";
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  if (rem === 0) return `${hours}h`;
+  return `${hours}h ${rem}m`;
+}
+
+export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
-  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
+  const [playtimeVersion, setPlaytimeVersion] = useState(0);
+
+  useEffect(() => {
+    return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+  }, []);
+
+  const nonSnapshotGames = useMemo(() => getNonSnapshotGamesForDashboard(libraryGames), [libraryGames]);
 
   const snapshotGames = useMemo(
     () => snapshot?.library?.games ?? [],
@@ -64,8 +92,8 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
   );
 
   const displayGames = useMemo(
-    () => getTopPlayed(snapshotGames, excludeAppIds),
-    [snapshotGames, excludeAppIds],
+    () => getTopPlayedGames(snapshotGames, nonSnapshotGames, libraryGames, excludeAppIds, maxItems),
+    [snapshotGames, nonSnapshotGames, libraryGames, excludeAppIds, maxItems, playtimeVersion],
   );
 
   useEffect(() => {
@@ -76,34 +104,28 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
     }
   }, [displayGames]);
 
-  // Stable primitive key derived from displayGames — avoids infinite render loops
-  const gameIdsKey = useMemo(
-    () => displayGames.map(g => g.appId).filter(Boolean).sort().join(','),
-    [displayGames],
-  );
-
-  // Resolve media URLs and titles
+  // Resolve image URLs for all display games
+  // Depend on displayGames directly — when libraryGames state changes (e.g. Epic
+  // scan populates coverPath/landscapePath), nonSnapshotGames recomputes →
+  // displayGames gets new reference → this effect re-runs with fresh _libraryGame paths.
   useEffect(() => {
     let cancelled = false;
-    const ids = gameIdsKey ? gameIdsKey.split(',') : [];
-    const gameById = new Map(displayGames.map(g => [g.appId, g]));
-
     const resolve = async () => {
       const urls: Record<string, string | null> = {};
-      const titles: Record<string, string> = {};
-      const resolvedTitles = displayGames.length > 0 ? await resolveDashboardTitles(displayGames) : {};
-      for (const appId of ids) {
+      for (const game of displayGames) {
         if (cancelled) break;
-        const game = gameById.get(appId);
-        if (!game) continue;
-        const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath;
-        urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
-        titles[appId] = resolvedTitles[appId]?.title ?? game.title;
-        if (imgPath && !cancelled) {
-          const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : "background";
-          if (DEBUG_MEDIA_DASH) console.log(`[MEDIA][DASH] section=TopPlayed appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+        if (game._snapshotGame) {
+          const m = game._snapshotGame.media;
+          const imgPath = m?.landscapePath || m?.coverPath || m?.backgroundPath;
+          urls[game.stableId] = (game.appId && imgPath)
+            ? await resolveGameMediaUrl(game.appId, imgPath)
+            : null;
+        } else if (game._libraryGame) {
+          const rawPath = getCardImageCandidate(game._libraryGame);
+          urls[game.stableId] = rawPath ? await resolveProviderMediaPreviewUrl(rawPath) : null;
+        } else {
+          urls[game.stableId] = null;
         }
-        if (DEBUG_NAME_DASH) console.log(`[NAME][DASH] section=TopPlayed appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setMediaUrlMap(prev => {
@@ -111,36 +133,24 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
             Object.entries(urls).every(([k, v]) => prev[k] === v)) return prev;
         return urls;
       });
-      setTitleMap(prev => {
-        if (Object.keys(prev).length === Object.keys(titles).length &&
-            Object.entries(titles).every(([k, v]) => prev[k] === v)) return prev;
-        return titles;
-      });
     };
     resolve();
     return () => { cancelled = true; };
-  }, [gameIdsKey]);
+  }, [displayGames]);
 
   if (displayGames.length === 0) return null;
 
-  function handleOpen(game: SnapshotGame) {
-    if (game.appId) {
+  function handleOpen(game: DashboardDisplayGame) {
+    if (game._libraryGame) {
+      setSelectedGame(game._libraryGame);
+      onNavigate?.("library-game-detail");
+    } else if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
       if (libGame) {
         setSelectedGame(libGame);
         onNavigate?.("library-game-detail");
       }
     }
-  }
-
-  function formatPlaytime(seconds: number): string {
-    if (seconds <= 0) return "";
-    const mins = Math.floor(seconds / 60);
-    if (mins < 60) return `${mins}m`;
-    const hours = Math.floor(mins / 60);
-    const rem = mins % 60;
-    if (rem === 0) return `${hours}h`;
-    return `${hours}h ${rem}m`;
   }
 
   return (
@@ -157,15 +167,13 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
       </div>
 
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
-        {deduplicateByAppId(displayGames).map((game) => {
-          const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
-          const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
-          const totalSeconds = getPlaytimeSecondsForAppId(game.appId);
-          const totalStr = formatPlaytime(totalSeconds);
+        {displayGames.map((game) => {
+          const imgUrl = mediaUrlMap[game.stableId] ?? null;
+          const totalStr = formatPlaytime(game.totalPlaytimeSeconds);
 
           return (
             <div
-              key={"dashboard:topplayed:steam:" + game.appId}
+              key={"dashboard:topplayed:" + game.stableId}
               className="shrink-0 snap-start"
               style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
             >
@@ -179,13 +187,13 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
                     handleOpen(game);
                   }
                 }}
-                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
+                className="lf-dash-card group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
                 <div className="relative aspect-video overflow-hidden">
                   {imgUrl ? (
                     <AsyncImage
                       src={imgUrl}
-                      alt={displayTitle}
+                      alt={game.title}
                       className="h-full w-full object-cover"
                       fallback={
                         <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -202,8 +210,8 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
                 </div>
 
                 <div className="p-3">
-                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                    {displayTitle}
+                  <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
+                    {game.title}
                   </h3>
                   {totalStr && (
                     <span className="mt-1 inline-block text-[11px] text-(--color-muted)">

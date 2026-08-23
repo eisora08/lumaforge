@@ -1,0 +1,14 @@
+{
+  "name": "steam-catalog-builder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npx tsx build.ts",
+    "resume": "npx tsx build.ts --resume",
+    "validate": "npx tsx validate.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.7.0"
+  }
+}

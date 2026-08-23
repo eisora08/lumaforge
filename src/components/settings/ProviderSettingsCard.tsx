@@ -3,12 +3,14 @@ import {
   Link,
   Plug,
   ShieldCheck,
+  ExternalLink,
 } from "lucide-react";
 
 import {
   ApiProviderDefinition,
   ApiProviderUserSettings,
 } from "../../types/provider";
+import { openExternalUrl } from "../../services/externalLinks";
 
 type ProviderSettingsCardProps = {
   provider: ApiProviderDefinition;
@@ -103,6 +105,16 @@ export default function ProviderSettingsCard({
               placeholder="No configurada"
               className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
             />
+            {provider.apiKeyUrl && (
+              <button
+                type="button"
+                onClick={() => openExternalUrl(provider.apiKeyUrl!)}
+                className="mt-2 inline-flex items-center gap-1.5 text-xs text-(--color-accent) hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Get API Key
+              </button>
+            )}
           </label>
         )}
 

@@ -4,14 +4,18 @@ import type { PackageSource } from "../types/package";
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 const SOURCE_AVAILABILITY_CACHE_TTL_S = 86400; // 24 hours
 const SOURCE_AVAILABILITY_CACHE_MAX = 1000;
+const DEBUG_SOURCE_CACHE = false;
 
 export type SourceCheckStatus =
   | "idle"
   | "checking"
   | "ready"
   | "none"
+  | "needs-configuration"
   | "error"
   | "timeout";
+
+const CURRENT_SCHEMA_VERSION = 2;
 
 export interface SourceAvailabilitySourceEntry {
   id: string;
@@ -40,13 +44,78 @@ export interface SourceAvailabilityIndex {
   games: Record<string, SourceAvailabilityGameEntry>;
 }
 
+/**
+ * Classify provider outcomes into a SourceCheckStatus.
+ * - "ready"                 → at least one provider returned an available source
+ * - "needs-configuration"   → no available source, but at least one provider was skipped
+ *                             due to missing API key or not enabled (requiresApiKey && !hasAuth)
+ * - "error"                 → no available source, at least one provider returned an HTTP error
+ * - "timeout"               → no available source, at least one provider timed out
+ * - "none"                  → no available source, all providers returned empty results
+ *                             (game genuinely does not exist on any configured provider)
+ */
+export function classifyProviderOutcomes(sources: PackageSource[]): SourceCheckStatus {
+  const hasAvailable = sources.some((s) => s.available);
+  if (hasAvailable) return "ready";
+
+  // No available sources — determine WHY based on provider signals
+  let hasConfigIssue = false;
+  let hasError = false;
+  let hasTimeout = false;
+  let hasSkipped = false;
+
+  for (const s of sources) {
+    if (s.available) continue;
+    const err = (s.error ?? "").toLowerCase();
+    if (s.requiresApiKey && !s.hasAuth) {
+      hasConfigIssue = true;
+    } else if (s.statusCode && s.statusCode >= 400) {
+      hasError = true;
+    } else if (err.includes("timeout")) {
+      hasTimeout = true;
+    } else if (err.includes("cooldown") || err.includes("skipped") || err.includes("disabled")) {
+      hasSkipped = true;
+    } else if (err.includes("missing api key") || err.includes("api key") || err.includes("no key")) {
+      hasConfigIssue = true;
+    } else if (err.includes("unauthorized") || err.includes("forbidden")) {
+      hasError = true;
+    }
+  }
+
+  // Priority: config issue first (most actionable for user), then error, timeout, skipped
+  if (hasConfigIssue) return "needs-configuration";
+  if (hasError) return "error";
+  if (hasTimeout) return "timeout";
+  if (hasSkipped) return "needs-configuration"; // all providers skipped = config issue
+  return "none";
+}
+
 let cachedIndex: SourceAvailabilityIndex | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let loadPromise: Promise<SourceAvailabilityIndex> | null = null;
+let _migratedSchemaV1 = false;
 
 function log(...args: unknown[]) {
   if (ENABLE_VERBOSE_SOURCE_LOGS) {
     console.log("[SourceCache]", ...args);
+  }
+}
+
+function migrateSchemaV1(index: SourceAvailabilityIndex): void {
+  if (index.version >= CURRENT_SCHEMA_VERSION || _migratedSchemaV1) return;
+  _migratedSchemaV1 = true;
+  const poisoned: string[] = [];
+  for (const [appId, entry] of Object.entries(index.games)) {
+    // Remove poisoned "none" entries (status=none but no query was possible)
+    // These will be re-classified correctly on next access
+    if (entry.status === "none" && entry.availableSources.length === 0 && entry.totalProviderCount === 0) {
+      poisoned.push(appId);
+      delete index.games[appId];
+    }
+  }
+  index.version = CURRENT_SCHEMA_VERSION;
+  if (poisoned.length > 0) {
+    console.log(`[SOURCE_AVAIL][SCHEMA_MIGRATE] v1→v2 removed-poisoned=${poisoned.length} remaining=${Object.keys(index.games).length}`);
   }
 }
 
@@ -56,13 +125,14 @@ async function loadFromDisk(): Promise<SourceAvailabilityIndex> {
       "read_source_availability_index"
     );
     if (result) {
+      migrateSchemaV1(result);
       log(`loaded entries ${Object.keys(result.games).length}`);
       return result;
     }
   } catch {
     log("load failed");
   }
-  return { version: 1, updatedAt: 0, games: {} };
+  return { version: CURRENT_SCHEMA_VERSION, updatedAt: 0, games: {} };
 }
 
 export async function loadSourceAvailabilityIndex(): Promise<SourceAvailabilityIndex> {
@@ -160,7 +230,11 @@ export async function updateSourceAvailability(
     console.log(`[STORE][SOURCE_CACHE_EMPTY_WRITE_BLOCKED] appid=${appId} previousCount=${existing.availableSources.length} newCount=0`);
     // Bump TTL on existing entry so it doesn't expire from under a retrying user
     existing.updatedAt = Math.floor(Date.now() / 1000);
-    existing.status = entry.status === "timeout" ? "timeout" : "none";
+    // Preserve the new status instead of collapsing everything to "none"
+    existing.status = entry.status;
+    if (DEBUG_SOURCE_CACHE) {
+      console.log(`[SOURCE_CACHE][PRESERVE] appid=${appId} preservedSources=${existing.availableSources.length} newStatus=${entry.status}`);
+    }
     pruneCache();
     scheduleSave();
     return;
@@ -186,7 +260,7 @@ export async function markSourceUnavailable(
     existing.updatedAt = Math.floor(Date.now() / 1000);
     console.log(`[STORE][SOURCE_NONE_PERSIST_BLOCKED] appid=${appId} reason=preserving-existing-sources`);
   } else if (existing) {
-    existing.status = "none";
+    existing.status = "needs-configuration";
     existing.luaReady = false;
     existing.availableSources = [];
     existing.sourceCount = 0;
@@ -214,22 +288,6 @@ function scheduleSave() {
   }, 2000);
 }
 
-export async function saveSourceAvailabilityIndexNow(): Promise<void> {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  if (!cachedIndex) return;
-  try {
-    await invoke("write_source_availability_index", {
-      index: cachedIndex,
-    });
-    log("saved source-index immediately");
-  } catch {
-    console.warn("[SourceCache] immediate save failed");
-  }
-}
-
 export function buildSourceAvailabilityFromProviders(
   appId: string,
   title: string,
@@ -243,7 +301,10 @@ export function buildSourceAvailabilityFromProviders(
       console.log(`[SOURCE_CACHE][AUTH_STRIPPED] provider=${s.providerName} reason=do-not-cache-secrets`);
     }
   }
-  const status: SourceCheckStatus = availableSources.length > 0 ? "ready" : "none";
+  const status: SourceCheckStatus = classifyProviderOutcomes(sources);
+  if (DEBUG_SOURCE_CACHE) {
+    console.log(`[SOURCE_CACHE][CLASSIFY] appid=${appId} status=${status} available=${availableSources.length} total=${sources.length} totalProviderCount=${totalProviderCount}`);
+  }
   return {
     appId,
     title,

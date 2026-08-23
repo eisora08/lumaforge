@@ -59,6 +59,68 @@ function getSourceStatus(source: PackageSource) {
   };
 }
 
+function SourceRow({
+  source,
+  isSelected,
+  onSelect,
+}: {
+  source: PackageSource;
+  isSelected: boolean;
+  onSelect: (sourceKey: string) => void;
+}) {
+  const sourceKey = getSourceKey(source);
+
+  const FileIcon = getFileIcon(source.fileType);
+  const status = getSourceStatus(source);
+  const StatusIcon = status.icon;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(sourceKey)}
+      className={`w-full rounded-xl border p-3.5 text-left transition ${
+        isSelected
+          ? "border-(--color-accent) bg-(--color-accent)/10"
+          : "border-(--surface-active-border) bg-white/5 hover:bg-white/10"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <StatusIcon className={`h-4 w-4 ${status.className}`} />
+            <span className="font-medium text-(--color-text)">
+              {source.providerName}
+            </span>
+          </div>
+
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5">
+              <FileIcon className="h-3 w-3" />
+              .{source.fileType}
+            </span>
+
+            <span className={status.className}>
+              {status.label}
+            </span>
+
+            {source.requiresApiKey && !source.hasAuth && (
+              <span className="text-(--color-warning)/70">
+                API key required
+              </span>
+            )}
+          </div>
+        </div>
+
+        {isSelected && (
+          <span className="mt-0.5">
+            <CheckCircle2 className="h-5 w-5 text-(--color-accent)" />
+          </span>
+        )}
+      </div>
+    </button>
+  );
+}
+
 export default function StoreSourceSelectorModal({
   open,
   game,
@@ -70,7 +132,9 @@ export default function StoreSourceSelectorModal({
 }: StoreSourceSelectorModalProps) {
   if (!open || !game) return null;
 
-  const bestSource = getBestAvailableSource(game);
+  const providerSources = game.sources;
+
+  const bestSource = getBestAvailableSource({ ...game, sources: providerSources });
   const initialKey = selectedSource
     ? getSourceKey(selectedSource)
     : bestSource
@@ -82,8 +146,6 @@ export default function StoreSourceSelectorModal({
   useEffect(() => {
     setSelectedKey(initialKey);
   }, [game?.appId, initialKey]);
-
-  const hasSources = game.sources.length > 0;
 
   const selectedSourceForDownload = selectedKey
     ? game.sources.find((s) => getSourceKey(s) === selectedKey)
@@ -98,7 +160,7 @@ export default function StoreSourceSelectorModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
     >
       <div
@@ -140,71 +202,27 @@ export default function StoreSourceSelectorModal({
           </button>
         </div>
 
-        <div className="max-h-[420px] overflow-y-auto border-t border-(--surface-active-border) px-5 py-4">
-          {!hasSources ? (
+        <div className="max-h-[420px] overflow-y-auto border-t border-(--surface-active-border) px-5 py-4 lf-scroll-area">
+          {providerSources.length === 0 ? (
             <p className="py-6 text-center text-sm text-(--color-muted)">
               No sources available for this game.
             </p>
           ) : (
             <div className="space-y-2">
-              {game.sources.map((source) => {
-                const sourceKey = getSourceKey(source);
-                const isSelected = selectedKey === sourceKey;
-
-                const FileIcon = getFileIcon(source.fileType);
-                const status = getSourceStatus(source);
-                const StatusIcon = status.icon;
-
-                return (
-                  <button
-                    key={sourceKey}
-                    type="button"
-                    onClick={() => {
-                      setSelectedKey(sourceKey);
-                      onSelectSource?.(sourceKey);
-                    }}
-                    className={`w-full rounded-xl border p-3.5 text-left transition ${
-                      isSelected
-                        ? "border-(--color-accent) bg-(--color-accent)/10"
-                        : "border-(--surface-active-border) bg-white/5 hover:bg-white/10"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <StatusIcon className={`h-4 w-4 ${status.className}`} />
-                          <span className="font-medium text-(--color-text)">
-                            {source.providerName}
-                          </span>
-                        </div>
-
-                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5">
-                            <FileIcon className="h-3 w-3" />
-                            .{source.fileType}
-                          </span>
-
-                          <span className={status.className}>
-                            {status.label}
-                          </span>
-
-                          {source.requiresApiKey && !source.hasAuth && (
-                            <span className="text-(--color-warning)/70">
-                              API key required
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {isSelected && (
-                        <span className="mt-0.5">
-                          <CheckCircle2 className="h-5 w-5 text-(--color-accent)" />
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-(--color-muted)">
+                Providers
+              </p>
+              {providerSources.map((source) => (
+                <SourceRow
+                  key={getSourceKey(source)}
+                  source={source}
+                  isSelected={selectedKey === getSourceKey(source)}
+                  onSelect={(sourceKey) => {
+                    setSelectedKey(sourceKey);
+                    onSelectSource?.(sourceKey);
+                  }}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -229,7 +247,7 @@ export default function StoreSourceSelectorModal({
                 onDownloadSource?.(selectedSourceForDownload);
               }
             }}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2.5 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2.5 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
             {getDownloadLabel()}

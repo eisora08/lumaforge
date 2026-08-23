@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 
-const DEBUG_DASH_GLOBAL_MEDIA = false;
 const DEBUG_DASH_FEATURED = false;
-import type { NormalizedCatalogGame, CatalogStatus } from "../../services/globalCatalogService";
-import {
-  subscribeCatalogState,
-  getCachedCatalog,
-  loadNormalizedCatalog,
-  getCatalogState,
-} from "../../services/globalCatalogService";
+import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
+import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
 import { useSettings } from "../../context/SettingsContext";
 import { deduplicateByAppId } from "../../services/gameCacheService";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
@@ -17,71 +11,24 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
+import { subscribeCatalogSections, getCachedCatalogSections } from "../../services/storeCatalogOrchestrator";
+import { getCatalogSectionWithFallback, filterAndSortCatalogGames, resolveBestMedia } from "./dashboardSectionHelpers";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
+  maxItems?: number;
 };
 
-const TOOL_KEYWORDS = [
-  "steamworks", "redistributable", "steam cloud", "steamvr",
-  "proton", "runtime", "sdk", "tool", "directx", "vcredist",
-  "framework", "driver", "utility",
-];
-
-function isToolByTitle(title: string): boolean {
-  const lower = title.toLowerCase();
-  for (const kw of TOOL_KEYWORDS) {
-    if (lower.includes(kw)) return true;
-  }
-  return false;
-}
-
-function resolveBestMedia(game: NormalizedCatalogGame): string | null {
-  return game.media.capsuleImageV5 || game.media.headerImage || game.media.libraryHeroImage || game.media.capsuleImage || game.media.backgroundImage || null;
-}
-
-export default function FeaturedPicksSection({ onNavigate }: Props) {
+export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
-  const [entries, setEntries] = useState<NormalizedCatalogGame[]>(() => getCachedCatalog());
-  const [status, setStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+  const [sections, setSections] = useState(() => getCachedCatalogSections());
+  const [curatedFallback, setCuratedFallback] = useState<NormalizedCatalogGame[] | null>(null);
 
-  // Subscribe to catalog state changes
   useEffect(() => {
-    const unsub = subscribeCatalogState((s) => {
-      setStatus(s.status);
-    });
+    const unsub = subscribeCatalogSections((s) => setSections([...s]));
     return unsub;
   }, []);
-
-  // Load normalized entries once catalog is ready
-  useEffect(() => {
-    let cancelled = false;
-    const cached = getCachedCatalog();
-    if (cached.length > 0) {
-      setEntries(cached);
-      return;
-    }
-    (async () => {
-      const { entries: loaded } = await loadNormalizedCatalog(2000);
-      if (cancelled) return;
-      setEntries(loaded);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // One-time readiness log
-  const readyLogRef = useRef(false);
-  useEffect(() => {
-    if (readyLogRef.current) return;
-    if (status === "ready" || status === "unavailable" || status === "empty" || status === "error") {
-      readyLogRef.current = true;
-      const state = getCatalogState();
-      console.log(
-        `[DASH][GLOBAL_CATALOG_READY] status=${status} total=${state.total} source=${state.source}`,
-      );
-    }
-  }, [status]);
 
   const libraryAppIds = useMemo(() => {
     const set = new Set<string>();
@@ -89,39 +36,59 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
     return set;
   }, [libraryGames]);
 
-  const displayGames = useMemo(() => {
-    if (status !== "ready") return [];
-    const filtered = entries.filter(
-      (g) => g.appId && g.title && !libraryAppIds.has(g.appId) && !isToolByTitle(g.title),
+  // Synchronous orchestrator lookup (fast path)
+  const orchestratorGames = useMemo(() => {
+    const found = sections.find(
+      (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
     );
-    if (filtered.length === 0) return [];
-    const withMedia = filtered.filter((g) => resolveBestMedia(g));
-    const withoutMedia = filtered.filter((g) => !resolveBestMedia(g));
-    const sorted = [...withMedia, ...withoutMedia];
-    return sorted.slice(0, 10);
-  }, [entries, status, libraryAppIds]);
+    if (!found || found.games.length === 0) return null;
+    return found.games.map(mapStoreCatalogGameToCard);
+  }, [sections]);
 
-  // Change-only diagnostic
+  // Async curated fallback (only when orchestrator has no data for this section)
+  useEffect(() => {
+    if (orchestratorGames !== null) {
+      setCuratedFallback(null);
+      return;
+    }
+    if (sections.length === 0) return;
+
+    let cancelled = false;
+    // Try "featured" first, then "top-picks" as secondary
+    getCatalogSectionWithFallback(sections, "featured").then((games) => {
+      if (cancelled) return;
+      if (games) {
+        setCuratedFallback(games);
+      } else {
+        getCatalogSectionWithFallback(sections, "top-picks").then((fallback) => {
+          if (!cancelled) setCuratedFallback(fallback);
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [orchestratorGames, sections]);
+
+  const displayGames = useMemo(() => {
+    const source = orchestratorGames ?? curatedFallback;
+    if (!source) return [];
+    return filterAndSortCatalogGames(source, libraryAppIds, maxItems ?? 10);
+  }, [orchestratorGames, curatedFallback, libraryAppIds, maxItems]);
+
   const featLogRef = useRef<string>("");
   useEffect(() => {
-    const state = getCatalogState();
     const rendered = displayGames.length;
-    const candidates = entries.filter((g) => g.appId && g.title && !isToolByTitle(g.title)).length;
-    const source = "catalog-order";
+    const candidates = orchestratorGames?.length ?? curatedFallback?.length ?? 0;
+    const source = orchestratorGames ? "orchestrator" : curatedFallback ? "curated" : "none";
     const key = `${rendered}|${candidates}|${source}`;
 
-    if (status !== "ready") {
-      if (featLogRef.current !== `loading|${status}`) {
-        featLogRef.current = `loading|${status}`;
-      }
+    if (sections.length === 0) {
+      if (featLogRef.current !== "loading") featLogRef.current = "loading";
       return;
     }
 
     if (candidates === 0 || rendered === 0) {
       if (featLogRef.current !== `skip|${key}`) {
         featLogRef.current = `skip|${key}`;
-        const reason = entries.length === 0 ? "no-ready-catalog" : "all-candidates-filtered";
-        console.log(`[DASH][SECTION_SKIP] section=FeaturedPicks reason=${reason} total=${state.total}`);
       }
       return;
     }
@@ -131,19 +98,17 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
       if (DEBUG_DASH_FEATURED) {
         const withMediaCount = displayGames.filter((g) => resolveBestMedia(g)).length;
         console.log(
-          `[DASH][FEATURED] total=${state.total} candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=${source}`,
+          `[DASH][FEATURED] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=${source}`,
         );
       }
     }
-  }, [displayGames, entries, status]);
+  }, [displayGames, sections, orchestratorGames, curatedFallback]);
 
-  if (status !== "ready" || displayGames.length === 0) return null;
+  if (sections.length === 0 || displayGames.length === 0) return null;
 
   function handleOpen(game: NormalizedCatalogGame) {
     if (!game.appId) return;
     const libGame = libraryGames.find((g) => g.appId === game.appId);
-    const hasMedia = !!resolveBestMedia(game);
-    console.log(`[DASH][GLOBAL_CLICK] section=FeaturedPicks appid=${game.appId} title="${game.title}" inLibrary=${!!libGame} hasMedia=${hasMedia}`);
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
@@ -161,7 +126,7 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
             Featured Picks
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Curated games from the global catalog
+            Curated games from the store catalog
           </p>
         </div>
       </div>
@@ -169,8 +134,8 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {deduplicateByAppId(displayGames).map((game) => {
           const imgSrc = resolveBestMedia(game);
-          if (imgSrc && DEBUG_DASH_GLOBAL_MEDIA) {
-            console.log(`[DASH][GLOBAL_MEDIA] section=FeaturedPicks appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
+          if (imgSrc && DEBUG_DASH_FEATURED) {
+            console.log(`[DASH][FEATURED_MEDIA] appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
           }
           return (
             <div
@@ -188,7 +153,7 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
                     handleOpen(game);
                   }
                 }}
-                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
+                className="lf-dash-card group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
                 <div className="relative aspect-video overflow-hidden">
                   {imgSrc ? (
@@ -211,7 +176,7 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
                 </div>
 
                 <div className="p-3">
-                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                  <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
                   <span className="mt-1 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">

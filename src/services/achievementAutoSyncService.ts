@@ -19,6 +19,7 @@ export type AutoSyncParams = {
   steamPath?: string;
   steamAchievementsEnabled?: boolean;
   achievementSchemaPath?: string;
+  platform?: "steam-official" | "steam";
 };
 
 export type AutoSyncEvent = {
@@ -70,7 +71,7 @@ class AchievementAutoSyncService {
   private subscribers = new Set<AutoSyncCallback>();
   private focusHandler: (() => void) | null = null;
   private enabled = true;
-  private intervalSeconds = 10;
+  private intervalSeconds = 30;
 
   subscribe(cb: AutoSyncCallback): () => void {
     this.subscribers.add(cb);
@@ -99,9 +100,21 @@ class AchievementAutoSyncService {
     const appId = params.appId;
     if (this.watchers.has(appId)) {
       this.watchers.get(appId)!.params = params;
+      // Always propagate platform — user may have switched platform since watcher was created
+      if (params.platform) {
+        import("./achievementWatcherService").then(({ achievementWatcherService }) => {
+          achievementWatcherService.setPlatform(appId, params.platform!);
+        }).catch(() => {});
+      }
       return;
     }
     this.watchers.set(appId, { params, inFlight: false });
+    // Propagate platform to the watcher's composite-key map
+    if (params.platform) {
+      import("./achievementWatcherService").then(({ achievementWatcherService }) => {
+        achievementWatcherService.setPlatform(appId, params.platform!);
+      }).catch(() => {});
+    }
     this.startWatcher(appId);
     if (import.meta.env.DEV) {
       console.debug(`[ACH][AUTO_SYNC] watching appid=${appId}`);
@@ -112,6 +125,10 @@ class AchievementAutoSyncService {
   stopWatching(appId: string): void {
     this.stopWatcher(appId);
     this.watchers.delete(appId);
+    // Clear platform from the watcher's composite-key map
+    import("./achievementWatcherService").then(({ achievementWatcherService }) => {
+      achievementWatcherService.clearPlatform(appId);
+    }).catch(() => {});
     if (DEBUG_ACH_VERBOSE) console.debug(`[ACH][AUTO_SYNC] stopped watching appid=${appId}`);
   }
 
@@ -155,14 +172,14 @@ class AchievementAutoSyncService {
    */
   private async performLocalCacheRefresh(appId: string, reason: string): Promise<void> {
     try {
-      const cached = await readAchievementCache(Number(appId));
+      const cached = await readAchievementCache(Number(appId), this.watchers.get(appId)?.params.platform);
       if (!cached) {
         console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=false updatedAt=null`);
         return;
       }
       const diskUpdatedAt = cached.summary.updated_at;
       if (ENABLE_VERBOSE_ACH_REFRESH_LOGS) console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=true updatedAt=${diskUpdatedAt}`);
-      const existingSummary = achievementStore.getSummary(appId);
+      const existingSummary = achievementStore.getSummary(appId, this.watchers.get(appId)?.params.platform);
       const oldUnlocked = existingSummary?.unlocked ?? 0;
       const oldTotal = existingSummary?.total ?? 0;
       const newUnlocked = cached.summary.unlocked;
@@ -186,6 +203,9 @@ class AchievementAutoSyncService {
         rarityPercent: entry.rarity_percent,
         statId: entry.stat_id,
         bit: entry.bit,
+        progressStatId: entry.progress_stat_id,
+        progressMin: entry.progress_min,
+        progressMax: entry.progress_max,
       }));
       const summary = {
         appId,
@@ -197,12 +217,13 @@ class AchievementAutoSyncService {
         achievements,
         updatedAt: diskUpdatedAt,
       } as GameAchievementsSummary;
-      achievementStore.setSummary(appId, summary);
+      achievementStore.setSummary(appId, summary, this.watchers.get(appId)?.params.platform ?? (cached.summary.source === "crack" ? "steam" : "steam-official"));
       console.log(`[ACH][SUMMARY_APPLY] appid=${appId} unlocked=${newUnlocked}/${newTotal} reason=session-stop-local-cache`);
-      // Phase 4: Persist to disk cache immediately
+      // Phase 4: Persist to disk cache immediately — pass platform to avoid cross-directory write
+      const watchPlatform = this.watchers.get(appId)?.params.platform;
       try {
-        await writeAchievementCache(Number(appId), cached);
-        console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt}`);
+        await writeAchievementCache(Number(appId), cached, false, watchPlatform);
+        console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt} platform=${watchPlatform ?? "none"}`);
       } catch (writeErr) {
         console.warn(`[ACH][CACHE_WRITE] failed appid=${appId}`, String(writeErr));
       }
@@ -215,7 +236,7 @@ class AchievementAutoSyncService {
     }
     // Notify subscribers
     if (this.subscribers.size > 0) {
-      const subSummary = achievementStore.getSummary(appId);
+      const subSummary = achievementStore.getSummary(appId, this.watchers.get(appId)?.params.platform);
       if (subSummary) {
         for (const cb of this.subscribers) {
           try { cb({ appId, summary: subSummary, reason: reason as AutoSyncEvent["reason"] }); }
@@ -315,6 +336,26 @@ class AchievementAutoSyncService {
       return;
     }
 
+    // Throttle: if last resolve was <5 min ago and result was schema-only, skip
+    const { achievementStore } = await import("./achievementStore");
+    const existing = achievementStore.getSummary(appId, state.params.platform);
+    if (existing && existing.source === "schema-only" && !existing.progressAvailable) {
+      const elapsed = Date.now() - (existing.updatedAt || 0);
+      if (elapsed < 5 * 60 * 1000) {
+        console.debug(`[ACH][AUTO_SYNC] refresh skipped appid=${appId} reason=recent-schema-only elapsed=${Math.round(elapsed / 1000)}s`);
+        return;
+      }
+    }
+
+    // Throttle: if store has fresh progress data, skip full resolve (disk-cache-only path handles freshness)
+    if (existing && existing.progressAvailable && (existing.unlocked ?? 0) > 0) {
+      const elapsed = Date.now() - (existing.updatedAt || 0);
+      if (elapsed < 60 * 1000) {
+        console.debug(`[ACH][AUTO_SYNC] refresh skipped appid=${appId} reason=store-fresh elapsed=${Math.round(elapsed / 1000)}s`);
+        return;
+      }
+    }
+
     state.inFlight = true;
     console.debug(`[ACH][AUTO_SYNC] refreshing appid=${appId} reason=${reason}`);
 
@@ -326,8 +367,9 @@ class AchievementAutoSyncService {
         steamId64: params.steamId64,
         accountId: params.accountId,
         steamPath: params.steamPath,
+        platform: params.platform,
         forceRefresh: true,
-        skipImageDownload: true,
+        skipImageDownload: true, // Auto-sync should NOT download images — only manual refresh does
         steamAchievementsEnabled: params.steamAchievementsEnabled,
         achievementSchemaPath: params.achievementSchemaPath,
       });
@@ -341,7 +383,7 @@ class AchievementAutoSyncService {
 
       // Update the central store for cross-surface consistency
       if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=auto-sync:${reason} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable}`);
-      achievementStore.setSummary(appId, summary);
+      achievementStore.setSummary(appId, summary, state.params.platform);
 
       for (const cb of this.subscribers) {
         try {
@@ -362,7 +404,8 @@ class AchievementAutoSyncService {
     this.focusHandler = () => {
       if (!this.enabled) return;
       for (const appId of this.watchers.keys()) {
-        this.triggerRefresh(appId, "window-focus");
+        // Lightweight disk-cache read on focus — avoids full resolve pipeline (config/schema/crack re-read)
+        this.performLocalCacheRefresh(appId, "window-focus").catch(() => {});
       }
     };
     window.addEventListener("focus", this.focusHandler);

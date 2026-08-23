@@ -5,7 +5,7 @@ import { getGameAppInfo, resolveGameMediaPaths, resolveGameMediaPathsBatch, read
 import type { GameMediaPaths, GameAppInfo, SnapshotGameMediaForValidation, ValidatedMediaPaths } from "./tauri";
 import { dedupeLibraryGames, isSidebarInstalledGame } from "./gameCacheService";
 import { isRecentlyNavigated, isInteractionBusy } from "./perfCounters";
-import { getPlaytimeSecondsForAppId, getPlaytimeEntryByAppId, getLastSessionEndForAppId } from "./playtimeService";
+import { getPlaytimeSecondsForAppId, findPlaytimeEntryByAppId, getLastSessionEndForAppId } from "./playtimeService";
 
 const SNAPSHOT_VERSION = 1;
 let cachedSnapshot: StartupSnapshot | null = null;
@@ -40,6 +40,7 @@ export function clearCachedBootAppInfos(): void {
 
 // Debug log flag — set to true during testing, false by default
 const ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS = false;
+const DEBUG_BOOTSNAPSHOT = false;
 
 // ── Write coalescing state (Part 2) ──
 let _mediaUpdateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -466,22 +467,14 @@ export async function notifyMediaUpdated(appId: string, options?: { source?: str
   // Block snapshot writes originating from Store display-only operations
   const storeDisplaySources = new Set(["store-display-image", "browse-image", "discover-image", "news-image", "store-details-image", "dashboard-remote-image"]);
   if (options?.source && storeDisplaySources.has(options.source)) {
-    console.log(`[BootSnapshot][WRITE_SKIP] reason=display-only-change appid=${appId} source=${options.source}`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=display-only-change appid=${appId} source=${options.source}`);
     return;
   }
 
   // Block snapshot writes from display-only MediaIndex sources
   const displaySources = new Set(["store-display", "dashboard-display", "browse-display", "metadata-display"]);
   if (options?.source && displaySources.has(options.source)) {
-    console.log(`[BootSnapshot][WRITE_SKIP] reason=display-only-source appid=${appId} source=${options.source}`);
-    return;
-  }
-
-  // Skip snapshot write when source is local-media-repair — the MediaIndex was
-  // already updated with the new paths from appinfo.json, so re-reading appinfo
-  // would find the same data and produce a no-effective-change skip.
-  if (options?.source === "local-media-repair") {
-    console.log(`[BootSnapshot][WRITE_SKIP] reason=media-index-already-synced appid=${appId} source=local-media-repair`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=display-only-source appid=${appId} source=${options.source}`);
     return;
   }
 
@@ -491,7 +484,7 @@ export async function notifyMediaUpdated(appId: string, options?: { source?: str
   }
   const hash = typeof window !== "undefined" ? window.location.hash : "";
   if (hash.startsWith("#/store")) {
-    console.log(`[BootSnapshot][WRITE_SKIP] reason=store-active-no-local-change appid=${appId}`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=store-active-no-local-change appid=${appId}`);
     return; // NO snapshot write when Store is active
   }
   _scheduleMediaUpdateWrite("media-update", appId);
@@ -508,7 +501,7 @@ function _scheduleMediaUpdateWrite(reason: string, appId?: string): void {
     _pendingAfterWrite = true;
     return;
   }
-  console.log(`[BootSnapshot][SCHEDULE] reason=${reason} appid=${appId ?? "?"} dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
+  if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][SCHEDULE] reason=${reason} appid=${appId ?? "?"} dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
   _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 2000);
 }
 
@@ -521,18 +514,18 @@ async function _processDirtyAppIds(): Promise<void> {
   if (isInteractionBusy()) {
     if (_mediaUpdateDeferStart === null) {
       _mediaUpdateDeferStart = Date.now();
-      console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy dirtyAppIds=${_dirtyAppIds.size}`);
+      if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy dirtyAppIds=${_dirtyAppIds.size}`);
       _writeInProgress = false;
       _mediaUpdateTimer = setTimeout(_processDirtyAppIds, 2000);
       return;
     }
     const elapsed = Date.now() - _mediaUpdateDeferStart;
     if (elapsed >= MAX_DEFER_DURATION_MS) {
-      console.log(`[BootSnapshot][WRITE_FORCED_AFTER_MAX_DEFER] reason=interaction-timeout elapsedMs=${elapsed} dirtyAppIds=${_dirtyAppIds.size}`);
+      if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_FORCED_AFTER_MAX_DEFER] reason=interaction-timeout elapsedMs=${elapsed} dirtyAppIds=${_dirtyAppIds.size}`);
       _mediaUpdateDeferStart = null;
       // Fall through — proceed with the write despite interaction being busy
     } else {
-      console.log(`[BootSnapshot][WRITE_DEFERRED_INTERACTION] elapsedMs=${elapsed} dirtyAppIds=${_dirtyAppIds.size}`);
+      if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_DEFERRED_INTERACTION] elapsedMs=${elapsed} dirtyAppIds=${_dirtyAppIds.size}`);
       _writeInProgress = false;
       _mediaUpdateTimer = setTimeout(_processDirtyAppIds, 2000);
       return;
@@ -543,7 +536,7 @@ async function _processDirtyAppIds(): Promise<void> {
   const dirtyCount = appIds.length;
 
   if (dirtyCount === 0) {
-    console.log(`[BootSnapshot][WRITE_SKIP] reason=no-dirty-appids`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=no-dirty-appids`);
     _mediaUpdateDeferStart = null;
     _writeInProgress = false;
     return;
@@ -588,7 +581,8 @@ async function _processDirtyAppIds(): Promise<void> {
 
           // Update lastPlayed and playtime from playtime store
           // (handles session-end updates that aren't covered by media repair)
-          const ptEntry = getPlaytimeEntryByAppId(appId);
+          // Use findPlaytimeEntryByAppId to find entries under any key (app-, debrid:, manual:)
+          const ptEntry = findPlaytimeEntryByAppId(appId);
           const newPlaytime = ptEntry?.totalPlaytimeSeconds && ptEntry.totalPlaytimeSeconds > 0
             ? Math.round(ptEntry.totalPlaytimeSeconds / 60)
             : null;
@@ -621,6 +615,21 @@ async function _processDirtyAppIds(): Promise<void> {
             }
           } catch {
             // achievementStore not available — skip
+          }
+
+          // Bridge completionStatus from canonical appInfo userData
+          try {
+            const { getGameAppInfo } = await import("./tauri");
+            const appInfo = await getGameAppInfo(appId).catch(() => null);
+            if (appInfo?.userData && typeof appInfo.userData === "object") {
+              const cs = (appInfo.userData as Record<string, unknown>).completionStatus;
+              if (typeof cs === "string" && cs !== game.completionStatus) {
+                game.completionStatus = cs;
+                changed = true;
+              }
+            }
+          } catch {
+            // appInfo not available — skip
           }
           break;
         }
@@ -657,7 +666,7 @@ async function _processDirtyAppIds(): Promise<void> {
   }
 
   if (effectiveChanges === 0) {
-    console.log(`[BootSnapshot][WRITE_SKIP] reason=no-effective-change dirtyAppIds=${dirtyCount}`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=no-effective-change dirtyAppIds=${dirtyCount}`);
     _dirtyAppIds.clear();
     _mediaUpdateDeferStart = null;
     _writeInProgress = false;
@@ -771,6 +780,7 @@ export type SnapshotGame = {
   mediaStatus: MediaStatus | null;
   missingMedia: string[];
   achievementSummary?: SnapshotAchievementSummary | null;
+  completionStatus?: string | null;
   lastMediaCheckAt: number | null;
   updatedAt?: number;
 };
@@ -939,6 +949,16 @@ export async function hydrateStartupSnapshotMedia(
       debugAppLog(game.appId, `repaired title: ${game.title}`);
     }
 
+    // Bridge completionStatus from canonical appInfo userData
+    if (hasCanonical && canonicalInfo?.userData && typeof canonicalInfo.userData === "object") {
+      const cs = (canonicalInfo.userData as Record<string, unknown>).completionStatus;
+      if (typeof cs === "string" && cs !== game.completionStatus) {
+        game.completionStatus = cs;
+        gameChanged = true;
+        debugAppLog(game.appId, `repaired completionStatus: ${cs}`);
+      }
+    }
+
     if (gameChanged) {
       changed = true;
       changedAppIds.add(game.appId);
@@ -1025,6 +1045,12 @@ export async function loadStartupSnapshot(): Promise<StartupSnapshot | null> {
       // Phase 6: Initialize fingerprint on load so first full-rebuild doesn't
       // write when dirtyAppIds=0 and content hasn't changed.
       _lastWriteFingerprint = computeSnapshotFingerprint(result);
+      // Notify subscribers that snapshot is now available from disk.
+      // Without this, Home.tsx and other subscribers only learn about the snapshot
+      // when a WRITE occurs (e.g. Stage 3.5 enrichment save). On warm boots where
+      // no titles need enrichment, no write happens and sections stay empty until
+      // the user navigates away and back.
+      notifySnapshotWritten();
       if (needsUpgrade) {
         saveStartupSnapshot(result); // persist upgraded fields to disk
       }
@@ -1061,7 +1087,7 @@ function computeSnapshotFingerprint(snapshot: StartupSnapshot): string {
 export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<void> {
   const fp = computeSnapshotFingerprint(snapshot);
   if (fp === _lastWriteFingerprint) {
-    console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change`);
     return;
   }
   _lastWriteFingerprint = fp;
@@ -1071,6 +1097,11 @@ export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<vo
   // Write to disk first so a failed write never creates phantom in-memory state
   try {
     await invoke("write_startup_snapshot", { snapshot });
+    // Dual-write: also persist to SQLite for fast boot reads
+    try {
+      const { upsertGameCatalogBlob, CATALOG_KEYS } = await import("./tauri");
+      await upsertGameCatalogBlob(CATALOG_KEYS.startupSnapshot, JSON.stringify(snapshot));
+    } catch { /* non-critical */ }
     console.log(`[BootSnapshot] save ok`);
   } catch {
     // non-critical
@@ -1290,6 +1321,11 @@ export async function buildStartupSnapshotFromCurrentState(
       };
     }
 
+    // Read user-set completion status from canonical appInfo userData
+    const completionStatus = canonicalInfo?.userData && typeof canonicalInfo.userData === "object"
+      ? (canonicalInfo.userData as Record<string, unknown>).completionStatus as string | undefined
+      : undefined;
+
     snapshotGames.push({
       appId: game.appId,
       provider: "steam",
@@ -1301,12 +1337,20 @@ export async function buildStartupSnapshotFromCurrentState(
       source: game.source,
       installPath: game.installDir || null,
       media,
-      lastPlayed: game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null,
+      lastPlayed: (() => {
+        // Prefer playtime store (authoritative lastPlayedAt from sessions)
+        // Use findPlaytimeEntryByAppId to find entries under any key (app-, debrid:, manual:)
+        const ptEntry = game.appId ? findPlaytimeEntryByAppId(game.appId) : null;
+        if (ptEntry?.lastPlayedAt) return ptEntry.lastPlayedAt;
+        // Fallback: from game fields (seconds from snapshot)
+        return game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null;
+      })(),
       playtime: (getPlaytimeSecondsForAppId(game.appId) > 0 ? Math.round(getPlaytimeSecondsForAppId(game.appId) / 60) : null) ?? game.steamPlaytimeMinutes ?? null,
       cloudStatus: game.steamCloudStatus ?? null,
       mediaStatus,
       missingMedia,
       achievementSummary,
+      completionStatus: completionStatus || null,
       lastMediaCheckAt: now,
       updatedAt: now,
     });
@@ -1325,6 +1369,64 @@ export async function buildStartupSnapshotFromCurrentState(
           landscapePath: media.landscapePath,
           coverPath: media.coverPath,
         },
+      });
+    }
+  }
+
+  // Phase 2: Add Epic/GOG games (appId-less, using game.id as synthetic key).
+  // These games have no canonical appinfo or Steam media paths, so media is null
+  // until the user adds artwork via GameEditDialog.
+  for (const game of games) {
+    if (game.appId) continue; // already processed in main Steam loop
+
+    const syntheticId = game.id;
+    const title = game.title || "Unknown Game";
+
+    // Try to read media paths from Epic override store
+    let media: SnapshotGameMedia = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
+    try {
+      if (game.source === "epic") {
+        const { readEpicOverrides } = await import("./epicOverrideStore");
+        const overrides = readEpicOverrides(syntheticId);
+        if (overrides) {
+          // Override store doesn't store media paths directly — they're managed by the media adapter.
+          // For now, media stays null until provider media resolution is wired.
+        }
+      }
+    } catch {
+      // override store not available — leave media null
+    }
+
+    const playtimeSeconds = getPlaytimeSecondsForAppId(syntheticId);
+
+    snapshotGames.push({
+      appId: syntheticId,
+      provider: game.source,
+      title,
+      installed: game.isInstalled ?? false,
+      playable: game.isPlayable ?? false,
+      favorite: game.isFavorite ?? false,
+      hidden: false,
+      source: game.source,
+      installPath: null,
+      media,
+      lastPlayed: game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null,
+      playtime: playtimeSeconds > 0 ? Math.round(playtimeSeconds / 60) : game.steamPlaytimeMinutes ?? null,
+      cloudStatus: null,
+      mediaStatus: null,
+      missingMedia: [],
+      achievementSummary: null,
+      lastMediaCheckAt: now,
+      updatedAt: now,
+    });
+
+    // Sidebar: include installed Epic/GOG games
+    if (isSidebarInstalledGame(game)) {
+      sidebarItems.push({
+        appId: syntheticId,
+        title,
+        provider: game.source,
+        media: { landscapePath: null, coverPath: null },
       });
     }
   }
@@ -1374,7 +1476,7 @@ export function scheduleSnapshotWrite(
   // Phase 11: Defer full-rebuild snapshot writes during active navigation
   // to prevent competing with route transitions for disk I/O.
   if (isRecentlyNavigated(2000)) {
-    console.log(`[BootSnapshot][WRITE_DEFER] reason=navigation-active caller=${reason ?? "unknown"} delayMs=${delayMs}`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_DEFER] reason=navigation-active caller=${reason ?? "unknown"} delayMs=${delayMs}`);
     debounceTimer = setTimeout(() => {
       scheduleSnapshotWrite(games, appInfoMap, statsMap, delayMs, reason);
     }, 1000);
@@ -1383,27 +1485,27 @@ export function scheduleSnapshotWrite(
 
   const deduped = dedupeLibraryGames(games);
   if (deduped.length !== games.length) {
-    console.log(`[BootSnapshot][DEDUP] before=${games.length} after=${deduped.length}`);
+    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][DEDUP] before=${games.length} after=${deduped.length}`);
   }
-  console.log(`[BootSnapshot][SCHEDULE] reason=${reason ?? "full-rebuild"} caller=${reason ?? "unknown"} games=${deduped.length} delayMs=${delayMs}`);
+  if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][SCHEDULE] reason=${reason ?? "full-rebuild"} caller=${reason ?? "unknown"} games=${deduped.length} delayMs=${delayMs}`);
   debounceTimer = setTimeout(async () => {
     // Phase 7 + S3: Defer full rebuild during active interaction (scroll/click/nav),
     // with a maximum defer limit of MAX_DEFER_DURATION_MS to prevent indefinite deferral.
     if (isInteractionBusy()) {
       if (_fullRebuildDeferStart === null) {
         _fullRebuildDeferStart = Date.now();
-        console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy caller=${reason ?? "unknown"} full-rebuild=true`);
+        if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy caller=${reason ?? "unknown"} full-rebuild=true`);
         const cbArgs: Parameters<typeof scheduleSnapshotWrite> = [games, appInfoMap, statsMap, delayMs, reason];
         debounceTimer = setTimeout(() => scheduleSnapshotWrite(...cbArgs), 1500);
         return;
       }
       const elapsed = Date.now() - _fullRebuildDeferStart;
       if (elapsed >= MAX_DEFER_DURATION_MS) {
-        console.log(`[BootSnapshot][WRITE_FORCED_AFTER_MAX_DEFER] reason=interaction-timeout elapsedMs=${elapsed} caller=${reason ?? "unknown"}`);
+        if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_FORCED_AFTER_MAX_DEFER] reason=interaction-timeout elapsedMs=${elapsed} caller=${reason ?? "unknown"}`);
         _fullRebuildDeferStart = null;
         // Fall through — proceed with the build despite interaction being busy
       } else {
-        console.log(`[BootSnapshot][WRITE_DEFERRED_INTERACTION] elapsedMs=${elapsed} caller=${reason ?? "unknown"}`);
+        if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_DEFERRED_INTERACTION] elapsedMs=${elapsed} caller=${reason ?? "unknown"}`);
         const cbArgs: Parameters<typeof scheduleSnapshotWrite> = [games, appInfoMap, statsMap, delayMs, reason];
         debounceTimer = setTimeout(() => scheduleSnapshotWrite(...cbArgs), 1500);
         return;
@@ -1413,7 +1515,7 @@ export function scheduleSnapshotWrite(
     // Phase 17: Defer full-rebuild when a media-update write (_processDirtyAppIds)
     // is in progress to prevent cross-path cachedSnapshot reference swap.
     if (_writeInProgress) {
-      console.log(`[BootSnapshot][WRITE_DEFERRED_ACTIVE_WRITE] reason=active-media-write caller=${reason ?? "unknown"}`);
+      if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_DEFERRED_ACTIVE_WRITE] reason=active-media-write caller=${reason ?? "unknown"}`);
       const cbArgs: Parameters<typeof scheduleSnapshotWrite> = [games, appInfoMap, statsMap, delayMs, reason];
       debounceTimer = setTimeout(() => scheduleSnapshotWrite(...cbArgs), 1500);
       return;
@@ -1426,8 +1528,7 @@ export function scheduleSnapshotWrite(
       // No-op guard BEFORE WRITE_START log: skip save if content hasn't changed
       const newFp = computeSnapshotFingerprint(snapshot);
       if (newFp === _lastWriteFingerprint) {
-        console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change-full-rebuild games=${snapshot.library.games.length} sidebarItems=${snapshot.sidebar.items.length}`);
-        _fullRebuildDeferStart = null;
+        if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change-full-rebuild games=${snapshot.library.games.length} sidebarItems=${snapshot.sidebar.items.length}`);
         return;
       }
 

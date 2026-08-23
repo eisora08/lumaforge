@@ -18,7 +18,7 @@ pub struct RawSteamNewsItem {
 }
 
 #[tauri::command]
-pub fn fetch_steam_news(
+pub async fn fetch_steam_news(
     app_id: u32,
     count: Option<u32>,
     maxlength: Option<u32>,
@@ -31,7 +31,7 @@ pub fn fetch_steam_news(
         app_id, count, maxlength
     );
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(15))
         .connect_timeout(Duration::from_secs(8))
@@ -42,6 +42,7 @@ pub fn fetch_steam_news(
     let response = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| format!("Steam news request failed: {}", e))?;
 
     if !response.status().is_success() {
@@ -50,6 +51,7 @@ pub fn fetch_steam_news(
 
     let json: serde_json::Value = response
         .json()
+        .await
         .map_err(|e| format!("Failed to parse Steam news response: {}", e))?;
 
     let newsitems = json

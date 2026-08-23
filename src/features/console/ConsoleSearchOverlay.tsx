@@ -9,8 +9,7 @@ import type { VirtualKeyDef } from "./ConsoleVirtualKeyboard";
 import { useConsoleGamepadInput } from "./useConsoleGamepadInput";
 
 /* ── Debug flags ── */
-const DEBUG_SEARCH_KEYBOARD = false;
-const DEBUG_SEARCH_INPUT = false;
+const DEBUG_CONSOLE_SEARCH_NAV = false;
 
 /* ── Direct gamepad connection check (no module flag dependency) ── */
 function isAnyGamepadConnected(): boolean {
@@ -126,7 +125,7 @@ export default function ConsoleSearchOverlay({
       setKeyboardRow(0);
       setKeyboardCol(0);
       const connected = isAnyGamepadConnected();
-      if (DEBUG_SEARCH_KEYBOARD) {
+      if (DEBUG_CONSOLE_SEARCH_NAV) {
         console.log(`[CONSOLE_SEARCH][OPEN] open=${open} gamepadConnected=${connected} focusMode=${connected ? "keyboard" : "results"} query=""`);
       }
       setGamepadDetectedState(connected);
@@ -143,7 +142,7 @@ export default function ConsoleSearchOverlay({
 
   /* ── Keyboard visibility diagnostic ── */
   useEffect(() => {
-    if (open && DEBUG_SEARCH_KEYBOARD) {
+    if (open && DEBUG_CONSOLE_SEARCH_NAV) {
       console.log(`[CONSOLE_SEARCH][KEYBOARD_VISIBLE] visible=${focusMode === "keyboard"} gamepadDetected=${gamepadDetected} focusMode=${focusMode} rows=${VIRTUAL_KEYS.length}`);
     }
   }, [open, focusMode, gamepadDetected]);
@@ -209,7 +208,7 @@ export default function ConsoleSearchOverlay({
     const handler = (e: KeyboardEvent) => {
       /* ── Event dedup ── */
       if (e.key === lastKey && e.timeStamp - lastTime < 80) {
-        if (DEBUG_SEARCH_KEYBOARD) {
+        if (DEBUG_CONSOLE_SEARCH_NAV) {
           console.log(`[CONSOLE_KEYBOARD][SKIP_PREVENTED] key=${e.key} timeSince=${Math.round(e.timeStamp - lastTime)}ms`);
         }
         return;
@@ -236,7 +235,7 @@ export default function ConsoleSearchOverlay({
         e.preventDefault();
         e.stopImmediatePropagation();
         setQuery((prev) => prev.slice(0, -1));
-        if (DEBUG_SEARCH_INPUT) {
+        if (DEBUG_CONSOLE_SEARCH_NAV) {
           console.log(`[CONSOLE_SEARCH][X_DELETE] queryLength=${queryRef.current.length}`);
         }
         return;
@@ -244,7 +243,7 @@ export default function ConsoleSearchOverlay({
 
       if (mode === "keyboard" && gpDetected) {
         /* ── Keyboard mode ── */
-        if (DEBUG_SEARCH_INPUT) {
+        if (DEBUG_CONSOLE_SEARCH_NAV) {
           console.log(`[CONSOLE_SEARCH_INPUT][OWNER] key=${e.key} focusMode=keyboard`);
         }
 
@@ -255,7 +254,7 @@ export default function ConsoleSearchOverlay({
             setKeyboardRow((prev) => {
               if (prev <= 0) return prev;
               const next = prev - 1;
-              if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=up row=${prev}→${next} col=${keyboardColRef.current}`);
+              if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=up row=${prev}→${next} col=${keyboardColRef.current}`);
               return next;
             });
             break;
@@ -266,11 +265,11 @@ export default function ConsoleSearchOverlay({
             setKeyboardRow((prev) => {
               if (prev >= VIRTUAL_KEYS.length - 1) {
                 setFocusMode("results");
-                if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=down row=${prev}→results`);
+                if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=down row=${prev}→results`);
                 return prev;
               }
               const next = prev + 1;
-              if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=down row=${prev}→${next} col=${keyboardColRef.current}`);
+              if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=down row=${prev}→${next} col=${keyboardColRef.current}`);
               return next;
             });
             break;
@@ -281,7 +280,7 @@ export default function ConsoleSearchOverlay({
             setKeyboardCol((prev) => {
               const len = rowLen(keyboardRowRef.current);
               const next = prev <= 0 ? len - 1 : prev - 1;
-              if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=left col=${prev}→${next} row=${keyboardRowRef.current}`);
+              if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=left col=${prev}→${next} row=${keyboardRowRef.current}`);
               return next;
             });
             break;
@@ -292,7 +291,7 @@ export default function ConsoleSearchOverlay({
             setKeyboardCol((prev) => {
               const len = rowLen(keyboardRowRef.current);
               const next = prev >= len - 1 ? 0 : prev + 1;
-              if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=right col=${prev}→${next} row=${keyboardRowRef.current}`);
+              if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_KEYBOARD][MOVE] dir=right col=${prev}→${next} row=${keyboardRowRef.current}`);
               return next;
             });
             break;
@@ -315,7 +314,7 @@ export default function ConsoleSearchOverlay({
           case "Y":
             e.preventDefault();
             e.stopImmediatePropagation();
-            if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] keyboard→results via Y`);
+            if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] keyboard→results via Y`);
             setFocusMode("results");
             break;
 
@@ -324,7 +323,7 @@ export default function ConsoleSearchOverlay({
           case "B":
             e.preventDefault();
             e.stopImmediatePropagation();
-            if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] keyboard→results via ${e.key}`);
+            if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] keyboard→results via ${e.key}`);
             setFocusMode("results");
             break;
 
@@ -332,14 +331,14 @@ export default function ConsoleSearchOverlay({
           case "V":
             e.preventDefault();
             e.stopImmediatePropagation();
-            if (DEBUG_SEARCH_INPUT) {
+            if (DEBUG_CONSOLE_SEARCH_NAV) {
               console.log(`[CONSOLE_SEARCH_INPUT][CONSUME] key=${e.key} blocked-behind-search`);
             }
             break;
         }
       } else {
         /* ── Results mode or no gamepad ── */
-        if (DEBUG_SEARCH_INPUT && gpDetected) {
+        if (DEBUG_CONSOLE_SEARCH_NAV && gpDetected) {
           console.log(`[CONSOLE_SEARCH_INPUT][OWNER] key=${e.key} focusMode=results`);
         }
 
@@ -350,7 +349,7 @@ export default function ConsoleSearchOverlay({
             setFocusIndex((i) => {
               const cur = resultsRef.current.length;
               const next = i < cur - 1 ? i + 1 : 0;
-              if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] results-down index=${i}→${next}`);
+              if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] results-down index=${i}→${next}`);
               return next;
             });
             break;
@@ -366,13 +365,13 @@ export default function ConsoleSearchOverlay({
                 setFocusMode("keyboard");
                 setKeyboardRow(0);
                 setKeyboardCol(0);
-                if (DEBUG_SEARCH_KEYBOARD) {
+                if (DEBUG_CONSOLE_SEARCH_NAV) {
                   console.log(`[CONSOLE_SEARCH][KEYBOARD_RESTORE] reason=arrowup-from-first result=0 row→0 col→0`);
                 }
               } else {
                 setFocusIndex((i) => {
                   const next = i > 0 ? i - 1 : (resLen > 0 ? resLen - 1 : 0);
-                  if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] results-up index=${i}→${next}`);
+                  if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] results-up index=${i}→${next}`);
                   return next;
                 });
               }
@@ -402,7 +401,7 @@ export default function ConsoleSearchOverlay({
             e.preventDefault();
             e.stopImmediatePropagation();
             if (gpDetected) {
-              if (DEBUG_SEARCH_KEYBOARD) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] results→keyboard via Y`);
+              if (DEBUG_CONSOLE_SEARCH_NAV) console.log(`[CONSOLE_SEARCH][FOCUS_MODE] results→keyboard via Y`);
               setFocusMode("keyboard");
               setKeyboardRow(0);
               setKeyboardCol(0);
@@ -427,7 +426,7 @@ export default function ConsoleSearchOverlay({
           case "V":
             e.preventDefault();
             e.stopImmediatePropagation();
-            if (DEBUG_SEARCH_INPUT) {
+            if (DEBUG_CONSOLE_SEARCH_NAV) {
               console.log(`[CONSOLE_SEARCH_INPUT][CONSUME] key=${e.key} blocked-behind-search`);
             }
             break;
@@ -463,7 +462,7 @@ export default function ConsoleSearchOverlay({
 
       {/* Sheet */}
       <div
-        className="relative mt-[clamp(80px,10vh,160px)] w-[clamp(480px,50vw,720px)] max-h-[clamp(520px,70vh,680px)] flex flex-col rounded-2xl border border-(--color-border)/30 bg-(--color-surface)/90 shadow-2xl shadow-black/50 backdrop-blur-2xl outline-none"
+        className="lf-surface relative mt-[clamp(80px,10vh,160px)] w-[clamp(480px,50vw,720px)] max-h-[clamp(520px,70vh,680px)] flex flex-col rounded-2xl border border-(--color-border)/30 shadow-2xl shadow-black/50 outline-none"
         onClick={(e) => e.stopPropagation()}
         style={{
           transition: `transform ${FADE_DURATION}ms ease, opacity ${FADE_DURATION}ms ease`,
@@ -636,7 +635,7 @@ function HintPill({ label, primary }: { label: string; primary?: boolean }) {
     <span className="inline-flex items-center gap-1.5 text-xs text-(--color-muted)/70">
       <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold leading-none ${
         primary
-          ? "bg-(--color-accent) text-white"
+          ? "bg-(--color-accent) text-(--color-accent-text)"
           : "bg-white/[0.09] text-white/60"
       }`}>
         {m[1]}

@@ -57,6 +57,7 @@ const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints
 };
 
 let _gamepadDetected = false;
+let _isConsoleMode = false;
 
 export function setGamepadDetected(v: boolean): void {
   _gamepadDetected = v;
@@ -64,6 +65,14 @@ export function setGamepadDetected(v: boolean): void {
 
 export function isGamepadDetected(): boolean {
   return _gamepadDetected;
+}
+
+export function setConsoleMode(v: boolean): void {
+  _isConsoleMode = v;
+}
+
+export function isConsoleMode(): boolean {
+  return _isConsoleMode;
 }
 
 export function getConsoleInputHints(style: ConsoleInputHintStyle = "xbox"): ConsoleInputHints {

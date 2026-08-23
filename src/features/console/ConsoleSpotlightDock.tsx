@@ -19,7 +19,7 @@ export default function ConsoleSpotlightDock({ activeIndex, focusedIndex = -1, c
   return (
     <nav aria-label="Spotlight category dock">
       <div
-        className="inline-flex items-center rounded-full bg-black/55 px-[clamp(16px,1.8vw,24px)] py-2 shadow-2xl shadow-black/50 backdrop-blur-2xl ring-1 ring-white/[0.12]"
+        className="lf-surface inline-flex items-center rounded-full px-[clamp(16px,1.8vw,24px)] py-2 shadow-2xl shadow-black/50 ring-1 ring-white/[0.12]"
         style={{ height: "clamp(60px, 7vh, 72px)", gap: "clamp(12px, 1.4vw, 18px)" }}
       >
         {CATEGORIES.map((cat, i) => {
@@ -33,7 +33,7 @@ export default function ConsoleSpotlightDock({ activeIndex, focusedIndex = -1, c
               onClick={() => onSelect(i)}
               className={`relative flex items-center justify-center rounded-xl transition-all duration-200 ${
                 isActive
-                  ? "bg-(--color-accent) text-white shadow-lg shadow-(--color-accent)/35 scale-105"
+                  ? "bg-(--color-accent) text-(--color-accent-text) shadow-lg shadow-(--color-accent)/35 scale-105"
                   : "text-white/60 hover:text-white/85 hover:bg-white/[0.08]"
               } ${
                 isFocused && !isActive

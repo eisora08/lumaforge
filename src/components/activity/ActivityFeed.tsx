@@ -23,6 +23,7 @@ const SOURCE_FILTERS: { label: string; value: GameActivityItem["source"] | null 
   { label: "Local", value: "local" },
   { label: "Steam", value: "steam" },
   { label: "Lua", value: "lua" },
+  { label: "Manual", value: "manual" },
   { label: "Provider", value: "provider" },
   { label: "System", value: "system" },
   { label: "Launcher", value: "launcher" },
@@ -110,7 +111,7 @@ export default function ActivityFeed({ compact }: ActivityFeedProps) {
               onClick={() => setKindFilter(f.value)}
               className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
                 kindFilter === f.value
-                  ? "bg-(--color-accent) text-black"
+                  ? "bg-(--color-accent) text-(--color-accent-text)"
                   : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
               }`}
             >
@@ -125,7 +126,7 @@ export default function ActivityFeed({ compact }: ActivityFeedProps) {
               onClick={() => setSourceFilter(f.value)}
               className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
                 sourceFilter === f.value
-                  ? "bg-(--color-accent) text-black"
+                  ? "bg-(--color-accent) text-(--color-accent-text)"
                   : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
               }`}
             >
@@ -148,7 +149,7 @@ export default function ActivityFeed({ compact }: ActivityFeedProps) {
           </p>
         </div>
       ) : (
-        <div className={compact ? "space-y-4" : "space-y-10"}>
+        <div className={compact ? "max-h-[400px] overflow-y-auto space-y-4" : "space-y-10"}>
           {grouped.map(({ group, items }) => (
             <div key={group}>
               {!compact && (

@@ -40,7 +40,7 @@ export default function ThemeOption({
         </div>
 
         {selected && (
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-(--color-accent) text-black">
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-(--color-accent) text-(--color-accent-text)">
             <Check className="h-4 w-4" />
           </div>
         )}

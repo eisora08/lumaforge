@@ -4,6 +4,7 @@ import {
   CheckCircle2, Medal, Swords, Crown,
   Flame, Zap, CalendarDays, Diamond, Star,
   Drama, Palette, Search, Percent, Gamepad2,
+  Clock, Heart, Layers, Code, Gauge,
 } from "lucide-react";
 import type { AchievementDef } from "../types";
 
@@ -37,11 +38,26 @@ export const ACHIEVEMENT_DEFINITIONS: AchievementDef[] = [
   // ── Exploration ──
   { id: "genre-hopper", title: "Genre Hopper", description: "Play 5+ different genres in a month", category: "exploration", rarity: "uncommon", xp: 50, icon: Drama },
   { id: "renaissance-gamer", title: "Renaissance Gamer", description: "Play 10+ genres all-time", category: "exploration", rarity: "rare", xp: 100, icon: Palette },
-  { id: "hidden-gem-hunter", title: "Hidden Gem Hunter", description: "Play 3 underrated games for 5+ hours each", category: "exploration", rarity: "rare", xp: 100, icon: Search },
+  { id: "hidden-gem-hunter", title: "Hidden Gem Hunter", description: "Play 10+ games without completing any — exploring, not finishing", category: "exploration", rarity: "rare", xp: 100, icon: Search },
 
   // ── Session ──
   { id: "session-centurion", title: "Session Centurion", description: "Complete 100 play sessions", category: "session", rarity: "uncommon", xp: 75, icon: Percent },
   { id: "weekend-warrior", title: "Weekend Warrior", description: "Play on 4 consecutive weekends", category: "session", rarity: "rare", xp: 100, icon: Gamepad2 },
+
+  // ── Fase 2: Play ──
+  { id: "century-club", title: "Century Club", description: "Accumulate 100 hours of total playtime", category: "play", rarity: "epic", xp: 200, icon: Clock },
+  { id: "no-lifer", title: "No-Lifer", description: "Accumulate 500 hours of total playtime", category: "play", rarity: "legendary", xp: 500, icon: Heart },
+
+  // ── Fase 2: Streak ──
+  { id: "daily-grinder", title: "Daily Grinder", description: "Maintain a 3-day play streak", category: "streak", rarity: "uncommon", xp: 50, icon: Flame },
+
+  // ── Fase 2: Exploration ──
+  { id: "multi-platform", title: "Multi-Platform", description: "Play games from 3+ different sources", category: "exploration", rarity: "rare", xp: 100, icon: Layers },
+  { id: "lua-enthusiast", title: "Lua Enthusiast", description: "Play 5+ games with Lua scripts", category: "exploration", rarity: "uncommon", xp: 75, icon: Code },
+
+  // ── Fase 2: Session ──
+  { id: "speedrunner", title: "Speedrunner", description: "Complete 10 sessions under 15 minutes", category: "session", rarity: "uncommon", xp: 50, icon: Gauge },
+  { id: "marathon-master", title: "Marathon Master", description: "Complete 20 sessions of 4+ hours", category: "session", rarity: "rare", xp: 150, icon: Swords },
 ];
 
 export const TOTAL_XP_AVAILABLE = ACHIEVEMENT_DEFINITIONS.reduce((sum, a) => sum + a.xp, 0);

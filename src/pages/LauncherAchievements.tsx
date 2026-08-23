@@ -11,6 +11,7 @@ import {
 } from "../features/activity/achievements/achievementStore";
 import { evaluateAchievements } from "../features/activity/achievements/achievementEngine";
 import { buildEvalContext } from "../features/activity/stats/statsService";
+import { scanAchievementFolders, type FolderAchievementSummary } from "../services/tauri";
 import type {
   AchievementCategory,
   AchievementRarity,
@@ -20,6 +21,8 @@ import type {
 import { RARITY_COLORS, RARITY_ICONS, CATEGORY_ICONS } from "../features/activity/types";
 import ActivityEmptyState from "../components/activity/ActivityEmptyState";
 import AchievementDetailModal from "../components/activity/AchievementDetailModal";
+import LevelRing from "../components/activity/LevelRing";
+import GrowBar from "../components/common/GrowBar";
 import type { EvaluationContextInput } from "../features/activity/stats/statsService";
 
 const CATEGORIES: Array<{ value: AchievementCategory | "all"; label: string; icon?: React.ComponentType<{ className?: string }> }> = [
@@ -84,10 +87,21 @@ function getAchievementProgress(id: string, ctx: EvaluationContextInput): Progre
     // Exploration
     case "genre-hopper":        return { current: ctx.genreCount, target: 5, label: "Genres played" };
     case "renaissance-gamer":   return { current: ctx.genreCount, target: 10, label: "Genres played" };
-    case "hidden-gem-hunter":   return null;
+    case "hidden-gem-hunter":   return { current: ctx.gamesPlayed, target: 10, label: "Games played" };
     // Session
     case "session-centurion":   return { current: ctx.totalSessions, target: 100, label: "Play sessions" };
     case "weekend-warrior":     return { current: ctx.weekendStreak, target: 4, label: "Consecutive weekends played" };
+    // Fase 2 — Play
+    case "century-club":        return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 100, label: "Hours played" };
+    case "no-lifer":            return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 500, label: "Hours played" };
+    // Fase 2 — Streak
+    case "daily-grinder":       return { current: ctx.currentStreak, target: 3, label: "Day play streak" };
+    // Fase 2 — Exploration
+    case "multi-platform":      return { current: ctx.providerCount, target: 3, label: "Different sources played" };
+    case "lua-enthusiast":      return { current: ctx.luaGames, target: 5, label: "Lua games played" };
+    // Fase 2 — Session
+    case "speedrunner":         return { current: ctx.shortSessions, target: 10, label: "Sessions under 15 min" };
+    case "marathon-master":     return { current: ctx.marathonSessions, target: 20, label: "Marathon sessions (4h+)" };
     default: return null;
   }
 }
@@ -103,7 +117,7 @@ function formatUnlockDate(ts: number): string {
 
 function PanelCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-2xl border border-(--color-border)/15 bg-(--color-surface) p-5 ${className}`}>
+    <div className={`rounded-2xl border border-(--color-border)/15 lf-surface p-5 ${className}`}>
       {children}
     </div>
   );
@@ -119,6 +133,24 @@ export default function LauncherAchievements() {
   const [search, setSearch] = useState("");
   const [selectedAch, setSelectedAch] = useState<AchievementWithState | null>(null);
 
+  // Real-time achievement data from disk (same source as ActivityStats)
+  const [folderData, setFolderData] = useState<FolderAchievementSummary[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    scanAchievementFolders().then((rows) => {
+      if (!cancelled) setFolderData(rows);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const folderMap = useMemo(() => {
+    const m = new Map<string, { unlocked: number; total: number }>();
+    for (const r of folderData) {
+      if (r.total > 0) m.set(r.appId, { unlocked: r.unlocked, total: r.total });
+    }
+    return m;
+  }, [folderData]);
+
   useEffect(() => {
     return subscribeAchievementStore(() => {
       setProfile(getPlayerProfile());
@@ -128,9 +160,9 @@ export default function LauncherAchievements() {
 
   useEffect(() => {
     if (games.length === 0) return;
-    const ctx = buildEvalContext(games);
+    const ctx = buildEvalContext(games, folderMap);
     evaluateAchievements(ctx);
-  }, [games]);
+  }, [games, folderMap]);
 
   const achievements = useMemo<AchievementWithState[]>(() => {
     const unlocks = getUnlocks();
@@ -169,8 +201,8 @@ export default function LauncherAchievements() {
 
   const evalCtx = useMemo(() => {
     if (games.length === 0) return null;
-    return buildEvalContext(games);
-  }, [games]);
+    return buildEvalContext(games, folderMap);
+  }, [games, folderMap]);
 
   const selectedProgress = useMemo<ProgressInfo>(() => {
     if (!selectedAch || !evalCtx) return null;
@@ -178,7 +210,7 @@ export default function LauncherAchievements() {
   }, [selectedAch, evalCtx]);
 
   return (
-    <div className="w-full px-6 lg:px-8 xl:px-10 py-6">
+    <div className="w-full px-6 lg:px-8 xl:px-10 py-6 lf-page-in">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -198,22 +230,7 @@ export default function LauncherAchievements() {
         <PanelCard className="lg:col-span-2 border-amber-400/15">
           <div className="flex items-center gap-6">
             {/* Level circle */}
-            <div className="relative shrink-0">
-              <svg className="h-28 w-28 -rotate-90" viewBox="0 0 88 88">
-                <circle cx="44" cy="44" r="38" fill="none" stroke="currentColor" strokeWidth="5" className="text-white/[0.06]" />
-                <circle
-                  cx="44" cy="44" r="38" fill="none" stroke="currentColor" strokeWidth="5"
-                  strokeDasharray={`${2 * Math.PI * 38}`}
-                  strokeDashoffset={`${2 * Math.PI * 38 * (1 - profile.progressPercent / 100)}`}
-                  strokeLinecap="round"
-                  className="text-amber-400 transition-all duration-700"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-bold text-amber-400">{profile.level}</span>
-                <span className="text-[9px] uppercase tracking-widest text-amber-400/60 -mt-0.5">Level</span>
-              </div>
-            </div>
+            <LevelRing percent={profile.progressPercent} level={profile.level} svgClassName="h-28 w-28" levelClassName="text-3xl" labelClassName="text-[9px]" />
 
             {/* XP details */}
             <div className="flex-1 min-w-0">
@@ -221,12 +238,12 @@ export default function LauncherAchievements() {
                 <span>{profile.currentLevelXp} / {profile.nextLevelXp} XP</span>
                 <span>{Math.round(profile.progressPercent)}%</span>
               </div>
-              <div className="h-2.5 rounded-full bg-white/[0.06] overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-linear-to-r from-amber-500 to-amber-400 transition-all duration-700"
-                  style={{ width: `${Math.max(2, profile.progressPercent)}%` }}
-                />
-              </div>
+              <GrowBar
+                percent={profile.progressPercent}
+                minPercent={2}
+                trackClassName="h-2.5 rounded-full bg-white/[0.06]"
+                fillClassName="bg-linear-to-r from-amber-500 to-amber-400"
+              />
               <div className="mt-3 flex items-center gap-5 text-xs text-(--color-muted)">
                 <span className="flex items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5 text-amber-400/60" />
@@ -246,10 +263,11 @@ export default function LauncherAchievements() {
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="text-4xl font-bold text-(--color-text)">{completionPercent}%</div>
             <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60 mt-1">Completion</div>
-            <div className="mt-3 w-full h-2 rounded-full bg-white/[0.06] overflow-hidden">
-              <div
-                className="h-full rounded-full bg-linear-to-r from-(--color-accent) to-(--color-accent)/70 transition-all duration-700"
-                style={{ width: `${completionPercent}%` }}
+            <div className="mt-3 w-full">
+              <GrowBar
+                percent={completionPercent}
+                trackClassName="h-2 rounded-full bg-white/[0.06]"
+                fillClassName="bg-linear-to-r from-(--color-accent) to-(--color-accent)/70"
               />
             </div>
             <div className="mt-2 text-[11px] text-(--color-muted)">{profile.unlockedCount} of {profile.totalCount} unlocked</div>
@@ -270,14 +288,18 @@ export default function LauncherAchievements() {
               className={`rounded-xl border px-3 py-2.5 text-center transition ${
                 catFilter === cat.value
                   ? "border-(--color-accent)/40 bg-(--color-accent)/8"
-                  : "border-(--color-border)/15 bg-(--color-surface) hover:border-(--color-border)/30"
+                  : "border-(--color-border)/15 lf-surface hover:border-(--color-border)/30"
               }`}
             >
               {CatIcon && <CatIcon className="h-4 w-4 mx-auto mb-0.5 text-(--color-muted)/60" />}
               <div className="text-xs font-semibold text-(--color-text)">{cat.label}</div>
               <div className="mt-0.5 text-[10px] text-(--color-muted)">{p.unlocked}/{p.total}</div>
-              <div className="mt-1 h-1 rounded-full bg-white/[0.06] overflow-hidden">
-                <div className="h-full rounded-full bg-(--color-accent)/50 transition-all" style={{ width: `${pct}%` }} />
+              <div className="mt-1">
+                <GrowBar
+                  percent={pct}
+                  trackClassName="h-1 rounded-full bg-white/[0.06]"
+                  fillClassName="bg-(--color-accent)/50"
+                />
               </div>
             </button>
           );
@@ -361,15 +383,22 @@ function AchievementCard({ achievement, onClick }: { achievement: AchievementWit
   const AchIcon = achievement.icon;
   const RarityIcon = RARITY_ICONS[achievement.rarity];
 
+  // Rarity glow for epic/legendary unlocked cards
+  const glowClass = !isLocked && achievement.rarity === "legendary"
+    ? "lf-ach-card-glow-legendary"
+    : !isLocked && achievement.rarity === "epic"
+      ? "lf-ach-card-glow-epic"
+      : "";
+
   return (
     <button
       type="button"
       onClick={onClick}
       className={`group relative overflow-hidden rounded-2xl border text-left transition-all duration-200 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50 ${
         isLocked
-          ? "border-(--color-border)/10 bg-(--color-surface)/80 hover:bg-(--color-surface) hover:border-(--color-border)/20"
-          : `bg-(--color-surface) hover:brightness-110 ${rarity.border}`
-      } ${rarity.glow ? `shadow-md ${rarity.glow}` : "shadow-sm"} hover:shadow-lg hover:scale-[1.01]`}
+          ? "border-(--color-border)/10 lf-surface/80 hover:bg-(--color-surface) hover:border-(--color-border)/20"
+          : `lf-surface hover:brightness-110 ${rarity.border}`
+      } ${rarity.glow ? `shadow-md ${rarity.glow}` : "shadow-sm"} ${glowClass} hover:shadow-lg hover:scale-[1.01]`}
     >
       {/* Rarity accent bar at top for unlocked */}
       {!isLocked && (

@@ -222,7 +222,7 @@ function snapshotEntryToProviderStatusFile(
           fileSizeAtInstall: entry.local.fileSizeAtInstall ?? null,
           fileModifiedAtInstall: entry.local.fileModifiedAtInstall ?? null,
           fileCreatedAtInstall: null,
-          metadataSource: null,
+          metadataSource: entry.local.metadataSource ?? null,
           providerTimestampAtInstall: null,
           checksumAtInstall: null,
           versionAtInstall: entry.local.versionAtInstall ?? null,
@@ -263,6 +263,16 @@ export async function saveProviderStatus(
 
   try {
     await writeProviderStatus(appId, normalizedId, payload);
+    // Dual-write: also persist to SQLite for fast boot reads
+    try {
+      const { upsertProviderStatus } = await import("./tauri");
+      await upsertProviderStatus({
+        appId,
+        providerId: normalizedId,
+        data: payload,
+        updatedAt: Date.now(),
+      });
+    } catch { /* non-critical */ }
     // Update snapshot cache so subsequent loadProviderStatus skips file I/O
     const entry = toSnapshotEntry(status);
     updateSnapshotEntry(appId, normalizedId, entry).catch(() => {});

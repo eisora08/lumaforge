@@ -31,6 +31,25 @@ export type ConsoleLaunchMode = "console" | "desktop" | "last-used";
 
 export type ConsoleWindowMode = "fullscreen" | "maximized" | "minimized" | "tray" | "windowed";
 
+export type PanelWidthPreset = "compact" | "standard" | "wide" | "auto";
+
+export const PANEL_WIDTH_PRESETS: { label: string; value: PanelWidthPreset; width: number; description: string }[] = [
+  { label: "Compact",  value: "compact",  width: 540, description: "More space for the grid" },
+  { label: "Standard", value: "standard", width: 720, description: "Balanced grid and panel" },
+  { label: "Wide",     value: "wide",     width: 900, description: "Larger panel, fewer cards" },
+  { label: "Auto",     value: "auto",     width: 0,   description: "Adapts to screen resolution" },
+];
+
+export function resolvePanelWidth(preset: PanelWidthPreset, screenWidth?: number): number {
+  if (preset === "auto") {
+    const w = screenWidth ?? (typeof window !== "undefined" ? window.innerWidth : 1920);
+    if (w >= 3840) return 900;
+    if (w >= 2560) return 720;
+    return 540;
+  }
+  return PANEL_WIDTH_PRESETS.find((p) => p.value === preset)?.width ?? 720;
+}
+
 export type SpotlightCardVisual = "poster" | "landscape" | "hero";
 
 export type GridCardStyle = {
@@ -71,6 +90,7 @@ export type ConsoleSettings = {
   gridColumns: number;
   gridGap: number;
   leftPadding: number;
+  sidePanelPreset: PanelWidthPreset;
   sidePanelWidth: number;
   bottomBarPosition: ConsoleBottomBarPosition;
   horizontalScrolling: boolean;
@@ -114,7 +134,6 @@ export type ConsoleSettings = {
   /* ── System bar indicators ── */
   showNetworkIndicator: boolean;
   showControllerIndicator: boolean;
-  showJobIndicator: boolean;
 };
 
 const STORAGE_KEY = "lumaforge-console-settings-v1";
@@ -149,7 +168,8 @@ export const DEFAULT_CONSOLE_SETTINGS: ConsoleSettings = {
   gridColumns: 8,
   gridGap: 36,
   leftPadding: 64,
-  sidePanelWidth: 720,
+  sidePanelPreset: "auto",
+  sidePanelWidth: resolvePanelWidth("auto"),
   bottomBarPosition: "center",
   horizontalScrolling: false,
   smoothScrolling: true,
@@ -185,7 +205,6 @@ export const DEFAULT_CONSOLE_SETTINGS: ConsoleSettings = {
   disableUpdate: false,
   showNetworkIndicator: true,
   showControllerIndicator: true,
-  showJobIndicator: true,
 };
 
 export const WIDTH_PRESETS: { label: string; value: number; description: string }[] = [
@@ -224,13 +243,14 @@ export const SPOTLIGHT_CONTENT_DEFAULTS: SpotlightContentSettings = {
 };
 
 export const LAYOUT_DEFAULTS: Pick<ConsoleSettings,
-  "gridColumns" | "gridGap" | "leftPadding" | "sidePanelWidth"
+  "gridColumns" | "gridGap" | "leftPadding" | "sidePanelPreset" | "sidePanelWidth"
   | "bottomBarPosition" | "horizontalScrolling" | "smoothScrolling"
 > & { gridCardStyle: GridCardStyle; spotlightCardStyle: SpotlightCardStyle } = {
   gridColumns: 8,
   gridGap: 36,
   leftPadding: 64,
-  sidePanelWidth: 720,
+  sidePanelPreset: "auto",
+  sidePanelWidth: resolvePanelWidth("auto"),
   bottomBarPosition: "center",
   horizontalScrolling: false,
   smoothScrolling: true,
@@ -443,12 +463,11 @@ export function resetConsoleStartupSettings(): ConsoleSettings {
 }
 
 export const SYSTEM_BAR_DEFAULTS: Pick<ConsoleSettings,
-  "showClock" | "showNetworkIndicator" | "showControllerIndicator" | "showJobIndicator" | "showProfileHud"
+  "showClock" | "showNetworkIndicator" | "showControllerIndicator" | "showProfileHud"
 > = {
   showClock: true,
   showNetworkIndicator: true,
   showControllerIndicator: true,
-  showJobIndicator: true,
   showProfileHud: true,
 };
 

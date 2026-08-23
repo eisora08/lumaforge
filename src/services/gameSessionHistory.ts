@@ -140,3 +140,38 @@ export function clearSessions(): void {
   saveStore({ version: 1, sessions: [] });
   notifyListeners();
 }
+
+// Listen for external restore writes and reload session history from localStorage
+if (typeof window !== "undefined") {
+  window.addEventListener("lumaforge-data-changed", (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.key === STORAGE_KEY) {
+      notifyListeners();
+    }
+  });
+
+  // One-time migration: normalize bare-number appIds to "app-{id}" format
+  // so statsService comparisons against resolvePlaytimeKey work correctly
+  const MIGRATION_KEY = "lumaforge-session-history-migrated-v2";
+  if (!localStorage.getItem(MIGRATION_KEY)) {
+    try {
+      const store = loadStore();
+      let changed = false;
+      for (const s of store.sessions) {
+        if (/^\d+$/.test(s.appId)) {
+          s.appId = `app-${s.appId}`;
+          changed = true;
+        } else if (s.appId.startsWith("steam-")) {
+          s.appId = `app-${s.appId.slice(6)}`;
+          changed = true;
+        }
+      }
+      if (changed) {
+        saveStore(store);
+      }
+      localStorage.setItem(MIGRATION_KEY, "1");
+    } catch {
+      // non-critical
+    }
+  }
+}

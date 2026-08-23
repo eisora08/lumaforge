@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutPanelTop, Monitor, Wifi, WifiOff, Gamepad2, HardDrive, Clock } from "lucide-react";
+import { LayoutPanelTop, Monitor, Wifi, WifiOff, Gamepad2, Clock } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
 import { getAvatarPreset } from "../profile/profilePresets";
 import type { ConsoleSettings, ConsoleTimeFormat } from "./consoleSettings";
 import { useNetworkStatus } from "./useNetworkStatus";
-import { backgroundJobQueue } from "../../services/backgroundJobQueue";
 
-const DEBUG_CONSOLE_MODE = false;
+const DEBUG_CONSOLE_HUD = false;
 
 type Props = {
   layoutMode: "spotlight" | "grid";
@@ -55,27 +54,6 @@ function useClock(format: ConsoleTimeFormat, showSeconds: boolean): string {
   return formatTimeWithOptions(now, format, showSeconds);
 }
 
-function useJobCount(): number {
-  const [count, setCount] = useState(() => {
-    try {
-      const s = backgroundJobQueue.getStatus();
-      return s.queued + s.running;
-    } catch { return 0; }
-  });
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      try {
-        const s = backgroundJobQueue.getStatus();
-        setCount(s.queued + s.running);
-      } catch { /* noop */ }
-    }, 5_000);
-    return () => clearInterval(id);
-  }, []);
-
-  return count;
-}
-
 export default function ConsoleTopHud({
   layoutMode,
   onToggleLayout,
@@ -86,7 +64,6 @@ export default function ConsoleTopHud({
   const [profile] = useUserProfile();
   const profileRef = useRef<HTMLButtonElement>(null);
   const networkStatus = useNetworkStatus();
-  const jobCount = useJobCount();
 
   const timeFormat = settings?.timeFormat ?? "system";
   const showSeconds = settings?.showSeconds ?? false;
@@ -95,12 +72,11 @@ export default function ConsoleTopHud({
   const showClock = settings?.showClock !== false;
   const showNetwork = settings?.showNetworkIndicator !== false;
   const showController = settings?.showControllerIndicator !== false;
-  const showJobs = settings?.showJobIndicator !== false;
 
   const avatarPreset = useMemo(() => getAvatarPreset(profile.avatarPreset), [profile.avatarPreset]);
   const avatarDisplayUrl = useMemo(() => resolveProfileMediaUrl(profile.avatarUrl), [profile.avatarUrl]);
 
-  if (DEBUG_CONSOLE_MODE) {
+  if (DEBUG_CONSOLE_HUD) {
     console.log(`[CONSOLE][HUD] layout=${layoutMode} name=${profile.displayName}`);
   }
 
@@ -133,7 +109,7 @@ export default function ConsoleTopHud({
 
       {/* Center: source branding */}
       <div className="hidden select-none md:block">
-        <span className="rounded-full bg-(--color-surface)/60 px-3 py-1 text-[11px] font-bold tracking-[0.15em] text-(--color-muted)/50 backdrop-blur-sm">
+        <span className="lf-surface rounded-full px-3 py-1 text-[11px] font-bold tracking-[0.15em] text-(--color-muted)/50">
           LUMAFORGE
         </span>
       </div>
@@ -160,18 +136,6 @@ export default function ConsoleTopHud({
           <ControllerIndicator />
         )}
 
-        {/* Jobs indicator */}
-        {showJobs && jobCount > 0 && (
-          <div
-            className="flex h-7 items-center gap-1 rounded-lg bg-(--color-surface)/60 px-2 backdrop-blur-sm"
-            title={`${jobCount} background job${jobCount !== 1 ? "s" : ""} pending`}
-            aria-label={`${jobCount} background job${jobCount !== 1 ? "s" : ""}`}
-          >
-            <HardDrive className="h-3 w-3 text-(--color-accent)" />
-            <span className="text-[11px] font-medium tabular-nums text-(--color-muted)">{jobCount}</span>
-          </div>
-        )}
-
         {/* Clock */}
         {showClock && time && (
           <span className="flex items-center gap-1 text-sm font-medium tabular-nums text-(--color-muted) drop-shadow-md">
@@ -182,7 +146,7 @@ export default function ConsoleTopHud({
 
         <button
           onClick={onToggleLayout}
-          className="flex h-9 w-9 items-center justify-center rounded-xl bg-(--color-surface)/40 text-(--color-muted) backdrop-blur-sm transition hover:bg-(--color-surface) hover:text-(--color-text)"
+          className="lf-surface flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) transition hover:bg-(--color-surface) hover:text-(--color-text)"
           aria-label={layoutMode === "spotlight" ? "Grid view" : "Spotlight view"}
         >
           {layoutMode === "spotlight" ? (
@@ -196,7 +160,7 @@ export default function ConsoleTopHud({
         </button>
         <button
           onClick={() => onNavigate?.("home")}
-          className="flex h-9 items-center gap-1.5 rounded-xl border border-(--color-border) bg-(--color-surface)/40 px-3 text-xs font-medium text-(--color-muted) backdrop-blur-sm transition hover:bg-(--color-surface) hover:text-(--color-text)"
+          className="lf-surface flex h-9 items-center gap-1.5 rounded-xl border border-(--color-border) px-3 text-xs font-medium text-(--color-muted) transition hover:bg-(--color-surface) hover:text-(--color-text)"
           aria-label="Exit console mode"
         >
           <Monitor className="h-3.5 w-3.5" />

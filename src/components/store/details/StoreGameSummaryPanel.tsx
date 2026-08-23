@@ -23,6 +23,7 @@ import { SummaryLine } from "./StoreGameDetailPrimitives";
 import type { PackageGame, PackageSource } from "../../../types/package";
 import type { PackageInstallStatus } from "../../../types/packageInstall";
 import type { SourceCheckStatus } from "../../../services/sourceAvailabilityCacheService";
+import type { SourceProgress } from "../StoreGameDetailsPage";
 
 export type ProviderCheckState =
   | "update-available"
@@ -49,10 +50,12 @@ type StoreGameSummaryPanelProps = {
   selectedSource?: PackageSource | null;
   sourceStatus?: SourceCheckStatus;
   isBackgroundChecking?: boolean;
+  sourceProgress?: SourceProgress;
   onDownload?: () => void;
   onChangeSource?: () => void;
   onOpenSteam: () => void;
   onOpenSteamDb: () => void;
+  onOpenSteamLibrary?: () => void;
   onRefreshSources?: () => void;
 
   // Provider-status sidecar props
@@ -64,42 +67,52 @@ type StoreGameSummaryPanelProps = {
   steamOwned?: boolean;
   isProviderChecking?: boolean;
   onCheckForUpdates?: () => void;
+
+  /** Which section of the panel to render. Defaults to "full" (all three cards). */
+  section?: "full" | "hero" | "download" | "summary";
+
+  /** Repack tab active: hero card shows only an Installed badge; Sources line lists repackers. */
+  repackActive?: boolean;
+  repackInstalled?: boolean;
+  repackSourceLabels?: string[];
 };
 
-function getStatusBadge(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean, steamOwned: boolean) {
-  if (isSteamInstalled || (installStatus === "active" && luaInstalled === false)) {
-    return {
+function getSummaryBadges(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean, steamOwned: boolean) {
+  const badges: { label: string; icon: typeof CheckCircle2; className: string }[] = [];
+
+  if (isSteamInstalled || (installStatus === "active" && !luaInstalled)) {
+    badges.push({
       label: "Installed",
       icon: CheckCircle2,
       className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
-    };
-  }
-
-  if (installStatus === "active" || luaInstalled) {
-    return {
-      label: "In Library",
-      icon: Library,
-      className: "border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-accent)",
-    };
-  }
-
-  if (installStatus === "disabled") {
-    return {
-      label: "Disabled",
-      icon: PauseCircle,
-      className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300",
-    };
+    });
   }
 
   if (steamOwned) {
-    return {
+    badges.push({
       label: "Owned",
       icon: Gamepad2,
       className: "border-blue-500/20 bg-blue-500/10 text-blue-300",
-    };
+    });
   }
 
-  return null;
+  if (!isSteamInstalled && (installStatus === "active" || luaInstalled)) {
+    badges.push({
+      label: "In Library",
+      icon: Library,
+      className: "border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-accent)",
+    });
+  }
+
+  if (installStatus === "disabled") {
+    badges.push({
+      label: "Disabled",
+      icon: PauseCircle,
+      className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300",
+    });
+  }
+
+  return badges;
 }
 
 function getFileIcon(fileType: PackageSource["fileType"]) {
@@ -122,18 +135,31 @@ function getButtonConfig(
   steamOwned: boolean,
   isChecking: boolean,
   isNone: boolean,
+  isNeedsConfig: boolean,
   needsRetry: boolean,
   canDownload: boolean,
   selectedSource: PackageSource | null | undefined,
   onDownload: (() => void) | undefined,
   onCheckForUpdates: (() => void) | undefined,
+  onOpenSteam: (() => void) | undefined,
+  sourceProgress: SourceProgress,
 ): ButtonConfig {
-  if (isChecking) {
-    return { label: "Checking sources...", enabled: false, onClick: undefined, reason: "checking-sources" };
+  // Non-installed Lua games (orphaned config/lua files) always show "Install via Steam"
+  // regardless of source status. Must be checked before isChecking to prevent
+  // "Checking sources..." from short-circuiting the install button.
+  if (luaInstalled && !isSteamInstalled) {
+    return { label: "Install via Steam", enabled: true, onClick: onOpenSteam, reason: "lua-not-installed-install-steam" };
   }
 
-  // Installed games: isNone/needsRetry should not override provider status
-  if (luaInstalled || isSteamInstalled) {
+  if (isChecking) {
+    const label = sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0
+      ? `Checking ${sourceProgress.completed}/${sourceProgress.total}...`
+      : "Checking sources...";
+    return { label, enabled: false, onClick: undefined, reason: "checking-sources" };
+  }
+
+  // Steam-installed games: provider status always shown regardless of source checks
+  if (isSteamInstalled) {
     if (steamOwned) {
       return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
     }
@@ -163,9 +189,12 @@ function getButtonConfig(
     }
   }
 
-  // Non-installed
+  // Non-installed / Lua-only games
   if (isNone) {
     return { label: "No Sources Available", enabled: false, onClick: undefined, reason: "no-sources" };
+  }
+  if (isNeedsConfig) {
+    return { label: "Configure Providers", enabled: false, onClick: undefined, reason: "needs-configuration" };
   }
   if (needsRetry) {
     return { label: "Source check failed", enabled: false, onClick: undefined, reason: "source-check-failed" };
@@ -220,10 +249,12 @@ export default function StoreGameSummaryPanel({
   selectedSource,
   sourceStatus = "idle",
   isBackgroundChecking = false,
+  sourceProgress = null,
   onDownload,
   onChangeSource,
   onOpenSteam,
   onOpenSteamDb,
+  onOpenSteamLibrary,
   onRefreshSources,
   providerCheckState = "no-data",
   providerCheckReason,
@@ -233,25 +264,36 @@ export default function StoreGameSummaryPanel({
   steamOwned = false,
   isProviderChecking = false,
   onCheckForUpdates,
+  section = "full",
+  repackActive = false,
+  repackInstalled = false,
+  repackSourceLabels = [],
 }: StoreGameSummaryPanelProps) {
   const isChecking = (sourceStatus === "checking" || sourceStatus === "idle") && !isBackgroundChecking;
   const isReady = sourceStatus === "ready" || availableSources > 0;
   const isNone = sourceStatus === "none" && availableSources === 0;
   const isError = sourceStatus === "error";
   const isTimeout = sourceStatus === "timeout";
+  const isNeedsConfig = sourceStatus === "needs-configuration";
 
-  const statusBadge = getStatusBadge(isSteamInstalled, installStatus, luaInstalled, steamOwned);
+  const summaryBadges = getSummaryBadges(isSteamInstalled, installStatus, luaInstalled, steamOwned);
   const canDownload = isReady && !!selectedSource?.available;
   const needsRetry = isError || isTimeout;
   const canRetry = onRefreshSources !== undefined && !isReady;
 
   const isInstalled = isSteamInstalled;
   const inLibrary = steamOwned || luaInstalled;
+  const isNonInstalledLua = luaInstalled && !isSteamInstalled;
   const actionState = steamOwned ? "owned-blocked" : canDownload ? "download-available" : "none";
 
-  console.log(
-    `[PACKAGE][BUTTON_INPUTS] appid=${game.appId} sourceStatus=${sourceStatus} isChecking=${isChecking} isReady=${isReady} isNone=${isNone} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} installStatus=${installStatus} providerCheckState=${providerCheckState} actionState=${actionState} hasLocalPackage=${hasLocalPackage} steamOwned=${steamOwned} canDownload=${canDownload} needsRetry=${needsRetry} selectedSource=${selectedSource?.providerName ?? "none"}`,
-  );
+  // Derivation logs only make sense when the download section is rendered
+  const verbose = section === "full" || section === "download";
+
+  if (verbose) {
+    console.log(
+      `[PACKAGE][BUTTON_INPUTS] appid=${game.appId} sourceStatus=${sourceStatus} isChecking=${isChecking} isReady=${isReady} isNone=${isNone} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} installStatus=${installStatus} providerCheckState=${providerCheckState} actionState=${actionState} hasLocalPackage=${hasLocalPackage} steamOwned=${steamOwned} canDownload=${canDownload} needsRetry=${needsRetry} selectedSource=${selectedSource?.providerName ?? "none"}`,
+    );
+  }
 
   const buttonConfig = getButtonConfig(
     providerCheckState,
@@ -260,20 +302,25 @@ export default function StoreGameSummaryPanel({
     steamOwned,
     isChecking,
     isNone,
+    isNeedsConfig,
     needsRetry,
     canDownload,
     selectedSource,
     onDownload,
     onCheckForUpdates,
+    onOpenSteam,
+    sourceProgress,
   );
 
-  console.log(
-    `[PACKAGE][BUTTON_RESOLVE] appid=${game.appId} label="${buttonConfig.label}" enabled=${buttonConfig.enabled} reason=${buttonConfig.reason}`,
-  );
+  if (verbose) {
+    console.log(
+      `[PACKAGE][BUTTON_RESOLVE] appid=${game.appId} label="${buttonConfig.label}" enabled=${buttonConfig.enabled} reason=${buttonConfig.reason}`,
+    );
+  }
 
   const providerStatusBadge = isInstalled ? getProviderStatusBadge(providerCheckState) : null;
 
-  if (luaInstalled || isSteamInstalled) {
+  if (verbose && (luaInstalled || isSteamInstalled)) {
     console.log(
       `[PACKAGE][ACTION_RESOLVE] appid=${game.appId} providerStatus=${providerCheckState} selectedProvider=${selectedSource?.providerName || "none"} selectedSource=${!!selectedSource} action=${buttonConfig.label}`,
     );
@@ -282,61 +329,66 @@ export default function StoreGameSummaryPanel({
     }
   }
 
-  console.log(
-    `[STORE][DETAILS_STATE_DERIVE] appid=${game.appId} owned=${steamOwned} steamInstalled=${isSteamInstalled} hasLua=${luaInstalled} installed=${isInstalled} inLibrary=${inLibrary}`,
-  );
-
-  console.log(
-    `[STORE][OWNED_UI_CLEAN] appid=${game.appId} hideSourcePill=${steamOwned} hidePackageActions=${steamOwned} owned=${steamOwned} installed=${isInstalled} inLibrary=${inLibrary}`,
-  );
-  if (steamOwned) {
-    console.log(`[STORE][OWNED_CARD_THEME] appid=${game.appId} themeTokens=true hardcodedBlue=false`);
-    console.log(`[PACKAGE][OWNED_BLOCK] appid=${game.appId} reason=steam-owned`);
+  if (verbose) {
+    console.log(
+      `[STORE][DETAILS_STATE_DERIVE] appid=${game.appId} owned=${steamOwned} steamInstalled=${isSteamInstalled} hasLua=${luaInstalled} installed=${isInstalled} inLibrary=${inLibrary}`,
+    );
   }
-  console.log(
-    `[STORE][DETAILS_ACTION_GATE] appid=${game.appId} owned=${steamOwned} actionState=${actionState} packageActionsVisible=${!steamOwned} packageActionsEnabled=${!steamOwned && buttonConfig.enabled}`,
-  );
-  console.debug(
-    `[PACKAGE][SUMMARY_STATE] appid=${game.appId} actionState=${actionState} providerCheckState=${providerCheckState} reason=${buttonConfig.reason} hasLocal=${hasLocalPackage} hasRemote=${providerCheckState !== "no-data"}`,
-  );
+
+  if (verbose) {
+    console.log(
+      `[STORE][OWNED_UI_CLEAN] appid=${game.appId} hideSourcePill=${steamOwned} hidePackageActions=${steamOwned} owned=${steamOwned} installed=${isInstalled} inLibrary=${inLibrary}`,
+    );
+    if (steamOwned) {
+      console.log(`[STORE][OWNED_CARD_THEME] appid=${game.appId} themeTokens=true hardcodedBlue=false`);
+      console.log(`[PACKAGE][OWNED_BLOCK] appid=${game.appId} reason=steam-owned`);
+    }
+    console.log(
+      `[STORE][DETAILS_ACTION_GATE] appid=${game.appId} owned=${steamOwned} actionState=${actionState} packageActionsVisible=${!steamOwned} packageActionsEnabled=${!steamOwned && buttonConfig.enabled}`,
+    );
+    console.debug(
+      `[PACKAGE][SUMMARY_STATE] appid=${game.appId} actionState=${actionState} providerCheckState=${providerCheckState} reason=${buttonConfig.reason} hasLocal=${hasLocalPackage} hasRemote=${providerCheckState !== "no-data"}`,
+    );
+  }
   const primaryIsCheckAction = buttonConfig.label === "Check again" || buttonConfig.label === "Check for updates";
   const showSecondaryCheckAgain = isInstalled && providerCheckState !== "no-data" && !primaryIsCheckAction && !isProviderChecking;
   const checkAgainRendered = primaryIsCheckAction ? 1 : showSecondaryCheckAgain ? 1 : 0;
 
-  console.debug(
-    `[PACKAGE][BUTTON_STATE] appid=${game.appId} button="${buttonConfig.label}" enabled=${buttonConfig.enabled} checkAgainRendered=${checkAgainRendered} isChecking=${isProviderChecking} baselineButtonRendered=false`,
-  );
-  if (providerRemoteFileModified || providerRemoteFileSize) {
+  if (verbose) {
     console.debug(
-      `[PACKAGE][REMOTE_INFO_RENDER] appid=${game.appId} fileModified=${providerRemoteFileModified} fileSize=${providerRemoteFileSize}`,
+      `[PACKAGE][BUTTON_STATE] appid=${game.appId} button="${buttonConfig.label}" enabled=${buttonConfig.enabled} checkAgainRendered=${checkAgainRendered} isChecking=${isProviderChecking} baselineButtonRendered=false`,
     );
+    if (providerRemoteFileModified || providerRemoteFileSize) {
+      console.debug(
+        `[PACKAGE][REMOTE_INFO_RENDER] appid=${game.appId} fileModified=${providerRemoteFileModified} fileSize=${providerRemoteFileSize}`,
+      );
+    }
   }
 
-  if (canRetry) {
+  if (verbose && canRetry) {
     console.log(`[STORE][SOURCE_RETRY_RENDER] appid=${game.appId} visible=true reason=${needsRetry ? "retry-failed" : isNone ? "none" : "idle"}`);
   }
-  if (!isChecking && !isReady && !isNone && !needsRetry && !canRetry) {
+  if (verbose && !isChecking && !isReady && !isNone && !needsRetry && !canRetry) {
     console.log(`[STORE][SOURCE_NONE_LABEL_BLOCKED] appid=${game.appId} reason=no-retry-available`);
   }
-  if (!steamOwned && isNone) {
+  if (verbose && !steamOwned && isNone) {
     console.log(`[STORE][NO_SOURCES_RENDER_GUARD] appid=${game.appId} allowed=${!canRetry} sourceStatus=${sourceStatus} availableSources=${availableSources} canRetry=${canRetry} selectedSource=${!!selectedSource}`);
   }
 
-  return (
-    <div className="space-y-4">
-      <div className="overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/20">
-        <div className="aspect-video overflow-hidden bg-white/5">
-          <AsyncImage
-            src={previewImageUrl || game.imageUrl}
-            alt={game.title}
-            className="h-full w-full"
-            fallback={
-              <div className="flex h-full w-full items-center justify-center">
-                <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
-              </div>
-            }
-          />
-        </div>
+  const heroCard = (
+    <div className="overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/20">
+      <div className="aspect-video overflow-hidden bg-white/5">
+        <AsyncImage
+          src={previewImageUrl || game.imageUrl}
+          alt={game.title}
+          className="h-full w-full"
+          fallback={
+            <div className="flex h-full w-full items-center justify-center">
+              <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+            </div>
+          }
+        />
+      </div>
 
         <div className="p-4">
           <h2 className="text-lg font-bold text-(--color-text)">
@@ -348,26 +400,27 @@ export default function StoreGameSummaryPanel({
           </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {statusBadge &&
-              (() => {
-                const Icon = statusBadge.icon;
-
-                return (
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${statusBadge.className}`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {statusBadge.label}
-                  </span>
-                );
-              })()}
-
-            {/* {inLibrary && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-300">
-                <Library className="h-3.5 w-3.5" />
-                In Library
-              </span>
-            )} */}
+            {repackActive ? (
+              repackInstalled && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Installed
+                </span>
+              )
+            ) : (
+              <>
+            {summaryBadges.map((badge) => {
+              const Icon = badge.icon;
+              return (
+                <span
+                  key={badge.label}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${badge.className}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {badge.label}
+                </span>
+              );
+            })}
 
             {!steamOwned && !isSteamInstalled && !luaInstalled && installStatus === "not-installed" && isReady && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-(--color-muted)">
@@ -376,25 +429,33 @@ export default function StoreGameSummaryPanel({
               </span>
             )}
 
-            {!steamOwned && isChecking && (
+            {!steamOwned && !isNonInstalledLua && isChecking && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/15 px-2.5 py-1 text-xs font-medium text-yellow-300">
-                Checking sources...
+                {sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0
+                  ? `Checking ${sourceProgress.completed}/${sourceProgress.total}`
+                  : "Checking sources..."}
               </span>
             )}
 
-            {!steamOwned && isNone && !canRetry && (
+            {!steamOwned && !isNonInstalledLua && isNone && !canRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
                 No Sources Available
               </span>
             )}
 
-            {!steamOwned && needsRetry && (
+            {!steamOwned && !isNonInstalledLua && isNeedsConfig && canRetry && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300">
+                Provider configuration needed
+              </span>
+            )}
+
+            {!steamOwned && !isNonInstalledLua && needsRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
                 Source check failed
               </span>
             )}
 
-            {!steamOwned && ((totalSources > 0 && !isChecking) || isBackgroundChecking) ? (
+            {!steamOwned && !isNonInstalledLua && ((totalSources > 0 && !isChecking) || isBackgroundChecking) ? (
               <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
                 {availableSources}/{totalSources} Sources
                 {isBackgroundChecking && " · scanning..."}
@@ -413,11 +474,14 @@ export default function StoreGameSummaryPanel({
                   </span>
                 );
               })()}
+              </>
+            )}
           </div>
         </div>
       </div>
+    );
 
-      {steamOwned ? (
+  const downloadCard = steamOwned ? (
         <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
           <p className="text-sm font-medium text-(--color-text)">
             This game is already in your Steam account.
@@ -425,23 +489,70 @@ export default function StoreGameSummaryPanel({
           <p className="mt-1 text-xs text-(--color-muted)">
             {isInstalled ? "Installed and ready to play via Steam." : "You can install it from Steam at any time."}
           </p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={onOpenSteamLibrary}
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90"
+            >
+              <Library className="h-4 w-4" />
+              Steam Library
+            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onOpenSteam}
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Steam
+              </button>
+              <button
+                type="button"
+                onClick={onOpenSteamDb}
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              >
+                <Database className="h-3.5 w-3.5" />
+                SteamDB
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : isNonInstalledLua ? (
+        <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
+          <p className="text-sm font-medium text-(--color-text)">
+            This package is already in your library.
+          </p>
+          <p className="mt-1 text-xs text-(--color-muted)">
+            Found in config/lua — You can install it from Steam at any time.
+          </p>
+          <div className="mt-3 flex flex-col gap-2">
             <button
               type="button"
               onClick={onOpenSteam}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Steam
+              <ExternalLink className="h-4 w-4" />
+              Install via Steam
             </button>
-            <button
-              type="button"
-              onClick={onOpenSteamDb}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-            >
-              <Database className="h-3.5 w-3.5" />
-              SteamDB
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onOpenSteam}
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Steam
+              </button>
+              <button
+                type="button"
+                onClick={onOpenSteamDb}
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              >
+                <Database className="h-3.5 w-3.5" />
+                SteamDB
+              </button>
+            </div>
           </div>
         </div>
       ) : (
@@ -454,7 +565,23 @@ export default function StoreGameSummaryPanel({
               </span>
             </div>
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
-              <span>Awaiting provider response...</span>
+              {sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0 ? (
+                <span>
+                  Checking providers {sourceProgress.completed}/{sourceProgress.total}
+                  {sourceProgress.successful > 0 && (
+                    <span className="ml-1 text-emerald-300/70">
+                      · Source found
+                    </span>
+                  )}
+                  {sourceProgress.completed < sourceProgress.total && (
+                    <span className="ml-1 text-yellow-300/70">
+                      · Checking {sourceProgress.total - sourceProgress.completed} remaining
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <span>Awaiting provider response...</span>
+              )}
             </div>
           </div>
         )}
@@ -498,6 +625,8 @@ export default function StoreGameSummaryPanel({
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
               {isNone ? (
                 <span>None — no packages found</span>
+              ) : isNeedsConfig ? (
+                <span>Configure providers to search for sources</span>
               ) : needsRetry ? (
                 <span>Check failed — retry below</span>
               ) : canRetry ? (
@@ -551,9 +680,11 @@ export default function StoreGameSummaryPanel({
             type="button"
             disabled={!buttonConfig.enabled}
             onClick={buttonConfig.onClick}
-            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Download className="h-4 w-4" />
+            {buttonConfig.reason === "lua-not-installed-install-steam"
+              ? <ExternalLink className="h-4 w-4" />
+              : <Download className="h-4 w-4" />}
             {buttonConfig.label}
           </button>
 
@@ -567,7 +698,9 @@ export default function StoreGameSummaryPanel({
               ? "Checking sources..."
               : isReady
                 ? "Change Source"
-                : "Sources: None — Check below"}
+                : isNeedsConfig
+                  ? "Configure providers — Check below"
+                  : "Sources: None — Check below"}
           </button>
 
           {/* Check again / Retry / Checking... */}
@@ -597,12 +730,12 @@ export default function StoreGameSummaryPanel({
             <button
               type="button"
               onClick={() => {
-                console.log(`[STORE][SOURCE_RETRY_CLICK] appid=${game.appId} reason=${needsRetry || isNone ? "retry-failed" : "initial-check"}`);
+                console.log(`[STORE][SOURCE_RETRY_CLICK] appid=${game.appId} reason=${needsRetry || isNone ? "retry-failed" : isNeedsConfig ? "configure-providers" : "initial-check"}`);
                 onRefreshSources?.();
               }}
               className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-4 py-2 text-sm font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
             >
-              {needsRetry || isNone ? "Retry Sources" : "Check sources"}
+              {isNeedsConfig ? "Configure & Check" : needsRetry || isNone ? "Retry Sources" : "Check sources"}
             </button>
           )}
 
@@ -626,37 +759,58 @@ export default function StoreGameSummaryPanel({
           </div>
         </div>
       </div>
-      )}
+      );
 
-      <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
-          Summary
-        </h3>
+  const summaryCard = (
+    <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+        Summary
+      </h3>
 
         <div className="mt-3 space-y-2">
           <SummaryLine label="AppID" value={game.appId} />
           <SummaryLine
             label="Status"
-            value={statusBadge?.label ?? (inLibrary ? "In Library" : steamOwned ? "Owned" : "Not in Library")}
+            value={
+              repackActive
+                ? repackInstalled
+                  ? "Installed"
+                  : "Not installed"
+                : summaryBadges.length > 0
+                  ? summaryBadges.map((b) => b.label).join(" + ")
+                  : inLibrary
+                    ? "In Library"
+                    : steamOwned
+                      ? "Owned"
+                      : "Not in Library"
+            }
           />
           <SummaryLine
             label="Sources"
             value={
-              steamOwned
-                ? "Steam account"
-                : isChecking
-                  ? "Checking..."
-                  : isBackgroundChecking
-                    ? `${availableSources}/${totalSources} · scanning...`
-                    : isReady
-                      ? `${availableSources}/${totalSources} available`
-                      : isNone
-                        ? "None found"
-                        : needsRetry
-                          ? "Check failed"
-                          : canRetry
-                            ? "Check pending"
-                            : "None"
+              repackActive
+                ? repackSourceLabels.length > 0
+                  ? repackSourceLabels.join(" · ")
+                  : "Sin repacks"
+                : steamOwned
+                  ? "Steam account"
+                  : isNonInstalledLua
+                    ? "In library (Lua)"
+                    : isChecking
+                      ? "Checking..."
+                      : isBackgroundChecking
+                        ? `${availableSources}/${totalSources} · scanning...`
+                        : isReady
+                          ? `${availableSources}/${totalSources} available`
+                          : isNeedsConfig
+                            ? "Configure providers"
+                            : isNone
+                              ? "None found"
+                              : needsRetry
+                                ? "Check failed"
+                                : canRetry
+                                  ? "Check pending"
+                                  : "None"
             }
           />
           <SummaryLine label="Developer" value={developer} />
@@ -668,6 +822,17 @@ export default function StoreGameSummaryPanel({
           )}
         </div>
       </div>
+    );
+
+  if (section === "hero") return heroCard;
+  if (section === "download") return downloadCard;
+  if (section === "summary") return summaryCard;
+
+  return (
+    <div className="space-y-4">
+      {heroCard}
+      {downloadCard}
+      {summaryCard}
     </div>
   );
 }

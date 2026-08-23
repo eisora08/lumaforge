@@ -170,7 +170,7 @@ function scheduleIdleFill(games: LibraryGame[]): void {
               url: landscapeUrl,
               target: "canonical",
               priority: "low",
-            }).catch(() => {});
+            }).catch((err) => console.warn(err));
           }
 
           const coverUrl = meta?.capsule_image || meta?.capsule_image_v5 || meta?.header_image;
@@ -183,7 +183,7 @@ function scheduleIdleFill(games: LibraryGame[]): void {
               url: coverUrl,
               target: "canonical",
               priority: "low",
-            }).catch(() => {});
+            }).catch((err) => console.warn(err));
           }
         })
       );

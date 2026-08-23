@@ -37,15 +37,13 @@ function normalizeLanguages(metadata?: SteamAppMetadata) {
 }
 
 function getBestImageUrl(params: {
-  packageImageUrl?: string;
+  appId: string;
   metadata?: SteamAppMetadata;
 }) {
-  return (
-    params.metadata?.header_image ||
-    params.metadata?.capsule_image ||
-    params.metadata?.capsule_image_v5 ||
-    params.packageImageUrl
-  );
+  if (params.metadata?.header_image) return params.metadata.header_image;
+  const id = parseInt(params.appId, 10);
+  if (id > 0) return `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`;
+  return undefined;
 }
 
 function getDeveloper(params: {
@@ -119,7 +117,7 @@ function buildStoreMetadata(params: {
       metadata,
     }),
     imageUrl: getBestImageUrl({
-      packageImageUrl: game.imageUrl,
+      appId: game.appId,
       metadata,
     }),
 

@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "goldberg-emulator",
+  "name": "goldberg-emulator",
+  "displayName": "Goldberg Emulator",
+  "description": "Steam client emulator for running Steam games without the Steam client",
+  "longDescription": "# Goldberg Emulator\n\nGoldberg emulates the Steam client API, allowing Steam games to run without the official Steam client.\n\n## Features\n\n- Offline play without Steam client\n- Custom lobby and matchmaking\n- Achievement emulation\n- Cloud save redirection",
+  "summary": "Steam client emulator for offline play",
+  "version": "0.4.0",
+  "minimumLauncherVersion": "1.0.0",
+  "author": "LumaForge Community",
+  "homepage": "https://github.com/lumaforge/goldberg-emulator",
+  "license": "GPL-3.0",
+  "icon": "icon.png",
+  "categories": ["steam", "emulation"],
+  "tags": ["goldberg", "emulator", "offline", "steam"],
+  "managedFiles": [
+    {
+      "path": "steamclient.so",
+      "isExecutable": true,
+      "replaceStrategy": "always",
+      "backupStrategy": "rename",
+      "validationStrategy": "checksum",
+      "checksum": "sha256-f7e8d9c0b1a2..."
+    },
+    {
+      "path": "steamclient64.dll",
+      "isExecutable": true,
+      "replaceStrategy": "always",
+      "backupStrategy": "rename",
+      "validationStrategy": "checksum",
+      "checksum": "sha256-d4e5f6a7b8c9..."
+    },
+    {
+      "path": "config/steam_appid.txt",
+      "required": false,
+      "replaceStrategy": "if-newer",
+      "backupStrategy": "copy"
+    },
+    {
+      "path": "config/settings.ini",
+      "required": false,
+      "replaceStrategy": "never",
+      "backupStrategy": "none"
+    }
+  ],
+  "permissions": [
+    { "id": "filesystem.read", "reason": "Read Steam appmanifest and game files" },
+    { "id": "filesystem.write", "reason": "Write emulator configuration and save files" },
+    { "id": "steam.appmanifest", "reason": "Parse appmanifest for game metadata" },
+    { "id": "network.http", "reason": "Fetch Steam API data for emulation", "optional": true }
+  ],
+  "capabilities": [
+    {
+      "id": "steam-tool",
+      "version": "1.0",
+      "description": "Emulates Steam client API for offline game execution"
+    },
+    {
+      "id": "save-manager",
+      "version": "1.0",
+      "description": "Manages save file redirection for offline play"
+    }
+  ],
+  "installStrategy": {
+    "type": "transaction-copy"
+  },
+  "toggleStrategy": {
+    "type": "rename",
+    "config": {
+      "targetFiles": ["steamclient.so", "steamclient64.dll"],
+      "enabledExtension": "",
+      "disabledExtension": ".bak"
+    }
+  },
+  "updateStrategy": {
+    "type": "download",
+    "autoCheck": false,
+    "autoInstall": false
+  },
+  "releaseProvider": {
+    "provider": "github",
+    "config": {
+      "owner": "lumaforge",
+      "repo": "goldberg-emulator",
+      "tagPattern": "v*",
+      "assetPattern": "*.zip"
+    }
+  },
+  "behavior": {
+    "luaOwnershipOverride": true,
+    "injectsDll": true,
+    "modifiesStorePage": false,
+    "addsGameEntries": true
+  },
+  "validation": {
+    "requiredFiles": ["steamclient.so", "steamclient64.dll"],
+    "maxTotalSize": 52428800
+  }
+}

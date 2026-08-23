@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useRef, useState, useEffect } from "react";
 import {
   Play, Pause, Clapperboard, Image, CircleSlash, Loader2,
-  SkipBack, SkipForward, Volume2, VolumeX
+  SkipBack
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { TrailerData } from "./consoleTrailerData";
@@ -20,6 +20,9 @@ type Props = {
   /** Autoplay trailer when entering details mode (default false).
    *  Only applies to direct mp4/webm — HLS/DASH always require user click. */
   autoplay?: boolean;
+  /** When false, video layer + play button + controls are hidden — shows static artwork only.
+   *  Set true on hover or when actively playing. */
+  showVideo?: boolean;
   /** Forces display to fallback artwork (hero/landscape) regardless of
    *  trailer availability. Used by ConsoleGridLayout's delayed trailer
    *  behavior: show artwork first, switch to trailer after 3s. */
@@ -76,7 +79,7 @@ function formatTime(seconds: number): string {
  */
 export default function ConsoleSelectedPreview({
   game, showTrailerPreview = true, trailerData, screenshotOverrideUrl,
-  mode = "thumbnail", autoplay = false, mediaIdentityKey,
+  mode = "thumbnail", autoplay = false, showVideo = true, mediaIdentityKey,
   showArtworkFirst = false, thumbnailAutoplaySrc,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -105,7 +108,6 @@ export default function ConsoleSelectedPreview({
   /* ── Video control state ── */
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [muted, setMuted] = useState(true);
   const [showControls, setShowControls] = useState(false);
 
   const detailsMode = mode === "details";
@@ -465,6 +467,7 @@ export default function ConsoleSelectedPreview({
     if (!video) return;
 
     setVideoError(false);
+    autoplayQueuedRef.current = false;
 
     if (playType === "hls") {
       setIsLoading(true);
@@ -479,6 +482,17 @@ export default function ConsoleSelectedPreview({
       if (video) video.removeAttribute("src");
     };
   }, [detailsMode, videoSrc, playType, game?.appId]);
+
+  // Re-setup HLS when video element mounts (showVideo flip or deferred mount)
+  useEffect(() => {
+    if (!showVideo || !detailsMode || playType !== "hls" || !videoSrc) return;
+    const video = videoRef.current;
+    if (!video) return;
+    setVideoError(false);
+    setIsLoading(true);
+    initHls(video, videoSrc);
+    return () => { destroyHls(); };
+  }, [showVideo, detailsMode, playType, videoSrc, game?.appId]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -539,6 +553,14 @@ export default function ConsoleSelectedPreview({
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
     if (video) setDuration(video.duration);
+    if (autoplayQueuedRef.current && videoRef.current) {
+      autoplayQueuedRef.current = false;
+      const v = videoRef.current;
+      v.muted = true;
+      v.play().then(() => {
+        v.addEventListener("playing", () => { v.muted = false; }, { once: true });
+      }).catch(() => {});
+    }
   }, []);
 
   const handleVideoEnded = useCallback(() => {
@@ -570,18 +592,7 @@ export default function ConsoleSelectedPreview({
     resetControlsTimer();
   }, [resetControlsTimer]);
 
-  const handleSeekForward = useCallback(() => {
-    const video = videoRef.current;
-    if (video) video.currentTime = Math.min(video.duration, video.currentTime + 10);
-    resetControlsTimer();
-  }, [resetControlsTimer]);
-
-  const handleMuteToggle = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = !video.muted;
-    setMuted(video.muted);
-  }, []);
+  /* handleSeekForward and handleMuteToggle removed — mute controlled from ConsoleGameDetails actions zone, seek via LT/RT */
 
   const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const video = videoRef.current;
@@ -604,16 +615,27 @@ export default function ConsoleSelectedPreview({
 
   /* ── Autoplay on video src / media type change (direct mp4/webm only) ── */
   const prevMediaKey = useRef<string | null>(null);
+  const autoplayQueuedRef = useRef(false);
   const mediaKey = screenshotActive ? `ss-${screenshotOverrideUrl}` : (detailsMode && videoSrc ? `trailer-${videoSrc}` : "none");
 
   useEffect(() => {
     if (mediaKey === prevMediaKey.current) return;
     prevMediaKey.current = mediaKey;
 
-    if (detailsMode && autoplay && !screenshotActive && playType === "direct" && videoSrc && videoRef.current && !videoError) {
-      const v = videoRef.current;
-      v.currentTime = 0;
-      v.play().catch(() => {});
+    if (detailsMode && autoplay && !screenshotActive && playType === "direct" && videoSrc && !videoError) {
+      // Always queue — handleLoadedMetadata picks it up when the <video> mounts
+      autoplayQueuedRef.current = true;
+      if (videoRef.current) {
+        const v = videoRef.current;
+        v.muted = true;
+        v.currentTime = 0;
+        if (v.readyState >= 2) {
+          v.play().then(() => {
+            v.addEventListener("playing", () => { v.muted = false; }, { once: true });
+          }).catch(() => {});
+          autoplayQueuedRef.current = false;
+        }
+      }
     }
   }, [mediaKey, detailsMode, autoplay, screenshotActive, playType, videoSrc, videoError]);
 
@@ -650,8 +672,8 @@ export default function ConsoleSelectedPreview({
 
   const playBtnSize = "h-14 w-14";
   const playIconSize = "h-6 w-6";
-  const showControlsBar = detailsMode && hasVideo && !videoError && !screenshotActive && (showControls || isPlaying);
-  const showCenterPlay = isTrailer && displaySrc && !imgError && !screenshotActive;
+  const showControlsBar = showVideo && detailsMode && hasVideo && !videoError && !screenshotActive && (showControls || isPlaying);
+  const showCenterPlay = showVideo && isTrailer && displaySrc && !imgError && !screenshotActive;
 
   return (
     <div
@@ -705,12 +727,13 @@ export default function ConsoleSelectedPreview({
         />
       )}
 
-      {/* ── Video layer ── */}
-      {detailsMode && hasVideo && !videoError && !screenshotActive && (
+      {/* ── Video layer (hidden unless showVideo) ── */}
+      {showVideo && detailsMode && hasVideo && !videoError && !screenshotActive && (
         <video
           ref={videoRef}
           data-console-preview-video={game.appId}
           key={`${game.appId}-${mediaIdentityKey ?? trailerData?.playableUrl ?? "none"}`}
+          src={playType === "direct" && videoSrc ? videoSrc : undefined}
           muted
           playsInline
           preload="metadata"
@@ -823,33 +846,13 @@ export default function ConsoleSelectedPreview({
                 )}
               </button>
 
-              {/* Seek forward */}
-              <button
-                type="button"
-                onClick={handleSeekForward}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-white/70 transition hover:bg-white/10 hover:text-white"
-                aria-label="Forward 10 seconds"
-              >
-                <SkipForward className="h-3.5 w-3.5" />
-              </button>
-
               {/* Time display */}
               <span className="ml-1 font-mono text-[11px] tabular-nums text-white/60">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
             </div>
 
-            <div className="flex items-center gap-1.5">
-              {/* Mute/Unmute */}
-              <button
-                type="button"
-                onClick={handleMuteToggle}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-white/70 transition hover:bg-white/10 hover:text-white"
-                aria-label={muted ? "Unmute" : "Mute"}
-              >
-                {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-              </button>
-            </div>
+            <div className="flex items-center gap-1.5" />
           </div>
         </div>
       )}

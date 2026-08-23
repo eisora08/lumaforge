@@ -6,6 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Notification</title>
   <style>
+    @font-face {
+      font-family: 'InterVariable';
+      src: url('/fonts/InterVariable.woff2') format('woff2-variations');
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
     * {
       margin: 0;
       padding: 0;
@@ -18,7 +25,10 @@
       height: 100%;
       overflow: hidden;
       background: transparent;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: "InterVariable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-optical-sizing: auto;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
       display: flex;
       justify-content: flex-end;
       align-items: flex-start;
@@ -45,7 +55,7 @@
         0 24px 70px rgba(0, 0, 0, 0.45),
         0 0 0 1px rgba(184, 215, 220, 0.12),
         0 0 28px rgba(184, 215, 220, 0.06);
-      animation: toastEntry 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      animation: toastEntry 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
     }
 
     .toast.exit {
@@ -63,11 +73,11 @@
       backdrop-filter: blur(24px);
       -webkit-backdrop-filter: blur(24px);
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-      animation: achToastEntry 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      animation: achEntry 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
     }
 
     .toast.achieve.exit {
-      animation: achToastExit 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+      animation: achFadeOut 180ms ease-in forwards;
     }
 
     .toast.achieve .ach-icon-container {
@@ -120,9 +130,62 @@
       color: color-mix(in srgb, var(--ach-muted) 30%, transparent);
     }
 
-    .toast.achieve .ach-rarity {
-      font-size: 10px;
-      color: color-mix(in srgb, var(--ach-muted) 50%, transparent);
+    .toast.achieve .ach-desc {
+      margin: 2px 0 0;
+      font-size: 11px;
+      line-height: 1.4;
+      color: color-mix(in srgb, var(--ach-muted) 70%, transparent);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* Rare — border glow + breathing brightness */
+    .toast.achieve.achieve-rare {
+      border-width: 2px;
+      animation: achEntry 380ms cubic-bezier(0.16, 1, 0.3, 1) both,
+                 achRareGlow 2s ease-in-out 400ms infinite alternate;
+    }
+
+    /* Platinum — violet glow + pulsing ring + gradient text */
+    .toast.achieve.achieve-platinum {
+      border-width: 2px;
+      border-color: rgba(167, 139, 250, 0.9) !important;
+      animation: achEntry 380ms cubic-bezier(0.16, 1, 0.3, 1) both,
+                 achRareGlow 2s ease-in-out 400ms infinite alternate;
+    }
+
+    .toast.achieve.achieve-platinum .ach-icon-container {
+      animation: achPlatRing 1.5s ease-in-out infinite;
+    }
+
+    .toast.achieve.achieve-platinum .ach-header {
+      background: linear-gradient(90deg, #a78bfa, #8b5cf6, #c4b5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    @keyframes achEntry {
+      from { opacity: 0; transform: translateY(16px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes achFadeOut {
+      from { opacity: 1; transform: translateX(0); }
+      to { opacity: 0; transform: translateX(16px); }
+    }
+
+    @keyframes achRareGlow {
+      from { filter: brightness(1); }
+      to { filter: brightness(1.08); }
+    }
+
+    @keyframes achPlatRing {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.5); }
+      50% { box-shadow: 0 0 18px 3px rgba(167, 139, 250, 0.35); }
     }
 
     .toast.achieve .ach-close-btn {
@@ -189,7 +252,7 @@
     }
 
     .session-image-wrap {
-      height: 100px;
+      height: 160px;
       overflow: hidden;
       background: rgba(255, 255, 255, 0.03);
       position: relative;
@@ -208,7 +271,7 @@
     }
 
     .session-icon-fallback {
-      height: 72px;
+      height: 120px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -584,7 +647,7 @@
       document.body.className = cls;
     }
 
-    // Achievements — reuse same container & animations
+    // Achievements — premium toast with rarity tiers + description
     window.__showAchievementToast = function (data) {
       console.log("[ACH][OVERLAY][WEB] __showAchievementToast called", JSON.stringify(data));
       var container = document.getElementById('toast-container');
@@ -599,39 +662,67 @@
       applyThemeVars(data.themeVars);
 
       var duration = data.duration || 4500;
+      var rarity = (data.rarity != null && Number.isFinite(data.rarity)) ? data.rarity : null;
+
+      // Rarity tier classification
+      function getRarityTier(pct) {
+        if (pct === null || pct <= 0) return null;
+        if (pct === 100 || data.isPlatinum) return 'platinum';
+        if (pct <= 1) return 'gold';
+        if (pct <= 5) return 'silver';
+        if (pct <= 10) return 'bronze';
+        return null;
+      }
+      var tier = getRarityTier(rarity);
+
+      // Rarity colors
+      var tierConfig = {
+        platinum: { border: '#a78bfa', glow: 'rgba(167,139,250,0.6)', badgeBg: 'rgba(167,139,250,0.2)', badgeBorder: 'rgba(167,139,250,0.7)', badgeText: '#c4b5fd', label: 'Platinum Trophy', iconRing: 'rgba(167,139,250,0.5)', accentGrad: 'linear-gradient(90deg, #a78bfa, #8b5cf6, #7c3aed)' },
+        gold:   { border: '#f9c74f', glow: 'rgba(249,199,79,0.55)', badgeBg: 'rgba(249,199,79,0.15)', badgeBorder: 'rgba(249,199,79,0.6)', badgeText: '#ffe08a', label: 'Ultra Rare', iconRing: 'rgba(249,199,79,0.4)', accentGrad: 'linear-gradient(90deg, #f9c74f, #f8961e)' },
+        silver: { border: '#c7d0d9', glow: 'rgba(199,208,217,0.5)', badgeBg: 'rgba(199,208,217,0.15)', badgeBorder: 'rgba(199,208,217,0.6)', badgeText: '#edf3f8', label: 'Rare', iconRing: 'rgba(199,208,217,0.4)', accentGrad: 'linear-gradient(90deg, #c7d0d9, #94a3b8)' },
+        bronze: { border: '#cd7f32', glow: 'rgba(205,127,50,0.5)', badgeBg: 'rgba(205,127,50,0.15)', badgeBorder: 'rgba(205,127,50,0.6)', badgeText: '#efb475', label: 'Uncommon', iconRing: 'rgba(205,127,50,0.4)', accentGrad: 'linear-gradient(90deg, #cd7f32, #b8860b)' },
+      };
+      var tc = tier ? tierConfig[tier] : null;
+      var isRare = !!tc;
+
+      // Icon HTML
       var iconHtml = '';
       if (data.iconUrl) {
-        iconHtml = '<img src="' + escapeHtml(data.iconUrl) + '" alt="" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"/>';
+        iconHtml = '<img src="' + escapeHtml(data.iconUrl) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:12px" onerror="this.style.display=\'none\'"/>';
       } else {
         iconHtml = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>';
       }
 
-      var rarityHtml = '';
-      if (data.rarity != null && Number.isFinite(data.rarity)) {
-        rarityHtml = '<span class="ach-rarity">' + data.rarity.toFixed(1) + '% rarity</span>';
+      // Rarity label
+      var rarityLabelHtml = '';
+      if (isRare) {
+        rarityLabelHtml = '<span class="ach-header" style="color:' + tc.badgeText + '">' + tc.label + ' Achievement</span>';
+      } else {
+        rarityLabelHtml = '<span class="ach-header">Achievement Unlocked</span>';
       }
 
-      var gameTitleHtml = '';
-      if (data.gameTitle) {
-        gameTitleHtml = '<span class="ach-game-title">' + escapeHtml(data.gameTitle) + '</span>';
+      // Description
+      var descHtml = '';
+      if (data.description) {
+        descHtml = '<p class="ach-desc">' + escapeHtml(data.description) + '</p>';
       }
 
+      // Meta line (game title only — no rarity percent)
       var metaDiv = '<div class="ach-meta">';
-      if (gameTitleHtml) metaDiv += gameTitleHtml;
-      if (gameTitleHtml && rarityHtml) metaDiv += '<span class="ach-bullet">·</span>';
-      if (rarityHtml) metaDiv += rarityHtml;
+      if (data.gameTitle) metaDiv += '<span class="ach-game-title">' + escapeHtml(data.gameTitle) + '</span>';
       metaDiv += '</div>';
 
       var toast = document.createElement('div');
-      toast.className = 'toast achieve';
+      toast.className = 'toast achieve' + (tier === 'platinum' ? ' achieve-platinum' : (isRare ? ' achieve-rare' : ''));
       toast.innerHTML =
         '<div class="toast-body" style="align-items:flex-start">' +
-          '<div class="ach-icon-container">' +
+          '<div class="ach-icon-container" style="border-color:' + (tc ? tc.iconRing : 'rgba(255,255,255,0.1)') + '">' +
             iconHtml +
           '</div>' +
           '<div style="flex:1;min-width:0">' +
-            '<p class="ach-header">Achievement Unlocked</p>' +
+            rarityLabelHtml +
             '<p class="ach-name">' + escapeHtml(data.name) + '</p>' +
+            descHtml +
             metaDiv +
           '</div>' +
           '<button type="button" class="ach-close-btn" onclick="dismissToast(this.closest(\'.toast\'))" aria-label="Dismiss">' +
@@ -639,10 +730,18 @@
           '</button>' +
         '</div>';
 
-      // Set dynamic box-shadow with accent glow
+      // Set dynamic box-shadow with rarity glow
       var accent = data.themeVars ? (data.themeVars['--color-accent'] || '#b8d7dc') : '#b8d7dc';
       var rgb = parseRgb(accent);
-      if (rgb) {
+      if (isRare) {
+        var trgb = parseRgb(tc.border);
+        toast.style.boxShadow =
+          '0 25px 50px -12px rgba(0,0,0,0.25), ' +
+          '0 0 0 1px rgba(' + trgb.r + ',' + trgb.g + ',' + trgb.b + ',0.8), ' +
+          '0 0 16px rgba(' + trgb.r + ',' + trgb.g + ',' + trgb.b + ',0.55)';
+        toast.style.borderColor = tc.border;
+        toast.classList.add('achieve-rare');
+      } else if (rgb) {
         toast.style.boxShadow =
           '0 25px 50px -12px rgba(0,0,0,0.25), ' +
           '0 0 0 1px rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',0.12), ' +
@@ -661,6 +760,156 @@
         }, 300);
       }, duration);
     };
+
+    // ── Batch achievement toasts — staggered entry + sequential exit ──
+    window.__showAchievementBatchToast = function (data) {
+      console.log("[ACH][OVERLAY_BATCH][WEB] __showAchievementBatchToast called count=" + (data.toasts ? data.toasts.length : 0));
+      var container = document.getElementById('toast-container');
+
+      // Cancel any pending batch exit timers
+      if (window.__batchExitTimers) {
+        for (var ci = 0; ci < window.__batchExitTimers.length; ci++) {
+          clearTimeout(window.__batchExitTimers[ci]);
+        }
+      }
+      window.__batchExitTimers = [];
+
+      // Remove any existing toasts
+      var existing = container.querySelectorAll('.toast');
+      for (var i = 0; i < existing.length; i++) {
+        existing[i].classList.add('exit');
+      }
+      if (existing.length > 0) {
+        setTimeout(function () {
+          for (var j = 0; j < existing.length; j++) {
+            if (existing[j].parentNode) existing[j].parentNode.removeChild(existing[j]);
+          }
+        }, 300);
+      }
+
+      setOverlayPosition(data.overlayPosition);
+      applyThemeVars(data.themeVars);
+
+      var toasts = data.toasts || [];
+      var perToastDuration = data.maxDuration || 4500;
+      var staggerMs = 120;
+
+      function getRarityTier(pct, isPlatinum) {
+        if (pct === null || pct <= 0) return null;
+        if (pct === 100 || isPlatinum) return 'platinum';
+        if (pct <= 1) return 'gold';
+        if (pct <= 5) return 'silver';
+        if (pct <= 10) return 'bronze';
+        return null;
+      }
+
+      var tierConfig = {
+        platinum: { border: '#a78bfa', glow: 'rgba(167,139,250,0.6)', iconRing: 'rgba(167,139,250,0.5)', badgeText: '#c4b5fd', label: 'Platinum Trophy' },
+        gold:   { border: '#f9c74f', glow: 'rgba(249,199,79,0.55)', iconRing: 'rgba(249,199,79,0.4)', badgeText: '#ffe08a', label: 'Ultra Rare' },
+        silver: { border: '#c7d0d9', glow: 'rgba(199,208,217,0.5)', iconRing: 'rgba(199,208,217,0.4)', badgeText: '#edf3f8', label: 'Rare' },
+        bronze: { border: '#cd7f32', glow: 'rgba(205,127,50,0.5)', iconRing: 'rgba(205,127,50,0.4)', badgeText: '#efb475', label: 'Uncommon' },
+      };
+
+      var toastElements = [];
+
+      for (var k = 0; k < toasts.length; k++) {
+        var t = toasts[k];
+        var rarity = (t.rarity != null && Number.isFinite(t.rarity)) ? t.rarity : null;
+        var tier = getRarityTier(rarity, t.isPlatinum);
+        var tc = tier ? tierConfig[tier] : null;
+        var isRare = !!tc;
+
+        var iconHtml = '';
+        if (t.iconUrl) {
+          iconHtml = '<img src="' + escapeHtml(t.iconUrl) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:12px" onerror="this.style.display=\'none\'"/>';
+        } else {
+          iconHtml = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>';
+        }
+
+        var rarityLabelHtml = isRare
+          ? '<span class="ach-header" style="color:' + tc.badgeText + '">' + tc.label + ' Achievement</span>'
+          : '<span class="ach-header">Achievement Unlocked</span>';
+
+        var descHtml = t.description ? '<p class="ach-desc">' + escapeHtml(t.description) + '</p>' : '';
+        var metaDiv = '<div class="ach-meta">';
+        if (t.gameTitle) metaDiv += '<span class="ach-game-title">' + escapeHtml(t.gameTitle) + '</span>';
+        metaDiv += '</div>';
+
+        var toast = document.createElement('div');
+        toast.className = 'toast achieve' + (tier === 'platinum' ? ' achieve-platinum' : (isRare ? ' achieve-rare' : ''));
+        toast.style.animationDelay = (k * staggerMs) + 'ms';
+        toast.style.opacity = '0';
+        toast.innerHTML =
+          '<div class="toast-body" style="align-items:flex-start">' +
+            '<div class="ach-icon-container" style="border-color:' + (tc ? tc.iconRing : 'rgba(255,255,255,0.1)') + '">' +
+              iconHtml +
+            '</div>' +
+            '<div style="flex:1;min-width:0">' +
+              rarityLabelHtml +
+              '<p class="ach-name">' + escapeHtml(t.name) + '</p>' +
+              descHtml +
+              metaDiv +
+            '</div>' +
+            '<button type="button" class="ach-close-btn" onclick="dismissBatchToast(this.closest(\'.toast\'))" aria-label="Dismiss">' +
+              '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+            '</button>' +
+          '</div>';
+
+        var accent = data.themeVars ? (data.themeVars['--color-accent'] || '#b8d7dc') : '#b8d7dc';
+        var rgb = parseRgb(accent);
+        if (isRare) {
+          var trgb = parseRgb(tc.border);
+          toast.style.boxShadow =
+            '0 25px 50px -12px rgba(0,0,0,0.25), ' +
+            '0 0 0 1px rgba(' + trgb.r + ',' + trgb.g + ',' + trgb.b + ',0.8), ' +
+            '0 0 16px rgba(' + trgb.r + ',' + trgb.g + ',' + trgb.b + ',0.55)';
+          toast.style.borderColor = tc.border;
+          toast.classList.add('achieve-rare');
+        } else if (rgb) {
+          toast.style.boxShadow =
+            '0 25px 50px -12px rgba(0,0,0,0.25), ' +
+            '0 0 0 1px rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',0.12), ' +
+            '0 0 28px rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',0.06)';
+        }
+
+        container.appendChild(toast);
+        toastElements.push(toast);
+      }
+
+      // Staggered exit: each toast dismisses individually, in order
+      function dismissSingle(toastEl) {
+        if (!toastEl || toastEl._dismissed) return;
+        toastEl._dismissed = true;
+        toastEl.classList.add('exit');
+        setTimeout(function () {
+          if (toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+        }, 250);
+      }
+
+      window.__batchExitTimers = [];
+      for (var m = 0; m < toastElements.length; m++) {
+        var delay = perToastDuration + (m * staggerMs);
+        var timer = setTimeout((function(el) {
+          return function() { dismissSingle(el); };
+        })(toastElements[m]), delay);
+        window.__batchExitTimers.push(timer);
+      }
+
+      // Close window after the last toast exits + buffer
+      var totalMs = perToastDuration + (toastElements.length * staggerMs) + 400;
+      window.__batchCloseTimer = setTimeout(function () {
+        try { window.__TAURI_INTERNALS__.invoke('close_toast_window'); } catch (_) {}
+      }, totalMs);
+    };
+
+    // Dismiss a single toast from the batch (close button) without closing the whole window
+    function dismissBatchToast(toastEl) {
+      if (!toastEl) return;
+      toastEl.classList.add('exit');
+      setTimeout(function () {
+        if (toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+      }, 250);
+    }
 
     // Session overlay — matches GameSessionOverlay.tsx
     window.__showSessionToast = function (data) {
@@ -779,6 +1028,10 @@
       if (window.__toastTimer) {
         clearTimeout(window.__toastTimer);
         window.__toastTimer = null;
+      }
+      if (window.__batchCloseTimer) {
+        clearTimeout(window.__batchCloseTimer);
+        window.__batchCloseTimer = null;
       }
 
       toast.classList.add('exit');

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FolderSearch,
   Gamepad2,
@@ -13,16 +13,18 @@ import { GridSkeleton } from "../components/common/Skeleton";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession } from "../context/GameSessionContext";
-import { installSteamApp, deleteLuaScript } from "../services/tauri";
+import { installSteamApp, deleteLuaScript, scanInstalledLuaScripts } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
 
 import type { LibraryGame } from "../types/libraryGame";
 
-import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
-import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
+import { isAppIdInFlight } from "../services/mediaDownloadQueue";
+import { detectAndQueueMissingMedia } from "../services/gameCacheService";
 
 import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
 import { useConfirm } from "../services/confirmService";
+
+const DEBUG_LUA_DELETE = false;
 
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
@@ -35,24 +37,41 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
   const queuedMediaRef = useRef<Set<string>>(new Set());
   const { confirm } = useConfirm();
 
+  const handleOpenGame = useCallback((game: LibraryGame) => {
+    setSelectedGame(game);
+    onNavigate?.("library-game-detail");
+  }, [setSelectedGame, onNavigate]);
+
   async function handleDeleteScript(game: LibraryGame) {
     const script = game.luaScripts[0];
     if (!script) {
       showWarning("No Lua script to delete.", { title: "No script" });
       return;
     }
+    if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${settings.luaPath}"`);
     const result = await confirm({
       title: "Delete Lua script?",
-      description: `This will delete "${script.file_name}" for ${game.title}. This action cannot be undone.`,
+      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
       confirmLabel: "Delete Lua",
       variant: "danger",
     });
     if (!result.confirmed) return;
     try {
       await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
+      // Verify file is actually gone from disk
+      const remaining = await scanInstalledLuaScripts(settings.luaPath);
+      const stillPresent = remaining.some((s) => s.file_name === script.file_name);
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
+      if (stillPresent) {
+        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        return;
+      }
+      // Force refresh library state (bypass TTL) to reflect deletion
+      await refresh({ force: true });
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
       showSuccess("Lua script deleted.", { title: "Deleted" });
-      await refresh();
     } catch (err) {
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
       showError(String(err), { title: "Error" });
     }
   }
@@ -65,6 +84,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     return games.filter((g) => {
       if (filter === "steam" && g.source !== "steam") return false;
       if (filter === "local" && g.source !== "local") return false;
+      if (filter === "epic" && g.source !== "epic") return false;
       if (filter === "playable" && !g.isPlayable) return false;
       return true;
     });
@@ -82,53 +102,11 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
 
     if (gamesNeedingMedia.length === 0) return;
 
-    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey
-      && (settings.libraryCardArtworkMode ?? "landscape") === "poster";
-
     for (const game of gamesNeedingMedia) {
       queuedMediaRef.current.add(game.appId!);
 
-      if (sgdbEnabled) {
-        const appIdNum = Number(game.appId);
-        if (isNaN(appIdNum) || appIdNum <= 0) continue;
-
-        resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
-          .then((result) => {
-            if (result[game.appId!]) {
-              const artworkData = result[game.appId!];
-              const jobs: Array<{ mediaType: string; url?: string }> = [
-                { mediaType: "landscape", url: artworkData.sgdbGridUrl || artworkData.sgdbGridThumbUrl || artworkData.sgdbHeroUrl },
-                { mediaType: "cover", url: artworkData.sgdbCoverUrl },
-              ];
-              for (const { mediaType, url } of jobs) {
-                if (!url) continue;
-                enqueueMediaDownload({
-                  id: `sgdb-${game.appId}-${mediaType}`,
-                  appId: game.appId!,
-                  provider: "steam",
-                  mediaType: mediaType as any,
-                  url,
-                  target: "canonical",
-                  priority: "normal",
-                }).catch(() => {});
-              }
-            }
-          })
-          .catch(() => {});
-      } else {
-        const landscapeUrl = game.metadata?.capsule_image_v5 || game.metadata?.capsule_image || game.metadata?.header_image || game.metadata?.background_image || game.imageUrl || undefined;
-        if (landscapeUrl) {
-          enqueueMediaDownload({
-            id: `store-${game.appId}-landscape`,
-            appId: game.appId!,
-            provider: "steam",
-            mediaType: "landscape",
-            url: landscapeUrl,
-            target: "canonical",
-            priority: "normal",
-          }).catch(() => {});
-        }
-      }
+      // Full 5-role media download (cover, landscape, background, logo, icon)
+      detectAndQueueMissingMedia(game.appId!, "library-visible").catch(() => {});
     }
   }, [filteredGames, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
 
@@ -142,7 +120,15 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
       } catch (err) {
         showError(String(err), { title: "Error" });
       }
-    } else if (game.source === "local" && game.executablePath) {
+    } else if (game.source === "epic" && game.isPlayable) {
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: "Error" });
+      }
+    } else if (game.source === "epic" && !game.isPlayable) {
+      showWarning("Epic launch is not enabled for this game.", { title: "Not available" });
+    } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       try {
         await session.launchGame(game);
       } catch (err) {
@@ -170,6 +156,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     { key: "all", label: "All", count: games.length },
     { key: "steam", label: "Steam", count: games.filter((g) => g.source === "steam").length },
     { key: "local", label: "Local", count: games.filter((g) => g.source === "local").length },
+    { key: "epic", label: "Epic", count: games.filter((g) => g.source === "epic").length },
     { key: "playable", label: "Playable", count: games.filter((g) => g.isPlayable).length },
   ];
 
@@ -193,7 +180,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={refresh}
+                  onClick={() => refresh()}
                   disabled={loading}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   title="Scan"
@@ -227,7 +214,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                   onClick={() => setFilter(f.key)}
                   className={`cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     filter === f.key
-                      ? "bg-(--color-accent) text-black"
+                      ? "bg-(--color-accent) text-(--color-accent-text)"
                       : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
                   }`}
                 >
@@ -258,7 +245,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                     key={game.id}
                     game={game}
                     appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
-                    onSelect={(g) => { setSelectedGame(g); onNavigate?.("library-game-detail"); }}
+                    onSelect={handleOpenGame}
                     onPlay={handlePlay}
                     onInstall={handleInstall}
                     onDeleteScript={handleDeleteScript}
@@ -269,7 +256,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
         </PageContainer>
 
         {showFilters && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFilters(false)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowFilters(false)}>
             <div className="w-80 rounded-2xl border border-(--surface-active-border) bg-(--color-bg) p-5" onClick={(e) => e.stopPropagation()}>
               <h3 className="mb-4 text-sm font-bold text-(--color-text)">Filters</h3>
               <div className="space-y-3">
@@ -283,7 +270,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                         onClick={() => { setFilter(f.key); setShowFilters(false); }}
                         className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition ${
                           filter === f.key
-                            ? "bg-(--color-accent) text-black"
+                            ? "bg-(--color-accent) text-(--color-accent-text)"
                             : "border border-(--surface-active-border) bg-white/5 text-(--color-muted)"
                         }`}
                       >

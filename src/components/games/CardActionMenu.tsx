@@ -31,6 +31,7 @@ const MENU_WIDTH = 184;
 const MENU_HEIGHT = 180;
 const SUBMENU_WIDTH = 172;
 const SUBMENU_DELAY = 200;
+const EXIT_MS = 140;
 
 export default function CardActionMenu({
   open,
@@ -42,6 +43,33 @@ export default function CardActionMenu({
 }: CardActionMenuProps) {
   const [pos, setPos] = useState<MenuPosition | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [closing, setClosing] = useState(false);
+  const wasOpenRef = useRef(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      wasOpenRef.current = true;
+      setClosing(false);
+      return;
+    }
+
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      setClosing(true);
+      closeTimerRef.current = setTimeout(() => {
+        setClosing(false);
+        setPos(null);
+      }, EXIT_MS);
+    }
+  }, [open]);
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    },
+    []
+  );
 
   const recalcPosition = useCallback(() => {
     if (cursorPos) {
@@ -108,7 +136,6 @@ export default function CardActionMenu({
 
   useEffect(() => {
     if (!open) {
-      setPos(null);
       return;
     }
 
@@ -156,17 +183,20 @@ export default function CardActionMenu({
     };
   }, [open, onClose, anchorRef]);
 
-  if (!open || !pos) return null;
+  if ((!open && !closing) || !pos) return null;
 
   return createPortal(
-    <div
-      ref={menuRef}
-      role="menu"
-      className="fixed z-[55] w-[184px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 bg-(--color-bg) p-1 shadow-2xl lf-popover-enter"
-      style={{ top: pos.top, left: pos.left }}
-    >
-      {children}
-    </div>,
+    <>
+      <div className="fixed inset-0 z-[99999]" onMouseDown={onClose} />
+      <div
+        ref={menuRef}
+        role="menu"
+        className={`fixed z-[100000] w-[184px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl ${closing ? "lf-popover-exit" : "lf-popover-enter"}`}
+        style={{ top: pos.top, left: pos.left }}
+      >
+        {children}
+      </div>
+    </>,
     document.body
   );
 }
@@ -207,7 +237,7 @@ function SubmenuPanel({
   return createPortal(
     <div
       data-submenu
-      className="fixed z-[60] w-[172px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 bg-(--color-bg) p-1 shadow-2xl lf-popover-enter"
+      className="fixed z-[100001] w-[172px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl lf-popover-enter"
       style={{ top: pos.top, left: pos.left }}
     >
       {items.map((item, i) => (

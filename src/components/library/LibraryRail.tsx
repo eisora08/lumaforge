@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import type { LibraryGame, LibraryFilter } from "../../types/libraryGame";
 import type { LibraryAppInfoMap } from "../../services/tauri";
+import { isSidebarInstalledGame } from "../../services/gameCacheService";
 
 type LibraryRailProps = {
   games: LibraryGame[];
@@ -37,21 +38,25 @@ function computeCounts(games: LibraryGame[]): Counts {
     steam: 0,
     local: 0,
     lua: 0,
+    epic: 0,
+    gog: 0,
+    debrid: 0,
     installed: 0,
     uninstalled: 0,
     "lua-ready": 0,
     disabled: 0,
-    updates: 0,
   };
   for (const g of games) {
     if (g.source === "steam") counts.steam++;
     if (g.source === "local") counts.local++;
     if (g.source === "lua" || g.hasLua) counts.lua++;
+    if (g.source === "epic") counts.epic++;
+    if (g.source === "gog") counts.gog++;
+    if (g.source === "debrid") counts.debrid++;
     if (g.isPlayable || g.steamInstalled) counts.installed++;
     if (g.isInstallable || (!g.isPlayable && g.source === "steam")) counts.uninstalled++;
     if (g.hasLuaSource) counts["lua-ready"]++;
     if (g.isLuaDisabled) counts.disabled++;
-    if (g.hasUpdate) counts.updates++;
   }
   return counts;
 }
@@ -73,11 +78,10 @@ export default function LibraryRail({
       if (filter === "steam" && g.source !== "steam") return false;
       if (filter === "local" && g.source !== "local") return false;
       if (filter === "lua" && !g.hasLua) return false;
-      if (filter === "installed" && !g.isPlayable && !g.steamInstalled) return false;
+      if (filter === "installed" && !isSidebarInstalledGame(g)) return false;
       if (filter === "uninstalled" && g.isPlayable) return false;
       if (filter === "lua-ready" && !g.hasLuaSource) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;
-      if (filter === "updates" && !g.hasUpdate) return false;
     }
     if (query) {
       const q = query.toLowerCase();
@@ -99,7 +103,6 @@ export default function LibraryRail({
     { key: "uninstalled", label: "Not Installed" },
     { key: "lua-ready", label: "Lua Ready" },
     { key: "disabled", label: "Disabled" },
-    { key: "updates", label: "Updates" },
   ];
 
   return (

@@ -21,30 +21,10 @@ use crate::utils::image_utils;
 pub fn read_canonical_appinfos(
     app_handle: AppHandle,
     app_ids: Vec<String>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<std::collections::HashMap<String, GameAppInfo>, String> {
-    let mut result = std::collections::HashMap::new();
-    for app_id in &app_ids {
-        let path = match get_appinfo_path(&app_handle, app_id) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        if !path.exists() {
-            continue;
-        }
-        match fs::read_to_string(&path) {
-            Ok(content) => {
-                match serde_json::from_str::<GameAppInfo>(&content) {
-                    Ok(entry) => {
-                        result.insert(app_id.clone(), entry);
-                    }
-                    Err(_) => {
-                        log(&format!("appinfo corrupt for {} — skipping in batch read", app_id));
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-    }
+    let result = crate::commands::sqlite_cache::game_appinfo::read_batch_appinfo(&db, &app_ids);
+    log(&format!("appinfo batch read from sqlite: {} games", result.len()));
     Ok(result)
 }
 
@@ -180,21 +160,15 @@ pub fn safe_filename(input: &str) -> String {
 pub fn get_game_app_info(
     app_handle: AppHandle,
     app_id: String,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<Option<GameAppInfo>, String> {
-    let path = get_appinfo_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        log(&format!("appinfo miss for {}", app_id));
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read game appinfo: {}", e))?;
-    match serde_json::from_str(&content) {
-        Ok(entry) => {
+    match crate::commands::sqlite_cache::game_appinfo::read_game_appinfo(&db, &app_id) {
+        Some(entry) => {
             log(&format!("appinfo hit for {}", app_id));
             Ok(Some(entry))
         }
-        Err(_) => {
-            log(&format!("appinfo corrupt for {} — ignoring", app_id));
+        None => {
+            log(&format!("appinfo miss for {}", app_id));
             Ok(None)
         }
     }
@@ -205,12 +179,9 @@ pub fn save_game_app_info(
     app_handle: AppHandle,
     app_id: String,
     entry: GameAppInfo,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_appinfo_path(&app_handle, &app_id)?;
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game appinfo: {}", e))?;
+    crate::commands::sqlite_cache::game_appinfo::write_game_appinfo(&db, &app_id, &entry)?;
     log(&format!("appinfo saved for {}", app_id));
     Ok(())
 }
@@ -221,23 +192,28 @@ pub fn save_game_app_info(
 
 #[tauri::command]
 pub fn get_store_details(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     app_id: String,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<Option<StoreDetails>, String> {
-    let path = get_store_details_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        log(&format!("store-details miss for {}", app_id));
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read store details: {}", e))?;
-    match serde_json::from_str(&content) {
-        Ok(entry) => {
-            log(&format!("store-details hit for {}", app_id));
-            Ok(Some(entry))
+    let conn = db.0.as_ref().ok_or("SQLite not available")?.lock().map_err(|e| e.to_string())?;
+    let json = crate::commands::sqlite_cache::store_details_cache::read_store_details(&conn, &app_id)
+        .map_err(|e| format!("Failed to read store details from SQLite: {}", e))?;
+    match json {
+        Some(raw) => {
+            match serde_json::from_str::<StoreDetails>(&raw) {
+                Ok(entry) => {
+                    log(&format!("store-details hit for {} (sqlite)", app_id));
+                    Ok(Some(entry))
+                }
+                Err(_) => {
+                    log(&format!("store-details corrupt for {} — ignoring (sqlite)", app_id));
+                    Ok(None)
+                }
+            }
         }
-        Err(_) => {
-            log(&format!("store-details corrupt for {} — ignoring", app_id));
+        None => {
+            log(&format!("store-details miss for {} (sqlite)", app_id));
             Ok(None)
         }
     }
@@ -245,16 +221,17 @@ pub fn get_store_details(
 
 #[tauri::command]
 pub fn save_store_details(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     app_id: String,
     entry: StoreDetails,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_store_details_path(&app_handle, &app_id)?;
     let content = serde_json::to_string_pretty(&entry)
         .map_err(|e| format!("Failed to serialize store details: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write store details: {}", e))?;
-    log(&format!("store-details saved for {}", app_id));
+    let conn = db.0.as_ref().ok_or("SQLite not available")?.lock().map_err(|e| e.to_string())?;
+    crate::commands::sqlite_cache::store_details_cache::write_store_details(&conn, &app_id, &content)
+        .map_err(|e| format!("Failed to write store details to SQLite: {}", e))?;
+    log(&format!("store-details saved for {} (sqlite)", app_id));
     Ok(())
 }
 
@@ -264,40 +241,20 @@ pub fn save_store_details(
 
 #[tauri::command]
 pub fn get_game_artwork(
-    app_handle: AppHandle,
-    app_id: String,
+    _app_handle: AppHandle,
+    _app_id: String,
 ) -> Result<Option<GameArtwork>, String> {
-    let path = get_artwork_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        log(&format!("artwork miss for {}", app_id));
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read game artwork: {}", e))?;
-    match serde_json::from_str(&content) {
-        Ok(entry) => {
-            log(&format!("artwork hit for {}", app_id));
-            Ok(Some(entry))
-        }
-        Err(_) => {
-            log(&format!("artwork corrupt for {} — ignoring", app_id));
-            Ok(None)
-        }
-    }
+    println!("[MEDIA][ARTWORK_DEPRECATED] get_game_artwork called — artwork is no longer persisted as a separate JSON file. Returning None.");
+    Ok(None)
 }
 
 #[tauri::command]
 pub fn save_game_artwork(
-    app_handle: AppHandle,
-    app_id: String,
-    entry: GameArtwork,
+    _app_handle: AppHandle,
+    _app_id: String,
+    _entry: GameArtwork,
 ) -> Result<(), String> {
-    let path = get_artwork_path(&app_handle, &app_id)?;
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game artwork: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game artwork: {}", e))?;
-    log(&format!("artwork saved for {}", app_id));
+    println!("[MEDIA][ARTWORK_DEPRECATED] save_game_artwork called — artwork is no longer persisted as a separate JSON file. Ignoring.");
     Ok(())
 }
 
@@ -308,7 +265,7 @@ pub fn save_game_artwork(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_landscape_image(
+pub async fn cache_landscape_image(
     app_handle: AppHandle,
     app_id: String,
     urls: LandscapeUrls,
@@ -332,7 +289,7 @@ pub fn cache_landscape_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path, false) {
+            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path, false).await {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -351,7 +308,7 @@ pub fn cache_landscape_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_cover_image(
+pub async fn cache_cover_image(
     app_handle: AppHandle,
     app_id: String,
     urls: CoverUrls,
@@ -374,7 +331,7 @@ pub fn cache_cover_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path, false) {
+            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path, false).await {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -393,7 +350,7 @@ pub fn cache_cover_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_background_image(
+pub async fn cache_background_image(
     app_handle: AppHandle,
     app_id: String,
     urls: BackgroundUrls,
@@ -416,7 +373,7 @@ pub fn cache_background_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path, false) {
+            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path, false).await {
                 Ok(Some(path)) => {
                     media_log(&format!("saved background for {}", app_id));
                     return Ok(Some(path));
@@ -445,7 +402,7 @@ pub fn cache_background_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_logo_image(
+pub async fn cache_logo_image(
     app_handle: AppHandle,
     app_id: String,
     urls: LogoUrls,
@@ -460,7 +417,7 @@ pub fn cache_logo_image(
     }
 
     if let Some(url) = urls.sgdb_logo_url {
-        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path, false) {
+        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path, false).await {
             Ok(Some(path)) => {
                 media_log(&format!("saved logo for {}", app_id));
                 return Ok(Some(path));
@@ -480,7 +437,7 @@ pub fn cache_logo_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_icon_image(
+pub async fn cache_icon_image(
     app_handle: AppHandle,
     app_id: String,
     urls: IconUrls,
@@ -495,7 +452,7 @@ pub fn cache_icon_image(
     }
 
     if let Some(url) = urls.sgdb_icon_url {
-        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path, false) {
+        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path, false).await {
             Ok(Some(path)) => {
                 media_log(&format!("saved icon for {}", app_id));
                 return Ok(Some(path));
@@ -555,22 +512,13 @@ pub fn update_game_appinfo_media(
     media: GameMediaPaths,
     remote: Option<GameRemoteRefsInput>,
     media_sources: Option<GameMediaSourcesInput>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_appinfo_path(&app_handle, &app_id)?;
-
-    let mut entry: GameAppInfo = if path.exists() {
-        let content = fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or_else(|_| GameAppInfo {
-            app_id: app_id.clone(),
-            provider: "steam".to_string(),
-            name: name.clone(),
-            updated_at: None,
-            media: None,
-            media_sources: None,
-            remote: None,
-            user_data: None,
-        })
+    // Read from SQLite first (fast path — no filesystem I/O)
+    let mut entry: GameAppInfo = if let Some(existing) = crate::commands::sqlite_cache::game_appinfo::read_game_appinfo(&db, &app_id) {
+        existing
     } else {
+        // No SQLite entry — create fresh (migration already ran at boot)
         GameAppInfo {
             app_id: app_id.clone(),
             provider: "steam".to_string(),
@@ -589,15 +537,17 @@ pub fn update_game_appinfo_media(
     } else if let Some(ref n) = name {
         entry.name = Some(n.clone());
     } else {
-        // Try store-details for name
-        let store_path = get_store_details_path(&app_handle, &app_id);
-        if let Ok(sp) = store_path {
-            if sp.exists() {
-                if let Ok(sc) = fs::read_to_string(&sp) {
-                    if let Ok(sd) = serde_json::from_str::<StoreDetails>(&sc) {
+        // Try store-details from SQLite for name
+        if let Some(conn_ref) = db.0.as_ref() {
+            if let Ok(conn) = conn_ref.lock() {
+                if let Ok(Some(sd_json)) = conn.query_row(
+                    "SELECT data_json FROM store_details WHERE app_id = ?1",
+                    [&app_id],
+                    |row| row.get::<_, Option<String>>(0),
+                ) {
+                    if let Ok(sd) = serde_json::from_str::<StoreDetails>(&sd_json) {
                         if let Some(n) = sd.data.get("name").and_then(|v| v.as_str()) {
                             entry.name = Some(n.to_string());
-                            media_log(&format!("[AppInfoUpdate] resolved name from store-details: {}", n));
                         }
                     }
                 }
@@ -677,22 +627,16 @@ pub fn update_game_appinfo_media(
             icon: merge_src(&sources.icon, existing.and_then(|m| m.icon.as_ref())),
         });
     }
-    // No-op guard: skip write if merged content matches existing file.
-    // updated_at is NOT set here — we compare WITHOUT it first so that
-    // unchanged content doesn't trigger a write just because of a new timestamp.
-    let existing_content = if path.exists() {
-        fs::read_to_string(&path).ok()
-    } else {
-        None
-    };
-
-    // Serialize WITHOUT updated_at for the comparison
-    let content_no_ts = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
-
-    if let Some(ref existing) = existing_content {
-        if *existing == content_no_ts {
-            println!("[MEDIA][APPINFO_SKIP] appid={} reason=rust-no-effective-change", app_id);
+    // No-op guard: skip write if merged content matches existing SQLite entry.
+    // Compare without updated_at to avoid false positives from timestamp changes.
+    if let Some(existing) = crate::commands::sqlite_cache::game_appinfo::read_game_appinfo(&db, &app_id) {
+        if existing.media == entry.media
+            && existing.media_sources == entry.media_sources
+            && existing.remote == entry.remote
+            && existing.name == entry.name
+            && existing.user_data == entry.user_data
+        {
+            println!("[MEDIA][APPINFO_SKIP] appid={} reason=no-effective-change", app_id);
             return Ok(());
         }
     }
@@ -705,14 +649,117 @@ pub fn update_game_appinfo_media(
             .as_secs(),
     );
 
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
+    // Write to SQLite
+    crate::commands::sqlite_cache::game_appinfo::write_game_appinfo(&db, &app_id, &entry)?;
 
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game appinfo: {}", e))?;
+    // Notify TS subscribers that appinfo changed
+    crate::utils::progress_utils::emit_data_changed(&app_handle, "appinfo-changed", &app_id);
 
-    println!("[MEDIA][APPINFO_WRITE] appid={} path={:?}", app_id, path);
+    println!("[MEDIA][APPINFO_WRITE] appid={}", app_id);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Store image download — bypasses CORS by downloading via Rust reqwest
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn download_store_image(
+    _app_handle: AppHandle,
+    url: String,
+    app_id: String,
+    role: String,
+) -> Result<String, String> {
+    let app_dir = _app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let images_dir = app_dir.join("store").join("images");
+    tokio::fs::create_dir_all(&images_dir).await.map_err(|e| e.to_string())?;
+
+    let safe_name = format!("{}_{}", app_id.replace('/', "_"), role.replace('/', "_"));
+    let local_path = images_dir.join(format!("{}.jpg", safe_name));
+
+    // Already downloaded — return absolute path (TS converts to asset://)
+    if let Ok(meta) = tokio::fs::metadata(&local_path).await {
+        if meta.len() > 0 {
+            return Ok(local_path.to_string_lossy().to_string());
+        }
+        let _ = tokio::fs::remove_file(&local_path).await;
+    }
+
+    // Download via async reqwest
+    let client = reqwest::Client::builder()
+        .user_agent("LumaForge/0.1.0")
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&local_path, &bytes).await.map_err(|e| e.to_string())?;
+
+    // Return absolute path — TS uses convertFileSrc() to get asset:// URL
+    Ok(local_path.to_string_lossy().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Batch name update — single transaction for boot enrichment
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn batch_update_game_names(
+    app_handle: tauri::AppHandle,
+    apps: Vec<(String, Option<String>)>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
+) -> Result<u32, String> {
+    let conn_ref = db.0.as_ref().ok_or("SQLite not available")?;
+    let conn = conn_ref.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    let mut updated = 0u32;
+    conn.execute_batch("BEGIN TRANSACTION").map_err(|e| e.to_string())?;
+
+    for (app_id, name) in &apps {
+        if name.is_none() || name.as_deref().unwrap_or("").is_empty() {
+            continue;
+        }
+        // Only update when current name is empty/placeholder
+        let current_name: Option<String> = conn
+            .query_row(
+                "SELECT name FROM games WHERE appId = ?1",
+                [app_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let needs_update = match &current_name {
+            None => true,
+            Some(n) => n.is_empty() || n.starts_with("Steam App "),
+        };
+
+        if needs_update {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO games (appId, name, updated_at) VALUES (?1, ?2, 0)",
+                rusqlite::params![app_id, name],
+            );
+            let _ = conn.execute(
+                "UPDATE games SET name = ?2 WHERE appId = ?1 AND (name IS NULL OR name = '' OR name LIKE 'Steam App %')",
+                rusqlite::params![app_id, name],
+            );
+            updated += 1;
+        }
+    }
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+
+    if updated > 0 {
+        crate::utils::progress_utils::emit_data_changed(&app_handle, "names-updated", &updated.to_string());
+    }
+
+    println!("[MEDIA][BATCH_NAMES] updated={}/{}", updated, apps.len());
+    Ok(updated)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -743,16 +790,9 @@ fn get_media_manifest_path(app_handle: &AppHandle, app_id: &str) -> Result<PathB
 pub fn read_media_manifest(
     app_handle: AppHandle,
     app_id: String,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<Option<crate::models::game_cache::MediaManifestFile>, String> {
-    let path = get_media_manifest_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read media_manifest: {}", e))?;
-    serde_json::from_str(&content)
-        .map(Some)
-        .map_err(|e| format!("Failed to parse media_manifest: {}", e))
+    Ok(crate::commands::sqlite_cache::media_manifests::read_media_manifest_sqlite(&db, &app_id))
 }
 
 #[tauri::command]
@@ -760,36 +800,18 @@ pub fn write_media_manifest(
     app_handle: AppHandle,
     app_id: String,
     manifest: crate::models::game_cache::MediaManifestFile,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_media_manifest_path(&app_handle, &app_id)?;
-    let content = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("Failed to serialize media_manifest: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write media_manifest: {}", e))?;
-    Ok(())
+    crate::commands::sqlite_cache::media_manifests::write_media_manifest_sqlite(&db, &manifest)
 }
 
 #[tauri::command]
 pub fn get_media_manifests_batch(
     app_handle: AppHandle,
     app_ids: Vec<String>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<std::collections::HashMap<String, crate::models::game_cache::MediaManifestFile>, String> {
-    let mut result = std::collections::HashMap::new();
-    for app_id in &app_ids {
-        let path = match get_media_manifest_path(&app_handle, app_id) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        if !path.exists() {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(manifest) = serde_json::from_str::<crate::models::game_cache::MediaManifestFile>(&content) {
-                result.insert(app_id.clone(), manifest);
-            }
-        }
-    }
-    Ok(result)
+    Ok(crate::commands::sqlite_cache::media_manifests::read_media_manifests_batch_sqlite(&db, &app_ids))
 }
 
 // ---------------------------------------------------------------------------
@@ -798,32 +820,12 @@ pub fn get_media_manifests_batch(
 
 #[tauri::command]
 pub fn update_game_artwork(
-    app_handle: AppHandle,
-    app_id: String,
-    sgdb: Option<SteamGridDbRef>,
-    paths: GameMediaPaths,
+    _app_handle: AppHandle,
+    _app_id: String,
+    _sgdb: Option<SteamGridDbRef>,
+    _paths: GameMediaPaths,
 ) -> Result<(), String> {
-    let path = get_artwork_path(&app_handle, &app_id)?;
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let entry = GameArtwork {
-        app_id: app_id.clone(),
-        updated_at: now,
-        sources: Default::default(),
-        steam_grid_db: sgdb,
-        paths,
-    };
-
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game artwork: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game artwork: {}", e))?;
-
-    log(&format!("artwork updated for {}", app_id));
+    println!("[MEDIA][ARTWORK_DEPRECATED] update_game_artwork called — artwork is no longer persisted as a separate JSON file. Ignoring.");
     Ok(())
 }
 
@@ -961,7 +963,7 @@ pub fn migrate_to_canonical_cache(app_handle: AppHandle) -> Result<MigrationSumm
 const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 const MAX_RESPONSE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 
-fn safe_single_download(
+async fn safe_single_download(
     _app_handle: &AppHandle,
     _app_id: &str,
     url: &str,
@@ -969,7 +971,7 @@ fn safe_single_download(
     dest_path: &Path,
     skip_classification: bool,
 ) -> Result<Option<String>, String> {
-    let client = match reqwest::blocking::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .connect_timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
@@ -980,7 +982,7 @@ fn safe_single_download(
         Err(e) => return Err(format!("Failed to create HTTP client: {}", e)),
     };
 
-    let response = match client.get(url).send() {
+    let response = match client.get(url).send().await {
         Ok(r) => r,
         Err(e) => {
             log(&format!("safe_download: HTTP error for {}: {}", media_type, e));
@@ -1002,7 +1004,7 @@ fn safe_single_download(
         }
     }
 
-    let bytes = match response.bytes() {
+    let bytes = match response.bytes().await {
         Ok(b) => {
             if b.len() as u64 > MAX_RESPONSE_BYTES {
                 log(&format!("safe_download: response too large ({} bytes)", b.len()));
@@ -1130,7 +1132,7 @@ fn safe_single_download(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn safe_download_image(
+pub async fn safe_download_image(
     app_handle: AppHandle,
     url: String,
     app_id: String,
@@ -1156,62 +1158,7 @@ pub fn safe_download_image(
         return Ok(Some(dest_path.to_string_lossy().to_string()));
     }
 
-    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh)
-}
-
-// ---------------------------------------------------------------------------
-// cache_trailer_file — download a trailer video or thumbnail to
-// <gameDir>/media/trailers/<filename>.
-// Lightweight — no image classification, no content-type check.
-// Skips existing files; returns the local path on success.
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn cache_trailer_file(
-    app_handle: AppHandle,
-    app_id: String,
-    filename: String,
-    url: String,
-) -> Result<Option<String>, String> {
-    let media_dir = get_media_dir(&app_handle, &app_id)?;
-    let trailers_dir = media_dir.join("trailers");
-    fs::create_dir_all(&trailers_dir)
-        .map_err(|e| format!("Failed to create trailers dir: {}", e))?;
-
-    let dest_path = trailers_dir.join(&filename);
-    if dest_path.exists() {
-        if let Ok(meta) = fs::metadata(&dest_path) {
-            if meta.len() > 0 {
-                return Ok(Some(dest_path.to_string_lossy().to_string()));
-            }
-        }
-    }
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .user_agent("LumaForge/0.2.0")
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let response = client.get(&url).send()
-        .map_err(|e| format!("Download failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Ok(None);
-    }
-
-    let bytes = response.bytes()
-        .map_err(|e| format!("Read failed: {}", e))?;
-
-    let tmp_path = trailers_dir.join(format!(".{}.tmp", filename));
-    fs::write(&tmp_path, &bytes)
-        .map_err(|e| format!("Write failed: {}", e))?;
-    fs::rename(&tmp_path, &dest_path)
-        .map_err(|e| format!("Rename failed: {}", e))?;
-
-    Ok(Some(dest_path.to_string_lossy().to_string()))
+    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh).await
 }
 
 // ---------------------------------------------------------------------------

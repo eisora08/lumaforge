@@ -1,42 +1,117 @@
 import { useEffect, useMemo, useState } from "react";
 import { Heart } from "lucide-react";
-import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
+import type { StartupSnapshot } from "../../services/startupSnapshotService";
+import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useSettings } from "../../context/SettingsContext";
-import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
-
-const DEBUG_MEDIA_DASH = false;
-const DEBUG_NAME_DASH = false;
+import { resolveProviderMediaPreviewUrl, resolveGameMediaUrl, getFavoriteKey } from "../../services/gameCacheService";
+import {
+  type DashboardDisplayGame,
+  snapshotToDisplayGame,
+  getCardImageCandidate,
+  getIconCandidate,
+  resolveCanonicalGameIdentity,
+} from "../../services/dashboardManualGames";
+import { resolvePlaytimeKey, getPlaytimeEntryByGameKey, subscribePlaytimeStore } from "../../services/playtimeService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
+const DEBUG_DASHBOARD_MEDIA = false;
+
 type Props = {
   snapshot: StartupSnapshot | null;
   onNavigate?: (page: AppPage) => void;
   excludeAppIds?: string[];
+  maxItems?: number;
 };
 
-export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }: Props) {
+export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
-  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
+  const [playtimeVersion, setPlaytimeVersion] = useState(0);
 
-  const snapshotGames = useMemo(
-    () => snapshot?.library?.games ?? [],
-    [snapshot],
-  );
+  useEffect(() => {
+    return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+  }, []);
+
+  // Build a DashboardDisplayGame directly from a canonical LibraryGame.
+  // Replaces manualToDisplayGame for Epic/manual favorites — no intermediary needed.
+  function buildFavoriteDisplayGame(game: LibraryGame): DashboardDisplayGame {
+    const ptKey = resolvePlaytimeKey(game);
+    const ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+    return {
+      stableId: game.libraryId || game.id,
+      libraryId: game.libraryId,
+      source: game.source ?? "manual",
+      title: game.title,
+      imageUrl: null, // resolved async by media effect below
+      iconUrl: getIconCandidate(game),
+      totalPlaytimeSeconds: ptEntry?.totalPlaytimeSeconds ?? 0,
+      lastPlayedAt: ptEntry?.lastPlayedAt ?? null,
+      isRunning: false,
+      installed: game.isInstalled ?? true,
+      playable: game.isPlayable,
+      updatedAt: 0,
+      _libraryGame: game,
+      _rolePaths: {
+        backgroundPath: game.backgroundPath ?? null,
+        landscapePath: game.landscapePath ?? null,
+        coverPath: game.coverPath ?? null,
+        logoPath: game.logoPath ?? null,
+        iconPath: game.iconPath ?? null,
+      },
+    };
+  }
 
   const displayGames = useMemo(() => {
     const exclude = new Set(excludeAppIds ?? []);
-    return snapshotGames
-      .filter((g) => g.appId && favoriteIds.has(g.appId) && !exclude.has(g.appId))
-      .slice(0, 10);
-  }, [snapshotGames, favoriteIds, excludeAppIds]);
+    const result: DashboardDisplayGame[] = [];
+    const seen = new Set<string>();
+
+    // Build canonical identity → LibraryGame lookup from ALL libraryGames.
+    // Multiple keys per game ensure any favoriteId format resolves correctly:
+    //   Steam:  "268910"       (appId)
+    //   Epic:   "epic:AppName" (libraryId)
+    //   Manual: "manual:uuid"  (libraryId)
+    const identityMap = new Map<string, LibraryGame>();
+    for (const g of libraryGames) {
+      const canonical = resolveCanonicalGameIdentity(g);
+      if (canonical) identityMap.set(canonical, g);
+      if (g.appId) identityMap.set(g.appId, g);
+      if (g.libraryId) identityMap.set(g.libraryId, g);
+    }
+
+    // Resolve each favoriteId against the canonical identity map
+    for (const favId of favoriteIds) {
+      if (seen.has(favId)) continue;
+      const libGame = identityMap.get(favId);
+      if (!libGame) continue;
+      const stableId = libGame.libraryId || libGame.id;
+      if (stableId && seen.has(stableId)) continue;
+      if (exclude.has(libGame.appId || "")) continue;
+      if (!libGame.title) continue;
+      seen.add(favId);
+      if (stableId) seen.add(stableId);
+
+      // Check if this game also exists in the snapshot (Steam games)
+      const snapshotGame = libGame.appId
+        ? (snapshot?.library?.games ?? []).find((sg) => sg.appId === libGame.appId)
+        : undefined;
+
+      if (snapshotGame) {
+        result.push(snapshotToDisplayGame(snapshotGame as any, new Set()));
+      } else {
+        result.push(buildFavoriteDisplayGame(libGame));
+      }
+    }
+
+    return result.slice(0, maxItems ?? 10);
+  }, [snapshot, libraryGames, favoriteIds, excludeAppIds, maxItems, playtimeVersion]);
 
   useEffect(() => {
     for (const game of displayGames) {
@@ -46,36 +121,35 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
     }
   }, [displayGames]);
 
-  // Stable primitive key derived from display games — avoids infinite render loops
-  // caused by unstable array references in the useMemo above.
-  const gameIdsKey = useMemo(
-    () => displayGames.map(g => g.appId).filter(Boolean).sort().join(','),
-    [displayGames],
-  );
-
-  // Resolve media URLs and titles
+  // Depend on displayGames directly — when libraryGames state changes (e.g. Epic
+  // scan populates coverPath/landscapePath), identityMap recomputes →
+  // displayGames gets new reference → this effect re-runs with fresh _libraryGame paths.
   useEffect(() => {
     let cancelled = false;
-    const ids = gameIdsKey ? gameIdsKey.split(',') : [];
-    const gameById = new Map(displayGames.map(g => [g.appId, g]));
-
     const resolve = async () => {
       const urls: Record<string, string | null> = {};
-      const titles: Record<string, string> = {};
-      // Batch-resolve canonical names for all displayed games
-      const resolvedTitles = displayGames.length > 0 ? await resolveDashboardTitles(displayGames) : {};
-      for (const appId of ids) {
+      for (const game of displayGames) {
         if (cancelled) break;
-        const game = gameById.get(appId);
-        if (!game) continue;
-        const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath;
-        urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
-        titles[appId] = resolvedTitles[appId]?.title ?? game.title;
-        if (imgPath && !cancelled) {
-          const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : "background";
-          if (DEBUG_MEDIA_DASH) console.log(`[MEDIA][DASH] section=Favorites appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+        try {
+          if (game._snapshotGame) {
+            const m = game._snapshotGame.media;
+            const imgPath = m?.landscapePath || m?.backgroundPath || m?.coverPath;
+            urls[game.stableId] = (game.appId && imgPath)
+              ? await resolveGameMediaUrl(game.appId, imgPath)
+              : null;
+          } else if (game._libraryGame) {
+            const rawPath = getCardImageCandidate(game._libraryGame);
+            const resolved = rawPath ? await resolveProviderMediaPreviewUrl(rawPath) : null;
+            urls[game.stableId] = resolved;
+            if (DEBUG_DASHBOARD_MEDIA) {
+              console.log(`[DASHBOARD_MEDIA][FAVORITE_CARD] stableId=${game.stableId} source=${game.source} rolePaths=${JSON.stringify(game._rolePaths ?? {})} rawPath=${rawPath} resolvedUrl=${!!resolved}`);
+            }
+          } else {
+            urls[game.stableId] = null;
+          }
+        } catch {
+          urls[game.stableId] = null;
         }
-        if (DEBUG_NAME_DASH) console.log(`[NAME][DASH] section=Favorites appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setMediaUrlMap(prev => {
@@ -83,15 +157,10 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
             Object.entries(urls).every(([k, v]) => prev[k] === v)) return prev;
         return urls;
       });
-      setTitleMap(prev => {
-        if (Object.keys(prev).length === Object.keys(titles).length &&
-            Object.entries(titles).every(([k, v]) => prev[k] === v)) return prev;
-        return titles;
-      });
     };
     resolve();
     return () => { cancelled = true; };
-  }, [gameIdsKey]);
+  }, [displayGames]);
 
   if (displayGames.length === 0) {
     return (
@@ -111,14 +180,46 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
     );
   }
 
-  function handleOpen(game: SnapshotGame) {
+  function handleOpen(game: DashboardDisplayGame) {
+    // 1. Direct LibraryGame reference (Epic, Manual, or from context) — always works
+    if (game._libraryGame) {
+      if (DEBUG_DASHBOARD_MEDIA) {
+        console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=direct-libraryGame`);
+      }
+      setSelectedGame(game._libraryGame);
+      onNavigate?.("library-game-detail");
+      return;
+    }
+    // 2. Steam snapshot: find by appId in current library games
     if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
       if (libGame) {
+        if (DEBUG_DASHBOARD_MEDIA) {
+          console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=app-id-lookup appId=${game.appId}`);
+        }
         setSelectedGame(libGame);
         onNavigate?.("library-game-detail");
+        return;
       }
     }
+    // 3. Fallback: find any game by stableId (covers edge cases)
+    if (game.stableId) {
+      const found = libraryGames.find((g) => (g.libraryId || g.id) === game.stableId);
+      if (found) {
+        if (DEBUG_DASHBOARD_MEDIA) {
+          console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=stableId-lookup`);
+        }
+        setSelectedGame(found);
+        onNavigate?.("library-game-detail");
+      } else if (DEBUG_DASHBOARD_MEDIA) {
+        console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=NONE game-not-found-in-library`);
+      }
+    }
+  }
+
+  function handleToggleFavorite(game: DashboardDisplayGame) {
+    const fk = getFavoriteKey(game) ?? game.stableId;
+    if (fk) toggleFavorite(fk);
   }
 
   return (
@@ -135,13 +236,12 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
       </div>
 
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
-        {deduplicateByAppId(displayGames).map((game) => {
-          const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
-          const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
+        {displayGames.map((game) => {
+          const imgUrl = mediaUrlMap[game.stableId] ?? null;
 
           return (
             <div
-              key={"dashboard:favorites:steam:" + game.appId}
+              key={"dashboard:favorites:" + game.stableId}
               className="shrink-0 snap-start"
               style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
             >
@@ -155,13 +255,13 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
                     handleOpen(game);
                   }
                 }}
-                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
+                className="lf-dash-card group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
                 <div className="relative aspect-video overflow-hidden">
                   {imgUrl ? (
                     <AsyncImage
                       src={imgUrl}
-                      alt={displayTitle}
+                      alt={game.title}
                       className="h-full w-full object-cover"
                       fallback={
                         <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -184,7 +284,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (game.appId) toggleFavorite(game.appId);
+                      handleToggleFavorite(game);
                     }}
                     className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
                     title="Remove from favorites"
@@ -194,8 +294,8 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
                 </div>
 
                 <div className="p-3">
-                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                    {displayTitle}
+                  <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
+                    {game.title}
                   </h3>
                 </div>
               </div>

@@ -24,54 +24,37 @@ fn get_snapshot_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn read_startup_snapshot(app_handle: AppHandle) -> Result<Option<StartupSnapshot>, String> {
-    let path = match get_snapshot_path(&app_handle) {
-        Ok(p) => p,
-        Err(e) => {
-            println!("[BootSnapshot] failed to get snapshot path: {}", e);
+pub fn read_startup_snapshot(
+    app_handle: AppHandle,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
+) -> Result<Option<StartupSnapshot>, String> {
+    let json = match crate::commands::sqlite_cache::startup_snapshots::read_startup_snapshot_sqlite(&db) {
+        Some(j) => j,
+        None => {
+            println!("[BootSnapshot] missing");
             return Ok(None);
         }
     };
 
-    if !path.exists() {
-        println!("[BootSnapshot] missing");
-        return Ok(None);
-    }
-
-    match fs::read_to_string(&path) {
-        Ok(content) => {
-            match serde_json::from_str::<StartupSnapshot>(&content) {
-                Ok(snapshot) => {
-                    if snapshot.version != STARTUP_SNAPSHOT_VERSION {
-                        println!(
-                            "[BootSnapshot] version mismatch (got {}, expected {}), ignoring",
-                            snapshot.version, STARTUP_SNAPSHOT_VERSION
-                        );
-                        return Ok(None);
-                    }
-                    let game_count = snapshot.library.games.len();
-                    let sidebar_count = snapshot.sidebar.items.len();
-                    let with_fav = snapshot.library.games.iter().filter(|g| g.favorite.is_some()).count();
-                    let fav_true = snapshot.library.games.iter().filter(|g| g.favorite.unwrap_or(false)).count();
-                    let with_hidden = snapshot.library.games.iter().filter(|g| g.hidden.is_some()).count();
-                    let hidden_true = snapshot.library.games.iter().filter(|g| g.hidden.unwrap_or(false)).count();
-                    let ach_some = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_some()).count();
-                    let ach_none = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_none()).count();
-                    let with_updated = snapshot.library.games.iter().filter(|g| g.updated_at.is_some()).count();
-                    println!(
-                        "[BootSnapshot] games={} sidebar={} withFavoriteField={} favoriteTrue={} withHiddenField={} hiddenTrue={} withAchievementSummaryField={} achievementSummaryObject={} achievementSummaryNull={} withUpdatedAt={}",
-                        game_count, sidebar_count, with_fav, fav_true, with_hidden, hidden_true, (ach_some + ach_none), ach_some, ach_none, with_updated
-                    );
-                    Ok(Some(snapshot))
-                }
-                Err(e) => {
-                    println!("[BootSnapshot] corrupt JSON ({}), ignoring", e);
-                    Ok(None)
-                }
+    match serde_json::from_str::<StartupSnapshot>(&json) {
+        Ok(snapshot) => {
+            if snapshot.version != STARTUP_SNAPSHOT_VERSION {
+                println!(
+                    "[BootSnapshot] version mismatch (got {}, expected {}), ignoring",
+                    snapshot.version, STARTUP_SNAPSHOT_VERSION
+                );
+                return Ok(None);
             }
+            let game_count = snapshot.library.games.len();
+            let sidebar_count = snapshot.sidebar.items.len();
+            println!(
+                "[BootSnapshot] games={} sidebar={}",
+                game_count, sidebar_count,
+            );
+            Ok(Some(snapshot))
         }
         Err(e) => {
-            println!("[BootSnapshot] read error ({}), ignoring", e);
+            println!("[BootSnapshot] corrupt JSON ({}), ignoring", e);
             Ok(None)
         }
     }
@@ -81,48 +64,34 @@ pub fn read_startup_snapshot(app_handle: AppHandle) -> Result<Option<StartupSnap
 pub fn write_startup_snapshot(
     app_handle: AppHandle,
     snapshot: StartupSnapshot,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_snapshot_path(&app_handle)?;
-
     let json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("Failed to serialize snapshot: {}", e))?;
 
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, &json)
-        .map_err(|e| format!("Failed to write snapshot temp file: {}", e))?;
-
-    fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Failed to rename snapshot file: {}", e))?;
+    crate::commands::sqlite_cache::startup_snapshots::write_startup_snapshot_sqlite(
+        &db,
+        snapshot.version,
+        &json,
+    )?;
 
     let game_count = snapshot.library.games.len();
     let sidebar_count = snapshot.sidebar.items.len();
-    let with_fav = snapshot.library.games.iter().filter(|g| g.favorite.is_some()).count();
-    let fav_true = snapshot.library.games.iter().filter(|g| g.favorite.unwrap_or(false)).count();
-    let with_hidden = snapshot.library.games.iter().filter(|g| g.hidden.is_some()).count();
-    let hidden_true = snapshot.library.games.iter().filter(|g| g.hidden.unwrap_or(false)).count();
-    let ach_some = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_some()).count();
-    let ach_none = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_none()).count();
-    let with_updated = snapshot.library.games.iter().filter(|g| g.updated_at.is_some()).count();
     println!(
-        "[BootSnapshot] write — games={} sidebar={} withFavoriteField={} favoriteTrue={} withHiddenField={} hiddenTrue={} withAchievementSummaryField={} achievementSummaryObject={} achievementSummaryNull={} withUpdatedAt={}",
-        game_count, sidebar_count, with_fav, fav_true, with_hidden, hidden_true, (ach_some + ach_none), ach_some, ach_none, with_updated,
+        "[BootSnapshot] write — games={} sidebar={}",
+        game_count, sidebar_count,
     );
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn clear_startup_snapshot(app_handle: AppHandle) -> Result<(), String> {
-    let path = match get_snapshot_path(&app_handle) {
-        Ok(p) => p,
-        Err(_) => return Ok(()),
-    };
-
-    if path.exists() {
-        fs::remove_file(&path).map_err(|e| format!("Failed to remove snapshot: {}", e))?;
-        println!("[BootSnapshot] cleared");
-    }
-
+pub fn clear_startup_snapshot(
+    app_handle: AppHandle,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
+) -> Result<(), String> {
+    crate::commands::sqlite_cache::startup_snapshots::clear_startup_snapshot_sqlite(&db)?;
+    println!("[BootSnapshot] cleared");
     Ok(())
 }
 

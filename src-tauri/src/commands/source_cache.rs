@@ -1,9 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+
+use crate::commands::sqlite_cache;
+use crate::commands::sqlite_cache::SqliteStoreDb;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,64 +40,62 @@ pub struct SourceAvailabilityIndex {
     pub games: HashMap<String, SourceAvailabilityGameEntry>,
 }
 
-fn get_sources_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-
-    let sources_dir = app_dir.join("sources");
-    fs::create_dir_all(&sources_dir)
-        .map_err(|e| format!("Failed to create sources dir: {}", e))?;
-
-    Ok(sources_dir)
-}
-
-fn get_index_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_sources_dir(app_handle)?.join("source-index.json"))
-}
-
 #[tauri::command]
 pub fn read_source_availability_index(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<SourceAvailabilityIndex, String> {
-    let path = get_index_path(&app_handle)?;
-
-    if !path.exists() {
+    let Some(inner) = store_db.0.as_ref() else {
         return Ok(SourceAvailabilityIndex {
             version: 1,
             updated_at: 0,
             games: HashMap::new(),
         });
-    }
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read source availability index: {}", e))?;
+    let rows = sqlite_cache::source_availability::read_all_source_availability(&conn)?;
 
-    match serde_json::from_str(&content) {
-        Ok(index) => Ok(index),
-        Err(_) => {
-            Ok(SourceAvailabilityIndex {
-                version: 1,
-                updated_at: 0,
-                games: HashMap::new(),
-            })
+    let mut games = HashMap::new();
+    for (app_id, data_json) in rows {
+        match serde_json::from_str::<SourceAvailabilityGameEntry>(&data_json) {
+            Ok(entry) => {
+                games.insert(app_id, entry);
+            }
+            Err(e) => {
+                println!(
+                    "[SOURCE_AVAIL][READ] appid={} corrupt error=\"{}\"",
+                    app_id, e
+                );
+            }
         }
     }
+
+    let updated_at = games.values().map(|g| g.updated_at).max().unwrap_or(0);
+
+    Ok(SourceAvailabilityIndex {
+        version: 1,
+        updated_at,
+        games,
+    })
 }
 
 #[tauri::command]
 pub fn write_source_availability_index(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     index: SourceAvailabilityIndex,
 ) -> Result<(), String> {
-    let path = get_index_path(&app_handle)?;
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    let content = serde_json::to_string_pretty(&index)
-        .map_err(|e| format!("Failed to serialize source availability index: {}", e))?;
-
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write source availability index: {}", e))?;
+    for (app_id, entry) in &index.games {
+        let data_json = serde_json::to_string(entry)
+            .map_err(|e| format!("Failed to serialize source entry for {}: {}", app_id, e))?;
+        sqlite_cache::source_availability::write_source_availability(&conn, app_id, &data_json)?;
+    }
 
     Ok(())
 }

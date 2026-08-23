@@ -6,8 +6,9 @@ import {
   useState,
 } from "react";
 
-import { AppSettings, AppSettingsKey } from "../types/settings";
+import { AppSettings, AppSettingsKey, DEFAULT_DEBRID_PROVIDER_CONFIG } from "../types/settings";
 import { defaultProviderSettings } from "../data/providers";
+import { saveStartupConfig, setAutostart } from "../services/tauri";
 
 type SettingsContextValue = {
   settings: AppSettings;
@@ -41,6 +42,8 @@ export const defaultSettings: AppSettings = {
   rawgApiKey: "",
   igdbClientId: "",
   igdbClientSecret: "",
+  debridProviders: { ...DEFAULT_DEBRID_PROVIDER_CONFIG },
+  debridEndpoint: "https://hydra.luffy.pp.ua",
   googleSearchApiKey: "",
   googleSearchCx: "",
   bingSearchApiKey: "",
@@ -52,12 +55,14 @@ export const defaultSettings: AppSettings = {
   achievementSchemaPath: "",
   achievementToastEnabled: true,
   achievementNativeNotificationsEnabled: false,
-  achievementOverlayNotificationsEnabled: false,
-  gameSessionOverlayEnabled: false,
-  overlayNotificationPosition: "top-right",
+  achievementOverlayNotificationsEnabled: true,
+  launcherAchievementOverlayEnabled: true,
+  gameSessionOverlayEnabled: true,
+  gameSessionHudEnabled: true,
+  overlayNotificationPosition: "top-center",
   achievementAutoSyncEnabled: true,
   achievementAutoSyncIntervalSeconds: 10,
-  libraryCardArtworkMode: "landscape",
+  libraryCardArtworkMode: "poster",
   libraryCardSize: 200,
   libraryGridGap: 28,
   libraryUseFullWidth: true,
@@ -67,15 +72,38 @@ export const defaultSettings: AppSettings = {
   dashboardFeaturedCardSize: 340,
   dashboardGridGap: 16,
   dashboardContentWidth: 1760,
-  useExpandedDashboard: false,
+  useExpandedDashboard: true,
 
   libraryLandscapeCardSize: 200,
   libraryLandscapeGap: 28,
   maxLandscapeColumns: 0,
 
+  cardCornerRadius: 12,
+  hideCardLabels: false,
+
+  // ── Dashboard Home Layout ──────────────────────────────────────────
+  dashboardHeroEnabled: true,
+  dashboardHeroAutoRotate: false,
+  dashboardHeroRotateSeconds: 15,
+  dashboardHeroSources: ["continuePlaying", "favorites"],
+  dashboardHeroMaxSources: 2,
+  dashboardSectionVisibility: {},
+  dashboardSectionLimits: {},
+  dashboardDeferredRendering: true,
+  dashboardInitialVisibleSections: 3,
+
   mediaCacheProfile: "playnite-balanced",
   gameScanFolders: [],
   scanLocalGames: false,
+
+  launchMode: "desktop",
+  startupWindowMode: "windowed",
+  startWithWindows: false,
+  startMaximized: false,
+  startInTray: false,
+  closeToTray: false,
+  showDashboardOnStartup: true,
+  disableAutoUpdates: false,
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -143,6 +171,44 @@ export function SettingsProvider({
   useEffect(() => {
     document.documentElement.dataset.compact = settings.compactMode ? "true" : "false";
   }, [settings.compactMode]);
+
+  // Sync card layout settings to CSS custom properties
+  useEffect(() => {
+    document.documentElement.style.setProperty("--card-radius", `${settings.cardCornerRadius}px`);
+  }, [settings.cardCornerRadius]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--card-label-display", settings.hideCardLabels ? "none" : "block");
+    document.documentElement.dataset.cardLabel = settings.hideCardLabels ? "hidden" : "visible";
+  }, [settings.hideCardLabels]);
+
+  // ── Listen for restore-triggered refresh events ──
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key?: string } | undefined;
+      if (detail?.key === STORAGE_KEY) {
+        setSettings(loadSettings());
+      }
+    };
+    window.addEventListener("lumaforge-data-changed", handler);
+    return () => window.removeEventListener("lumaforge-data-changed", handler);
+  }, []);
+
+  // ── Sync startup settings to Rust (startup-config.json + autostart registry) ──
+  useEffect(() => {
+    saveStartupConfig({
+      startWithWindows: settings.startWithWindows,
+      startMaximized: settings.startMaximized,
+      startInTray: settings.startInTray,
+      closeToTray: settings.closeToTray,
+      launchMode: settings.launchMode,
+      startupWindowMode: settings.startupWindowMode,
+    }).catch((err) => console.warn("[Settings] Failed to save startup config:", err));
+
+    setAutostart(settings.startWithWindows).catch((err) =>
+      console.warn("[Settings] Failed to toggle autostart:", err)
+    );
+  }, [settings.startWithWindows, settings.startMaximized, settings.startInTray, settings.closeToTray, settings.launchMode, settings.startupWindowMode]);
 
   const value = useMemo(
     () => ({

@@ -1,0 +1,117 @@
+/**
+ * Provider-neutral launch dispatch boundary.
+ *
+ * Called from GameSessionContext.launchGame() to dispatch a game launch
+ * through the appropriate provider's protocol or direct executable.
+ * Currently supports: Steam (inline), Epic (this adapter), Local/Manual (inline).
+ */
+
+import type { LibraryGame } from "../types/libraryGame";
+import { EPIC_LAUNCH_ENABLED, EPIC_DIRECT_LAUNCH_ENABLED, EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LAUNCH } from "../services/epicFeatureFlag";
+import { DEBRID_LAUNCH_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_LAUNCH } from "../features/debrid/debridFeatureFlag";
+
+export type LaunchDispatchResult = {
+  dispatched: boolean;
+  method?: string;
+  error?: string;
+  /** PID of the spawned process when the provider reports one (Debrid direct-executable). */
+  pid?: number;
+};
+
+/**
+ * Dispatch a launch for a non-Steam, non-local, non-manual game.
+ * Currently handles Epic games via protocol URI or direct executable.
+ *
+ * Returns `{ dispatched: false }` for providers not handled by this adapter
+ * (the caller falls through to its existing else/error branch).
+ */
+export async function dispatchProviderLaunch(game: LibraryGame): Promise<LaunchDispatchResult> {
+  if (game.source === "epic" && EPIC_LAUNCH_ENABLED && EPIC_LIBRARY_ENABLED) {
+    const { getEpicLaunchMetadata } = await import("../services/epicGameStore");
+    const { launchEpicGame } = await import("../services/tauri");
+
+    const meta = game.providerGameId ? getEpicLaunchMetadata(game.providerGameId) : undefined;
+
+    if (!meta?.appName) {
+      if (DEBUG_EPIC_LAUNCH) {
+        console.warn("[EPIC_LAUNCH] no appName in metadata", game.providerGameId);
+      }
+      return { dispatched: false, error: "No Epic appName in metadata" };
+    }
+
+    if (DEBUG_EPIC_LAUNCH) {
+      console.log("[EPIC_LAUNCH] dispatching", { appName: meta.appName, providerGameId: game.providerGameId });
+    }
+
+    try {
+      const result = await launchEpicGame(
+        meta.appName,
+        meta.executablePath,
+        meta.launchArguments,
+        EPIC_DIRECT_LAUNCH_ENABLED,
+        meta.namespace,
+        meta.catalogItemId,
+      );
+
+      if (DEBUG_EPIC_LAUNCH) {
+        console.log("[EPIC_LAUNCH] result", result);
+      }
+
+      return {
+        dispatched: result.success,
+        method: result.method,
+        error: result.error ?? undefined,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[EPIC_LAUNCH] failed", msg);
+      return { dispatched: false, error: msg };
+    }
+  }
+
+  // ── Debrid games: direct executable launch ──
+  if (game.source === "debrid" && DEBRID_LAUNCH_ENABLED && DEBRID_LIBRARY_ENABLED) {
+    if (!game.executablePath) {
+      if (DEBUG_DEBRID_LAUNCH) {
+        console.warn("[DEBRID_LAUNCH] no executablePath", { providerGameId: game.providerGameId });
+      }
+      return { dispatched: false, error: "No executable path for Debrid game" };
+    }
+
+    const { launchDebridGame } = await import("../services/tauri");
+
+    if (DEBUG_DEBRID_LAUNCH) {
+      console.log("[DEBRID_LAUNCH] dispatching", { executablePath: game.executablePath, providerGameId: game.providerGameId });
+    }
+
+    try {
+      const result = await launchDebridGame({
+        executablePath: game.executablePath,
+        launchArguments: game.launchArguments ?? null,
+        workingDirectory: game.workingDirectory ?? null,
+      });
+
+      if (DEBUG_DEBRID_LAUNCH) {
+        console.log("[DEBRID_LAUNCH] result", result);
+      }
+
+      return {
+        dispatched: result.success,
+        method: result.method,
+        error: result.error ?? undefined,
+        pid: result.pid ?? undefined,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[DEBRID_LAUNCH] failed", msg);
+      // UAC cancelled by user — not a real error, don't show to user
+      if (msg.includes("cancelled by the user") || msg.includes("Elevation declined")) {
+        return { dispatched: false };
+      }
+      return { dispatched: false, error: msg };
+    }
+  }
+
+  // Not an Epic/Debrid game or launch not enabled
+  return { dispatched: false };
+}

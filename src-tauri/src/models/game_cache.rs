@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameAppInfo {
     #[serde(rename = "appId", alias = "app_id")]
     pub app_id: String,
@@ -22,7 +22,7 @@ pub struct GameAppInfo {
     pub user_data: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameMediaSources {
     pub landscape: Option<String>,
     pub cover: Option<String>,
@@ -31,14 +31,14 @@ pub struct GameMediaSources {
     pub icon: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameRemoteRefs {
     pub header_image: Option<String>,
     pub capsule_image: Option<String>,
     pub background_image: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameMediaPaths {
     #[serde(rename = "coverPath", alias = "cover_path")]
     pub cover_path: Option<String>,

@@ -20,9 +20,17 @@ pnpm-debug.log*
 .env
 .env.local
 .env.*.local
+.dev.vars
+
+# Cloudflare
+.wrangler/
 
 # OS / Editor
 .DS_Store
 Thumbs.db
 .vscode/*
 !.vscode/extensions.json
+
+{
+  "ignore": ["**/large-file.log", "**/bundle.min.js", "**/data.json"]
+}

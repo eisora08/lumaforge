@@ -6,6 +6,7 @@ export type ProcessCandidate = {
   name: string;
   exe?: string;
   confidence: "high" | "medium" | "low";
+  score: number;
   reason: string;
 };
 
@@ -30,6 +31,9 @@ const EXCLUDED_PROCESSES = new Set([
   "crashreporter.exe",
   "crashreportclient.exe",
   "unitycrashhandler.exe",
+  "unitycrashhandler64.exe",
+  "unitycrashhandler32.exe",
+  "crashpad_handler.exe",
   "ngscrt64.exe",
   "scp_service.exe",
   "gamerserviceservice.exe",
@@ -54,7 +58,7 @@ function getDirFromPath(p: string): string {
   return lastSlash >= 0 ? normalized.substring(0, lastSlash) : normalized;
 }
 
-function isExcluded(name: string): boolean {
+export function isExcluded(name: string): boolean {
   const lower = name.toLowerCase();
   return EXCLUDED_PROCESSES.has(lower) || EXCLUDED_PROCESSES.has(`exe ${lower}`) || EXCLUDED_PROCESSES.has(lower.replace(".exe", ""));
 }
@@ -85,12 +89,13 @@ function scoreCandidate(
         name: proc.name,
         exe: proc.exe,
         confidence: "high",
+        score: 100,
         reason: `exe path exact match: ${normGameExe}`,
       };
     }
   }
 
-  // High confidence: exe inside game install directory
+  // Medium confidence: exe inside game install directory (not high — crash handlers also live here)
   if (game.installDir) {
     const normInstall = normalizePath(game.installDir);
     if (pexe.includes(normInstall)) {
@@ -98,13 +103,14 @@ function scoreCandidate(
         pid: proc.pid,
         name: proc.name,
         exe: proc.exe,
-        confidence: "high",
+        confidence: "medium",
+        score: 40,
         reason: `exe inside install directory: ${normInstall}`,
       };
     }
   }
 
-  // High confidence: exe name matches game title
+  // Medium confidence: exe name matches game title
   if (game.title) {
     const titleWords = game.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
     const exeBase = proc.exe ? getExeNameFromPath(proc.exe).toLowerCase().replace(".exe", "") : proc.name.toLowerCase().replace(".exe", "");
@@ -115,6 +121,7 @@ function scoreCandidate(
           name: proc.name,
           exe: proc.exe,
           confidence: "medium",
+          score: 80,
           reason: `exe name "${exeBase}" matches game title word "${word}"`,
         };
       }
@@ -131,6 +138,7 @@ function scoreCandidate(
         name: proc.name,
         exe: proc.exe,
         confidence: "medium",
+        score: 70,
         reason: `process name matches executable name: ${gameExeName}`,
       };
     }
@@ -141,6 +149,7 @@ function scoreCandidate(
         name: proc.name,
         exe: proc.exe,
         confidence: "medium",
+        score: 60,
         reason: `process name partially matches executable name: ${gameExeName} ~ ${procExeName}`,
       };
     }
@@ -155,6 +164,7 @@ function scoreCandidate(
         name: proc.name,
         exe: proc.exe,
         confidence: "medium",
+        score: 50,
         reason: `process in same directory as game executable: ${gameDir}`,
       };
     }
@@ -177,9 +187,9 @@ export function findCandidates(
     }
   }
 
-  // Sort by confidence
+  // Sort by confidence first, then by score descending (higher = better)
   const rank = { high: 0, medium: 1, low: 2 };
-  candidates.sort((a, b) => rank[a.confidence] - rank[b.confidence]);
+  candidates.sort((a, b) => rank[a.confidence] - rank[b.confidence] || b.score - a.score);
 
   console.debug("[ProcessTracking] candidates", candidates);
   return candidates;
@@ -237,6 +247,9 @@ const COMMON_LAUNCHER_EXES = new Set([
   "eosoverlayrenderer.exe",
   "crashreporter.exe",
   "unitycrashhandler.exe",
+  "unitycrashhandler64.exe",
+  "unitycrashhandler32.exe",
+  "crashpad_handler.exe",
   "ngscrt64.exe",
   "scp_service.exe",
   "gamerserviceservice.exe",

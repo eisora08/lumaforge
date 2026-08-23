@@ -2,13 +2,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io::Read};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::models::steam_appcache_achievements::{
   AchievementImageStatus, AchievementsAppSchemaEntry, AchievementsAppPercentagesFile,
   AchievementsAppSchemaResult, AppAchievementCache, AppAchievementCacheEntry,
-  AppAchievementPercentagesEntry, DebugAchievementReport, DebugFileInfo, DebugKvNode,
+  AppAchievementPercentagesEntry, AppAchievementSummary, DebugAchievementReport, DebugFileInfo, DebugKvNode,
   DebugMatchResult, LibraryCacheFileMetadata, LibraryCacheProgress,
   LibraryCacheValue, LocaleValue, OrphanCleanupResult, StatPair, SteamAppcacheAchievement,
   SteamAppcacheParsedProgress, SteamAppcacheScanResult, SteamAppcacheSchemaEntry,
@@ -262,7 +263,508 @@ fn skip_field(data: &[u8], pos: usize, wt: u64) -> Option<usize> {
 }
 
 // ---------------------------------------------------------------------------
-// Proto-based parser for UserGameStats_*.bin
+// Valve KeyValues binary parser — faithful port of reference steam-appcache.js
+// ---------------------------------------------------------------------------
+
+/// Read a null-terminated C string from buf starting at offset.
+/// Returns (string, new_offset) or None if out of bounds or no null terminator.
+fn kv_read_cstring(buf: &[u8], off: usize) -> Option<(String, usize)> {
+  if off >= buf.len() { return None; }
+  let end = buf[off..].iter().position(|&b| b == 0)?;
+  let s = String::from_utf8_lossy(&buf[off..off + end]).to_string();
+  Some((s, off + end + 1))
+}
+
+/// Insert a key-value pair into a HashMap. Duplicate keys produce a JSON-like array.
+fn kv_add_key(obj: &mut serde_json::Map<String, serde_json::Value>, key: String, value: serde_json::Value) {
+  use serde_json::Value;
+  if let Some(existing) = obj.get(&key) {
+    let arr = match existing {
+      Value::Array(a) => {
+        let mut a = a.clone();
+        a.push(value);
+        a
+      }
+      other => vec![other.clone(), value],
+    };
+    obj.insert(key, Value::Array(arr));
+  } else {
+    obj.insert(key, value);
+  }
+}
+
+/// Parse KV binary node children — the core recursive parser.
+/// Direct port of `parseNodeChildren` from reference steam-appcache.js.
+fn kv_parse_node_children(buf: &[u8], off: &mut usize) -> serde_json::Map<String, serde_json::Value> {
+  use serde_json::Value;
+  let mut obj = serde_json::Map::new();
+  let section_start = *off;
+
+  while *off < buf.len() {
+    let type_byte = buf[*off];
+    *off += 1;
+
+    // 0x08 = END marker → return to parent
+    if type_byte == 0x08 {
+      break;
+    }
+
+    // Read key (null-terminated C string)
+    let (key, new_off) = match kv_read_cstring(buf, *off) {
+      Some(v) => v,
+      None => break,
+    };
+    *off = new_off;
+
+    match type_byte {
+      0x00 => {
+        // SUBSECTION → recurse
+        let child = kv_parse_node_children(buf, off);
+        kv_add_key(&mut obj, key, Value::Object(child));
+      }
+      0x01 => {
+        // STRING
+        let (val, new_off) = match kv_read_cstring(buf, *off) {
+          Some(v) => v,
+          None => break,
+        };
+        *off = new_off;
+        kv_add_key(&mut obj, key, Value::String(val));
+      }
+      0x02 => {
+        // INT32 (4 bytes, little-endian signed)
+        if *off + 4 > buf.len() { break; }
+        let val = i32::from_le_bytes([buf[*off], buf[*off+1], buf[*off+2], buf[*off+3]]);
+        *off += 4;
+        kv_add_key(&mut obj, key, Value::Number(val.into()));
+      }
+      0x03 => {
+        // FLOAT (4 bytes, little-endian)
+        if *off + 4 > buf.len() { break; }
+        let val = f32::from_le_bytes([buf[*off], buf[*off+1], buf[*off+2], buf[*off+3]]);
+        *off += 4;
+        if let Some(n) = serde_json::Number::from_f64(val as f64) {
+          kv_add_key(&mut obj, key, Value::Number(n));
+        }
+      }
+      0x07 => {
+        // INT64 (8 bytes, little-endian, stored as string — matching reference)
+        if *off + 8 > buf.len() { break; }
+        let val = u64::from_le_bytes([
+          buf[*off], buf[*off+1], buf[*off+2], buf[*off+3],
+          buf[*off+4], buf[*off+5], buf[*off+6], buf[*off+7],
+        ]);
+        *off += 8;
+        kv_add_key(&mut obj, key, Value::String(val.to_string()));
+      }
+      0x04 => {
+        // UINT64 (8 bytes, little-endian) — used in newer schema binaries
+        if *off + 8 > buf.len() { break; }
+        let val = u64::from_le_bytes([
+          buf[*off], buf[*off+1], buf[*off+2], buf[*off+3],
+          buf[*off+4], buf[*off+5], buf[*off+6], buf[*off+7],
+        ]);
+        *off += 8;
+        kv_add_key(&mut obj, key, Value::String(val.to_string()));
+      }
+      0x05 => {
+        // BOOLEAN (4 bytes, little-endian int32 — 0 or 1)
+        if *off + 4 > buf.len() { break; }
+        let val = i32::from_le_bytes([buf[*off], buf[*off+1], buf[*off+2], buf[*off+3]]);
+        *off += 4;
+        kv_add_key(&mut obj, key, Value::Bool(val != 0));
+      }
+      0x06 => {
+        // INT64 (8 bytes, little-endian signed)
+        if *off + 8 > buf.len() { break; }
+        let val = i64::from_le_bytes([
+          buf[*off], buf[*off+1], buf[*off+2], buf[*off+3],
+          buf[*off+4], buf[*off+5], buf[*off+6], buf[*off+7],
+        ]);
+        *off += 8;
+        kv_add_key(&mut obj, key, Value::String(val.to_string()));
+      }
+      0x09 => {
+        // INT64 alternate encoding (8 bytes, little-endian)
+        if *off + 8 > buf.len() { break; }
+        let val = i64::from_le_bytes([
+          buf[*off], buf[*off+1], buf[*off+2], buf[*off+3],
+          buf[*off+4], buf[*off+5], buf[*off+6], buf[*off+7],
+        ]);
+        *off += 8;
+        kv_add_key(&mut obj, key, Value::String(val.to_string()));
+      }
+      0x0A => {
+        // DOUBLE (8 bytes, little-endian)
+        if *off + 8 > buf.len() { break; }
+        let val = f64::from_le_bytes([
+          buf[*off], buf[*off+1], buf[*off+2], buf[*off+3],
+          buf[*off+4], buf[*off+5], buf[*off+6], buf[*off+7],
+        ]);
+        *off += 8;
+        if let Some(n) = serde_json::Number::from_f64(val) {
+          kv_add_key(&mut obj, key, Value::Number(n));
+        }
+      }
+      _ => {
+        // Unknown type → fail fast (matching reference behavior)
+        // Do NOT continue — value size is unknown, parser would desync
+        eprintln!("[KV][DIAG] Unknown type 0x{:02x} at offset {} key='{}' section_start={} keys_so_far={}",
+          type_byte, *off - 1, key, section_start, obj.len());
+        break;
+      }
+    }
+  }
+
+  obj
+}
+
+/// Parse a Valve KV binary buffer into a JSON object.
+/// Direct port of `parseKVBinary` from reference steam-appcache.js.
+fn kv_parse(buf: &[u8]) -> Result<(String, serde_json::Map<String, serde_json::Value>), String> {
+  if buf.len() < 2 {
+    return Err("Empty or invalid KV binary".to_string());
+  }
+
+  let mut off = 0;
+  let first_type = buf[off];
+  off += 1;
+
+  let root_name;
+  if first_type == 0x00 {
+    let (name, new_off) = kv_read_cstring(buf, off)
+      .ok_or("Failed to read root name".to_string())?;
+    root_name = if name.is_empty() { "root".to_string() } else { name };
+    off = new_off;
+  } else {
+    root_name = "root".to_string();
+    off = 0;
+  }
+
+  let data = kv_parse_node_children(buf, &mut off);
+  Ok((root_name, data))
+}
+
+/// Walk a KV JSON tree recursively, calling `visitor` for each node that has a `data` property (number).
+/// The visitor receives the path (last component = statId) and the node object.
+fn kv_walk_stats(obj: &serde_json::Value, path: &[&str], visitor: &mut dyn FnMut(&str, &serde_json::Map<String, serde_json::Value>)) {
+  if let serde_json::Value::Object(map) = obj {
+    // Check if this node has a "data" property (number) — it's a stat entry
+    if let Some(serde_json::Value::Number(_)) = map.get("data") {
+      if let Some(stat_id) = path.last() {
+        visitor(stat_id, map);
+      }
+    }
+    // Recurse into child objects
+    for (k, v) in map {
+      let mut child_path = path.to_vec();
+      child_path.push(k);
+      kv_walk_stats(v, &child_path, visitor);
+    }
+  }
+}
+
+/// Extract (stat_id, data_u32, times) from a parsed KV user stats tree.
+/// Returns: Vec<(stat_id_str, data_u32, HashMap<bit_index, timestamp>)>
+fn kv_extract_user_stats(data: &serde_json::Map<String, serde_json::Value>) -> Vec<(String, u32, std::collections::HashMap<String, u64>)> {
+  use serde_json::Value;
+  let mut result = Vec::new();
+
+  kv_walk_stats(&Value::Object(data.clone()), &[], &mut |stat_id, node| {
+    let data_u32 = match node.get("data") {
+      Some(Value::Number(n)) => {
+        // Negative i32 (e.g. -16 for 0xFFFFFFF0) needs i64→u32 cast to preserve bits.
+        // serde_json::Number::as_u64() returns None for negative values.
+        n.as_u64()
+          .unwrap_or_else(|| n.as_i64().unwrap_or(0) as u64)
+          as u32
+      }
+      Some(Value::String(s)) => s.parse::<u32>().unwrap_or(0),
+      _ => 0,
+    };
+
+    // Look for AchievementTimes node (multiple naming variants)
+    let times = if let Some(times_node) = node.get("AchievementTimes")
+      .or_else(|| node.get("achievementTimes"))
+      .or_else(|| node.get("AchievementsTimes"))
+      .or_else(|| node.get("achievement_times"))
+    {
+      if let Value::Object(tn) = times_node {
+        tn.iter().filter_map(|(k, v)| {
+          let ts = match v {
+            Value::Number(n) => n.as_u64(),
+            Value::String(s) => s.parse::<u64>().ok(),
+            _ => None,
+          };
+          ts.map(|t| (k.clone(), t))
+        }).collect()
+      } else {
+        std::collections::HashMap::new()
+      }
+    } else {
+      std::collections::HashMap::new()
+    };
+
+    result.push((stat_id.to_string(), data_u32, times));
+  });
+
+  result
+}
+
+/// Walk the schema KV tree to build a map of stat name → (statId, min, max).
+/// Stat definitions are nodes with a "name" but NOT "bits" (i.e., not an achievements node).
+/// The statId is the numeric path component of the stat node.
+fn extract_stat_definitions(data: &serde_json::Value) -> std::collections::HashMap<String, (u32, Option<f64>, Option<f64>)> {
+  use serde_json::Value;
+  let mut defs = std::collections::HashMap::new();
+  extract_stat_definitions_walk(data, &["root"], &mut defs);
+  defs
+}
+
+fn extract_stat_definitions_walk(obj: &serde_json::Value, path: &[&str], defs: &mut std::collections::HashMap<String, (u32, Option<f64>, Option<f64>)>) {
+  if let serde_json::Value::Object(map) = obj {
+    // Stat definition: has "name" but NOT "bits" (not an achievements node)
+    if let Some(name) = map.get("name").and_then(|v| v.as_str()) {
+      if !name.is_empty() && !map.contains_key("bits") {
+        if let Some(stat_id) = path.last().and_then(|s| s.parse::<u32>().ok()) {
+          let min = map.get("min").and_then(|v| v.as_f64());
+          let max = map.get("max").and_then(|v| v.as_f64());
+          defs.insert(name.to_string(), (stat_id, min, max));
+        }
+      }
+    }
+    for (k, v) in map {
+      let mut child_path = path.to_vec();
+      child_path.push(k);
+      extract_stat_definitions_walk(v, &child_path, defs);
+    }
+  }
+}
+
+/// Extract schema achievements from a parsed KV schema tree.
+/// Follows the reference implementation (Achievements-1.2.2 steam-appcache.js:extractSchemaAchievements):
+/// - Modern path: any node with a `bits` object (NO type gate — type may be "ACHIEVEMENTS", "4", or absent)
+/// - Legacy path: nodes with `name` + numeric path components (infer statId/bit from path)
+fn kv_extract_schema(data: &serde_json::Value) -> Vec<SteamAppcacheSchemaEntry> {
+  use serde_json::Value;
+  let mut result = Vec::new();
+  let mut seen = std::collections::HashSet::new();
+
+  // Pre-build stat definitions map for progress metadata resolution
+  let stat_defs = extract_stat_definitions(data);
+  eprintln!("[KV][SCHEMA] stat_defs count={}", stat_defs.len());
+
+  fn walk(obj: &Value, path: &[&str], result: &mut Vec<SteamAppcacheSchemaEntry>, seen: &mut std::collections::HashSet<String>, stat_defs: &std::collections::HashMap<String, (u32, Option<f64>, Option<f64>)>) {
+    if let Value::Object(map) = obj {
+      // PATH 1 (modern): Any node with a `bits` object — no type gate
+      if let Some(Value::Object(bits)) = map.get("bits") {
+        let stat_id = path.last().and_then(|s| s.parse::<u32>().ok());
+        eprintln!("[KV][SCHEMA] Found bits node at path {:?} stat_id={:?}", path, stat_id);
+        for (bit_key, bit_val) in bits {
+          let bit = bit_val.get("bit")
+            .and_then(|v| v.as_u64())
+            .map(|b| b as u32)
+            .or_else(|| bit_key.parse::<u32>().ok());
+
+          // API name: try multiple fields (reference line 307-313)
+          let api_name = bit_val.get("name")
+            .or_else(|| bit_val.get("api"))
+            .or_else(|| bit_val.get("statname"))
+            .or_else(|| bit_val.get("display").and_then(|d| d.get("name")).and_then(|n| n.get("token")))
+            .or_else(|| bit_val.get("display").and_then(|d| d.get("name")))
+            .and_then(|v| v.as_str())
+            .unwrap_or(bit_key)
+            .to_string();
+
+          if api_name.is_empty() || seen.contains(&api_name) {
+            continue;
+          }
+
+          let display_name = bit_val.get("display")
+            .and_then(|d| d.get("name"))
+            .and_then(|n| n.as_str())
+            .or_else(|| bit_val.get("display").and_then(|d| d.as_str()))
+            .or_else(|| bit_val.get("displayName").and_then(|d| d.as_str()))
+            .map(|s| s.to_string());
+
+          let description = bit_val.get("display")
+            .and_then(|d| d.get("desc"))
+            .and_then(|v| v.as_str())
+            .or_else(|| bit_val.get("description").and_then(|d| d.as_str()))
+            .map(|s| s.to_string());
+
+          let hidden = bit_val.get("display")
+            .and_then(|d| d.get("hidden"))
+            .or_else(|| bit_val.get("hidden"))
+            .and_then(|v| v.as_u64())
+            .map(|h| h != 0);
+
+          let icon = bit_val.get("display")
+            .and_then(|d| d.get("icon"))
+            .or_else(|| bit_val.get("icon"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+          let icon_gray = bit_val.get("display")
+            .and_then(|d| d.get("icon_gray"))
+            .or_else(|| bit_val.get("display").and_then(|d| d.get("icongray")))
+            .or_else(|| bit_val.get("icon_gray"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+          // Extract progress metadata (reference: extractProgressMetadata)
+          let mut progress_stat_id: Option<u32> = None;
+          let mut progress_min: Option<f64> = None;
+          let mut progress_max: Option<f64> = None;
+
+          if let Some(progress_node) = bit_val.get("progress").and_then(|v| v.as_object()) {
+            // Resolve operand1 (stat name) from progress.value.operand1 or progress.operand1
+            let operand1 = progress_node.get("value")
+              .and_then(|v| v.as_object())
+              .and_then(|v| v.get("operand1"))
+              .or_else(|| progress_node.get("operand1"))
+              .and_then(|v| v.as_str())
+              .unwrap_or("");
+
+            if !operand1.is_empty() {
+              // Resolve stat name → statId from pre-built stat definitions map
+              if let Some(&(sid, smin, smax)) = stat_defs.get(operand1) {
+                progress_stat_id = Some(sid);
+                progress_min = smin;
+                progress_max = smax;
+              }
+            }
+
+            // Read min/max directly from the progress node (overrides stat definitions)
+            if let Some(v) = progress_node.get("min_val").or_else(|| progress_node.get("min")).and_then(|v| v.as_f64()) {
+              progress_min = Some(v);
+            }
+            if let Some(v) = progress_node.get("max_val").or_else(|| progress_node.get("max")).and_then(|v| v.as_f64()) {
+              progress_max = Some(v);
+            }
+          }
+
+          if stat_id.is_some() && bit.is_some() {
+            seen.insert(api_name.clone());
+            eprintln!("[KV][SCHEMA] Pushing entry: api_name={} stat_id={:?} bit={:?} progress_stat_id={:?}", api_name, stat_id, bit, progress_stat_id);
+            result.push(SteamAppcacheSchemaEntry {
+              api_name,
+              display_name,
+              description,
+              icon,
+              icon_gray,
+              hidden,
+              stat_id,
+              bit,
+              progress_stat_id,
+              progress_min,
+              progress_max,
+            });
+          } else {
+            eprintln!("[KV][SCHEMA] Skipping entry: api_name={} stat_id={:?} bit={:?} (missing required fields)", api_name, stat_id, bit);
+          }
+        }
+      }
+
+      // PATH 2 (legacy): node has `name` + numeric path components → infer statId/bit from path
+      // Reference line 338-350
+      if let Some(Value::String(name)) = map.get("name") {
+        if !name.is_empty() && !seen.contains(name) {
+          // Infer statId and bit from path: walk backwards finding numeric components
+          let mut inferred_bit: Option<u32> = None;
+          let mut inferred_stat_id: Option<u32> = None;
+          for i in (0..path.len()).rev() {
+            if let Ok(n) = path[i].parse::<u32>() {
+              if inferred_bit.is_none() {
+                inferred_bit = Some(n);
+              } else if inferred_stat_id.is_none() {
+                inferred_stat_id = Some(n);
+                break;
+    }
+  }
+}
+
+          if let (Some(stat_id), Some(bit)) = (inferred_stat_id, inferred_bit) {
+            let api_name = name.clone();
+            let display_name = map.get("display")
+              .or_else(|| map.get("DisplayName"))
+              .or_else(|| map.get("displayName"))
+              .and_then(|v| v.as_str())
+              .map(|s| s.to_string());
+
+            let description = map.get("desc")
+              .or_else(|| map.get("description"))
+              .or_else(|| map.get("Desc"))
+              .and_then(|v| v.as_str())
+              .map(|s| s.to_string());
+
+            let hidden = map.get("hidden")
+              .and_then(|v| v.as_u64())
+              .map(|h| h != 0);
+
+            let icon = map.get("icon")
+              .or_else(|| map.get("Icon"))
+              .and_then(|v| v.as_str())
+              .map(|s| s.to_string());
+
+            let icon_gray = map.get("icon_gray")
+              .or_else(|| map.get("iconGray"))
+              .and_then(|v| v.as_str())
+              .map(|s| s.to_string());
+
+            seen.insert(api_name.clone());
+            result.push(SteamAppcacheSchemaEntry {
+              api_name,
+              display_name,
+              description,
+              icon,
+              icon_gray,
+              hidden,
+              stat_id: Some(stat_id),
+              bit: Some(bit),
+              progress_stat_id: None,
+              progress_min: None,
+              progress_max: None,
+            });
+          }
+        }
+      }
+
+      // Recurse into child objects
+      for (k, v) in map {
+        let mut child_path = path.to_vec();
+        child_path.push(k);
+        walk(v, &child_path, result, seen, stat_defs);
+      }
+    }
+  }
+
+  walk(data, &[], &mut result, &mut seen, &stat_defs);
+  let with_stat_id = result.iter().filter(|e| e.stat_id.is_some()).count();
+  let with_bit = result.iter().filter(|e| e.bit.is_some()).count();
+  let with_progress = result.iter().filter(|e| e.progress_stat_id.is_some()).count();
+  eprintln!("[KV][SCHEMA] Walk complete: total={} with_stat_id={} with_bit={} with_progress={}", result.len(), with_stat_id, with_bit, with_progress);
+  result
+}
+
+/// Parse UserGameStats_*.bin (KV binary) to extract stat_id → value pairs.
+fn kv_parse_user_stats(data: &[u8]) -> Result<Vec<(String, u32, std::collections::HashMap<String, u64>)>, String> {
+  let (_root_name, tree) = kv_parse(data)?;
+  Ok(kv_extract_user_stats(&tree))
+}
+
+/// Parse UserGameStatsSchema_*.bin (KV binary) to extract achievement schema entries.
+fn kv_parse_schema(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry>, String> {
+  let (_root_name, tree) = kv_parse(data)?;
+  let entries = kv_extract_schema(&serde_json::Value::Object(tree));
+  if entries.is_empty() {
+    return Err("No achievement entries found in KV schema".to_string());
+  }
+  Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// Proto-based parser for UserGameStats_*.bin (legacy fallback)
 // ---------------------------------------------------------------------------
 
 /// Parse a protobuf sub-message looking for achievement-like fields.
@@ -628,6 +1130,9 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
     hidden: None,
     stat_id,
     bit,
+    progress_stat_id: None,
+    progress_min: None,
+    progress_max: None,
   })
 }
 
@@ -788,6 +1293,9 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
       hidden: None,
       stat_id: None,
       bit: None,
+      progress_stat_id: None,
+      progress_min: None,
+      progress_max: None,
     });
   }
 
@@ -819,7 +1327,28 @@ fn read_and_parse_stats(path: &Path) -> Result<Vec<SteamAppcacheAchievement>, St
     return Err("Stats file is empty".to_string());
   }
 
-  // Try protobuf-aware parser first
+  // KV binary parser — try first (correct format for Valve appcache)
+  match kv_parse_user_stats(&data) {
+    Ok(stats) => {
+      // Convert to achievements format for compatibility
+      let achievements: Vec<SteamAppcacheAchievement> = stats.iter().map(|(stat_id, data, _times)| {
+        SteamAppcacheAchievement {
+          api_name: format!("stat_{}", stat_id),
+          unlocked: *data != 0,
+          unlock_time: None,
+        }
+      }).collect();
+      if !achievements.is_empty() {
+        progress_log!("[ACH][PROGRESS] KV parser: {} stat entries", achievements.len());
+        return Ok(achievements);
+      }
+    }
+    Err(e) => {
+      progress_log!("[ACH][PROGRESS] KV parser failed: {}", e);
+    }
+  }
+
+  // Try protobuf-aware parser (legacy)
   match try_parse_stats_proto(&data) {
     Ok(achievements) => {
       progress_log!("[ACH][PROGRESS] proto parser: {} achievements", achievements.len());
@@ -847,6 +1376,20 @@ fn read_and_parse_schema(path: &Path) -> Result<Vec<SteamAppcacheSchemaEntry>, S
     return Err("Schema file is empty".to_string());
   }
 
+  // KV binary parser — try first (correct format for Valve appcache)
+  match kv_parse_schema(&data) {
+    Ok(entries) => {
+      schema_log!("[ACH][SCHEMA] KV parser: {} entries", entries.len());
+      if !entries.is_empty() {
+        return Ok(entries);
+      }
+    }
+    Err(e) => {
+      schema_log!("[ACH][SCHEMA] KV parser failed: {}", e);
+    }
+  }
+
+  // Fallback: try protobuf-aware parser (legacy)
   match try_parse_schema_proto(&data) {
     Ok(entries) => {
       schema_log!("[ACH][SCHEMA] proto parser: {} entries", entries.len());
@@ -1129,17 +1672,40 @@ pub fn parse_user_game_stats_raw(
   let mut stat_pairs: Vec<StatPair> = Vec::new();
   let mut achievement_entries: Vec<SteamAppcacheAchievement> = Vec::new();
 
-  // Try v2 parser for (stat_id, value) pairs
-  match try_parse_stats_proto_v2(&data) {
-    Ok((pairs, _count)) => {
-      stat_pairs = pairs
+  // KV binary parser — try first (correct format for Valve appcache)
+  match kv_parse_user_stats(&data) {
+    Ok(stats) => {
+      stat_pairs = stats
         .into_iter()
-        .map(|(stat_id, value)| StatPair { stat_id, value })
+        .map(|(stat_id, value, times)| StatPair {
+          stat_id: stat_id.parse::<u32>().unwrap_or(0),
+          value,
+          times,
+        })
         .collect();
-      diag_log(format!("v2 parser extracted {} stat pairs", stat_pairs.len()));
+      diag_log(format!("KV parser extracted {} stat pairs", stat_pairs.len()));
     }
     Err(e) => {
-      diag_log(format!("v2 parser failed: {}", e));
+      diag_log(format!("KV parser failed: {}", e));
+    }
+  }
+
+  // Fallback: try v2 proto parser for (stat_id, value) pairs
+  // Only overwrite KV parser results if proto parser found ACTUAL data
+  match try_parse_stats_proto_v2(&data) {
+    Ok((pairs, _count)) => {
+      if !pairs.is_empty() {
+        stat_pairs = pairs
+          .into_iter()
+          .map(|(stat_id, value)| StatPair { stat_id, value, times: std::collections::HashMap::new() })
+          .collect();
+        diag_log(format!("v2 proto parser extracted {} stat pairs (overriding KV)", stat_pairs.len()));
+      } else {
+        diag_log(format!("v2 proto parser returned 0 pairs — keeping KV result ({} pairs)", stat_pairs.len()));
+      }
+    }
+    Err(e) => {
+      diag_log(format!("v2 proto parser failed: {}", e));
     }
   }
 
@@ -1164,6 +1730,65 @@ pub fn parse_user_game_stats_raw(
     achievement_entries,
     error_reason: None,
   })
+}
+
+// ---------------------------------------------------------------------------
+// detect_steam_account_id_for_app — auto-detect account ID from stats files
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn detect_steam_account_id_for_app(
+  steam_path: Option<String>,
+  app_id: u32,
+) -> Result<Option<String>, String> {
+  let steam_root = resolve_steam_root(steam_path.as_deref())?;
+  let stats_dir = find_appcache_stats_dir(&steam_root);
+
+  if !stats_dir.is_dir() {
+    return Ok(None);
+  }
+
+  let pattern = format!("UserGameStats_*_{}.bin", app_id);
+  let mut candidates: Vec<String> = Vec::new();
+
+  if let Ok(entries) = fs::read_dir(&stats_dir) {
+    for entry in entries.flatten() {
+      let name = entry.file_name().to_string_lossy().to_string();
+      if name.starts_with("UserGameStats_") && name.ends_with(&format!("_{}.bin", app_id)) {
+        // Extract account ID: UserGameStats_<accountId>_<appId>.bin
+        if let Some(mid) = name.strip_prefix("UserGameStats_") {
+          if let Some(rest) = mid.strip_suffix(&format!("_{}.bin", app_id)) {
+            candidates.push(rest.to_string());
+          }
+        }
+      }
+    }
+  }
+
+  if candidates.is_empty() {
+    return Ok(None);
+  }
+
+  // Prefer the most recently modified file
+  let mut best: Option<(String, std::time::SystemTime)> = None;
+  for account_id in &candidates {
+    let path = stats_dir.join(format!("UserGameStats_{}_{}.bin", account_id, app_id));
+    if let Ok(meta) = fs::metadata(&path) {
+      if let Ok(modified) = meta.modified() {
+        match &best {
+          None => best = Some((account_id.clone(), modified)),
+          Some((_, prev)) if modified > *prev => best = Some((account_id.clone(), modified)),
+          _ => {}
+        }
+      }
+    }
+  }
+
+  let result = best.map(|(id, _)| id).or_else(|| candidates.first().cloned());
+  if let Some(ref id) = result {
+    diag_log(format!("Auto-detected account_id={} for app_id={} from stats files", id, app_id));
+  }
+  Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -1282,7 +1907,7 @@ fn extract_stat_pairs_for_debug(data: &[u8]) -> Vec<StatPair> {
   for msg in &sub_msgs {
     if let Some((stat_id, value)) = parse_stat_value_from_submsg(&msg.raw) {
       if seen.insert(stat_id) {
-        pairs.push(StatPair { stat_id, value });
+        pairs.push(StatPair { stat_id, value, times: std::collections::HashMap::new() });
       }
     }
   }
@@ -1295,6 +1920,7 @@ fn extract_stat_pairs_for_debug(data: &[u8]) -> Vec<StatPair> {
 // ---------------------------------------------------------------------------
 
 /// Parse a librarycache JSON file and extract achievement progress.
+/// Returns per-achievement unlock status from vecHighlight + vecAchievedHidden.
 fn parse_librarycache_data(value: &LibraryCacheValue) -> LibraryCacheProgress {
   let mut entries = Vec::new();
   let mut n_total = None;
@@ -1305,13 +1931,15 @@ fn parse_librarycache_data(value: &LibraryCacheValue) -> LibraryCacheProgress {
     n_total = data.n_total;
     n_achieved = data.n_achieved;
 
-    // Collect all entries
+    // vecHighlight: achievements that are UNLOCKED and visible
     for ach in &data.vec_highlight {
       entries.push(ach.clone());
     }
+    // vecAchievedHidden: achievements that are UNLOCKED but hidden
     for ach in &data.vec_achieved_hidden {
       entries.push(ach.clone());
     }
+    // vecUnachieved: achievements that are LOCKED
     for ach in &data.vec_unachieved {
       entries.push(ach.clone());
     }
@@ -1775,39 +2403,43 @@ pub fn debug_achievement_progress(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn download_achievement_image(
+pub async fn download_achievement_image(
   app_handle: AppHandle,
   app_id: u32,
   url: String,
   file_name: String,
+  platform: Option<String>,
 ) -> Result<Option<String>, String> {
   if url.starts_with("data:") {
     return Ok(Some(url));
   }
 
-  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+  let write_platform = platform.as_deref().unwrap_or("steam-official");
+  let cache_dir = get_achievement_write_dir(&app_handle, app_id, write_platform)?;
   let img_dir = cache_dir.join("img");
   let dest_path = img_dir.join(&file_name);
 
   // Return existing valid file path
-  if dest_path.is_file() {
-    if let Ok(meta) = fs::metadata(&dest_path) {
-      if meta.len() > 0 {
-        return Ok(Some(dest_path.to_string_lossy().to_string()));
-      }
-      let _ = fs::remove_file(&dest_path);
+  if let Ok(meta) = tokio::fs::metadata(&dest_path).await {
+    if meta.len() > 0 {
+      return Ok(Some(dest_path.to_string_lossy().to_string()));
     }
+    let _ = tokio::fs::remove_file(&dest_path).await;
   }
 
-  fs::create_dir_all(&img_dir)
+  tokio::fs::create_dir_all(&img_dir)
+    .await
     .map_err(|e| format!("Failed to create img dir: {}", e))?;
 
-  let client = match build_client() {
-    Ok(c) => c,
-    Err(e) => return Err(format!("Failed to create HTTP client: {}", e)),
-  };
+  let client = reqwest::Client::builder()
+    .user_agent("LumaForge/0.1.0")
+    .timeout(Duration::from_secs(15))
+    .connect_timeout(Duration::from_secs(8))
+    .redirect(reqwest::redirect::Policy::limited(5))
+    .build()
+    .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-  let response = match client.get(&url).send() {
+  let response = match client.get(&url).send().await {
     Ok(r) => r,
     Err(e) => {
       diag_log(format!("download_achievement_image failed appid={} file={} reason=network_error: {}", app_id, file_name, e));
@@ -1820,7 +2452,7 @@ pub fn download_achievement_image(
     return Ok(None);
   }
 
-  let bytes = match response.bytes() {
+  let bytes = match response.bytes().await {
     Ok(b) => b,
     Err(e) => {
       diag_log(format!("download_achievement_image failed appid={} file={} reason=read_error: {}", app_id, file_name, e));
@@ -1828,7 +2460,7 @@ pub fn download_achievement_image(
     }
   };
 
-  if let Err(e) = fs::write(&dest_path, &bytes) {
+  if let Err(e) = tokio::fs::write(&dest_path, &bytes).await {
     diag_log(format!("download_achievement_image failed appid={} file={} reason=write_error: {}", app_id, file_name, e));
     return Ok(None);
   }
@@ -1849,6 +2481,16 @@ pub fn resolve_achievement_image_paths(
   let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
   let img_dir = cache_dir.join("img");
 
+  // When the active cache dir is the crack dir (steam/<appId>/), also check
+  // the official dir (steam-official/<appId>/img/) so already-downloaded icons
+  // from the official schema are detected as existing and not re-downloaded.
+  let official_img_dir = {
+    let app_dir = app_handle.path().app_data_dir()
+      .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    app_dir.join("achievements").join("schema").join("steam-official")
+      .join(app_id.to_string()).join("img")
+  };
+
   let cache_path = cache_dir.join("achievements.json");
   if !cache_path.is_file() {
     return Ok(vec![]);
@@ -1863,11 +2505,11 @@ pub fn resolve_achievement_image_paths(
   for entry in &entries {
     let icon_exists = entry.icon_url.as_ref().map_or(false, |path| {
       let fname = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
-      img_dir.join(fname).is_file()
+      img_dir.join(fname).is_file() || official_img_dir.join(fname).is_file()
     });
     let icon_gray_exists = entry.icon_gray_url.as_ref().map_or(false, |path| {
       let fname = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
-      img_dir.join(fname).is_file()
+      img_dir.join(fname).is_file() || official_img_dir.join(fname).is_file()
     });
     results.push(AchievementImageStatus {
       api_name: entry.api_name.clone(),
@@ -1982,27 +2624,56 @@ fn get_achievement_cache_dir(app_handle: &AppHandle, app_id: u32) -> Result<Path
     .app_data_dir()
     .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-  // Use provider-aware path: achievements/steam/<appid>/,
-  // with fallback to legacy achievements/<appid>/
-  let provider_dir = app_dir.join("achievements").join("steam").join(app_id.to_string());
-  let legacy_dir = app_dir.join("achievements").join(app_id.to_string());
+  // Cracked games: achievements/schema/steam/<appid>/
+  let crack_dir = app_dir.join("achievements").join("schema").join("steam").join(app_id.to_string());
+  let crack_json = crack_dir.join("achievements.json");
 
-  if provider_dir.exists() {
-    Ok(provider_dir)
+  // Steam library games: achievements/schema/steam-official/<appid>/
+  let official_dir = app_dir.join("achievements").join("schema").join("steam-official").join(app_id.to_string());
+  let official_json = official_dir.join("achievements.json");
+
+  // Legacy format: achievements/steam/<appid>/
+  let legacy_dir = app_dir.join("achievements").join("steam").join(app_id.to_string());
+
+  // Priority: cracked (steam/) with valid content > official (steam-official/) > legacy
+  // NOTE: callers that know the platform should use get_achievement_write_dir() instead.
+  // This reader is only for unknown-platform fallback reads.
+  if crack_json.exists() && std::fs::read_to_string(&crack_json).map(|c| c.len() > 10).unwrap_or(false) {
+    Ok(crack_dir)
+  } else if official_json.exists() && std::fs::read_to_string(&official_json).map(|c| c.len() > 10).unwrap_or(false) {
+    Ok(official_dir)
   } else if legacy_dir.exists() {
-    librarycache_log!("[ACH][PATH] using legacy achievements path appid={}", app_id);
-    Ok(legacy_dir)
+    let _ = fs::rename(&legacy_dir, &official_dir);
+    Ok(official_dir)
   } else {
-    // Create new provider-aware path
-    fs::create_dir_all(&provider_dir)
-      .map_err(|e| format!("Failed to create achievement cache dir: {}", e))?;
-    Ok(provider_dir)
+    Ok(official_dir)
   }
 }
 
+/// Get the write directory for achievement schema based on platform.
+/// "steam" = cracked games → writes to steam/<appId>/
+/// "steam-official" = Steam library games → writes to steam-official/<appId>/
+fn get_achievement_write_dir(app_handle: &AppHandle, app_id: u32, platform: &str) -> Result<PathBuf, String> {
+  let app_dir = app_handle
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+  let sub = if platform == "steam" { "steam" } else { "steam-official" };
+  Ok(app_dir.join("achievements").join("schema").join(sub).join(app_id.to_string()))
+}
+
 #[tauri::command]
-pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchievementCache, migrate_icons: bool) -> Result<(), String> {
-  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchievementCache, migrate_icons: bool, platform: Option<String>) -> Result<(), String> {
+  let cache_dir = match platform.as_deref() {
+    Some("steam") => get_achievement_write_dir(&app_handle, app_id, "steam")?,
+    Some("steam-official") => get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    _ => get_achievement_cache_dir(&app_handle, app_id)?,
+  };
+
+  // Create directory only when actually writing files
+  fs::create_dir_all(&cache_dir)
+    .map_err(|e| format!("Failed to create achievement cache dir: {}", e))?;
 
   diag_log(format!("Writing achievement cache for app_id={} migrate_icons={} to {:?}", app_id, migrate_icons, cache_dir));
 
@@ -2017,6 +2688,25 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
     }
     entry
   }).collect();
+
+  // Guard: skip write when existing cache has higher cache_version (schema tool writes v7)
+  // BUT: always allow overwriting "schema-generated" (skeleton with no real unlock data)
+  let summary_path = cache_dir.join("summary.json");
+  if summary_path.exists() {
+    if let Ok(existing) = fs::read_to_string(&summary_path) {
+      if let Ok(existing_summary) = serde_json::from_str::<crate::models::steam_appcache_achievements::AppAchievementSummary>(&existing) {
+        let existing_ver = existing_summary.cache_version.unwrap_or(0);
+        let is_schema_skeleton = existing_summary.source == "schema-generated" || existing_summary.source == "schema-only";
+        if existing_ver >= 7 && !is_schema_skeleton {
+          diag_log(format!("Skipping write_achievement_cache app_id={} reason=higher-cache-version exist={} source={}", app_id, existing_ver, existing_summary.source));
+          return Ok(());
+        }
+        if is_schema_skeleton {
+          diag_log(format!("Overwriting schema skeleton app_id={} exist_ver={} exist_source={} new_source={}", app_id, existing_ver, existing_summary.source, data.summary.source));
+        }
+      }
+    }
+  }
 
   // Write summary.json
   let mut summary = data.summary;
@@ -2084,8 +2774,32 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
 }
 
 #[tauri::command]
-pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Option<AppAchievementCache>, String> {
-  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+pub fn delete_achievement_cache(app_handle: AppHandle, app_id: u32, platform: Option<String>) -> Result<(), String> {
+  let dirs: Vec<std::path::PathBuf> = match platform.as_deref() {
+    Some("steam") => vec![get_achievement_write_dir(&app_handle, app_id, "steam")?],
+    Some("steam-official") => vec![get_achievement_write_dir(&app_handle, app_id, "steam-official")?],
+    _ => vec![
+      get_achievement_write_dir(&app_handle, app_id, "steam")?,
+      get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    ],
+  };
+  for dir in dirs {
+    if dir.exists() {
+      fs::remove_dir_all(&dir)
+        .map_err(|e| format!("Failed to delete achievement cache dir: {}", e))?;
+    }
+  }
+  diag_log(format!("Deleted achievement cache for app_id={}", app_id));
+  Ok(())
+}
+
+#[tauri::command]
+pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32, platform: Option<String>) -> Result<Option<AppAchievementCache>, String> {
+  let cache_dir = match platform.as_deref() {
+    Some("steam") => get_achievement_write_dir(&app_handle, app_id, "steam")?,
+    Some("steam-official") => get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    _ => get_achievement_cache_dir(&app_handle, app_id)?,
+  };
 
   let summary_path = cache_dir.join("summary.json");
   let achievements_path = cache_dir.join("achievements.json");
@@ -2440,6 +3154,9 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
         rarity_percent: None,
         stat_id: entry.stat_id,
         bit: entry.bit,
+        progress_stat_id: entry.progress_stat_id,
+        progress_min: entry.progress_min,
+        progress_max: entry.progress_max,
       }
     })
     .collect();
@@ -3004,4 +3721,872 @@ pub fn validate_generated_achievement_schema(app_handle: AppHandle, app_id: u32)
     "missingLocalFiles": missing_local_files,
     "details": details,
   }))
+}
+
+// ---------------------------------------------------------------------------
+// read_achievement_progress_index — reads the global achievement_progress.json
+// from config/librarycache/. Returns the parsed entries as a map of
+// appId → { unlocked, total, percentage, allUnlocked, cacheTime }.
+// Used by the watcher to detect which games changed when this file is written.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct AchievementProgressEntry {
+  pub app_id: u32,
+  pub unlocked: u32,
+  pub total: u32,
+  pub percentage: f64,
+  pub all_unlocked: bool,
+  pub cache_time: u64,
+}
+
+#[tauri::command]
+pub fn read_achievement_progress_index(
+  steam_path: Option<String>,
+  steam_account_id: String,
+) -> Result<Vec<AchievementProgressEntry>, String> {
+  let steam_root = resolve_steam_root(steam_path.as_deref())
+    .map_err(|e| format!("Steam root not found: {}", e))?;
+
+  let progress_path = steam_root
+    .join("userdata")
+    .join(&steam_account_id)
+    .join("config")
+    .join("librarycache")
+    .join("achievement_progress.json");
+
+  if !progress_path.is_file() {
+    return Ok(vec![]);
+  }
+
+  let raw = std::fs::read_to_string(&progress_path)
+    .map_err(|e| format!("Failed to read achievement_progress.json: {}", e))?;
+
+  let parsed: serde_json::Value = serde_json::from_str(&raw)
+    .map_err(|e| format!("Failed to parse achievement_progress.json: {}", e))?;
+
+  let mut entries = Vec::new();
+
+  // Format: { nVersion: 3, mapCache: [[appid, { appid, unlocked, total, percentage, all_unlocked, cache_time, vetted }], ...] }
+  if let Some(map_cache) = parsed.get("mapCache").and_then(|v| v.as_array()) {
+    for item in map_cache {
+      if let Some(arr) = item.as_array() {
+        if arr.len() >= 2 {
+          if let Some(obj) = arr[1].as_object() {
+            let app_id = obj.get("appid")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0) as u32;
+            let unlocked = obj.get("unlocked")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0) as u32;
+            let total = obj.get("total")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0) as u32;
+            let percentage = obj.get("percentage")
+              .and_then(|v| v.as_f64())
+              .unwrap_or(0.0);
+            let all_unlocked = obj.get("all_unlocked")
+              .and_then(|v| v.as_bool())
+              .unwrap_or(false);
+            let cache_time = obj.get("cache_time")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0);
+
+            if total > 0 {
+              entries.push(AchievementProgressEntry {
+                app_id,
+                unlocked,
+                total,
+                percentage,
+                all_unlocked,
+                cache_time,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  progress_log!("[ACH][PROGRESS_INDEX] parsed {} entries from achievement_progress.json", entries.len());
+  Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// generate_achievement_schema — auto-generate canonical achievement schema
+// ---------------------------------------------------------------------------
+// Reads UserGameStatsSchema_*.bin (KV binary) for schema entries with stat_id/bit.
+// Optionally enriches with Steam Web API (display names, icons, descriptions).
+// Optionally reads UserGameStats_*.bin for unlock status via bitfield extraction.
+// Writes achievements/steam/<appId>/achievements.json as the single source of truth.
+// Reference: Achievements-1.2.2/generate_achievements_schema.js
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateSchemaResult {
+  pub entries_count: u32,
+  pub source: String,
+  pub icons_downloaded: u32,
+  pub progress_available: bool,
+  pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn generate_achievement_schema(
+  app_handle: AppHandle,
+  app_id: u32,
+  steam_path: Option<String>,
+  steam_account_id: Option<String>,
+  steam_web_api_key: Option<String>,
+  platform: Option<String>,
+) -> Result<GenerateSchemaResult, String> {
+  // Respect the platform param from the frontend — never override.
+  // "steam-official" = KV binary writes to steam-official/<appId>/
+  // "steam" = crack path writes to steam/<appId>/
+  schema_log!("[ACH][SCHEMA_GEN] === generate schema app_id={} platform={} ===", app_id, platform.as_deref().unwrap_or("steam-official"));
+
+  // Step 1: Read KV binary schema
+  let steam_root = resolve_steam_root(steam_path.as_deref())?;
+  let stats_dir = find_appcache_stats_dir(&steam_root);
+  let schema_path = stats_dir.join(format!("UserGameStatsSchema_{}.bin", app_id));
+
+  let kv_entries = if schema_path.is_file() {
+    match read_and_parse_schema(&schema_path) {
+      Ok(entries) => {
+        let with_stat_id = entries.iter().filter(|e| e.stat_id.is_some()).count();
+        let with_bit = entries.iter().filter(|e| e.bit.is_some()).count();
+        let with_progress = entries.iter().filter(|e| e.progress_stat_id.is_some()).count();
+        schema_log!("[ACH][SCHEMA_GEN] KV schema: {} entries, with_stat_id={}, with_bit={}, with_progress={}", entries.len(), with_stat_id, with_bit, with_progress);
+        entries
+      }
+      Err(e) => {
+        schema_log!("[ACH][SCHEMA_GEN] KV schema failed: {}", e);
+        vec![]
+      }
+    }
+  } else {
+    schema_log!("[ACH][SCHEMA_GEN] schema file not found: {}", schema_path.display());
+    vec![]
+  };
+
+  if kv_entries.is_empty() {
+    return Ok(GenerateSchemaResult {
+      entries_count: 0,
+      source: "no-schema-file".to_string(),
+      icons_downloaded: 0,
+      progress_available: false,
+      error: Some(format!("No schema entries found in {}", schema_path.display())),
+    });
+  }
+
+  // Step 2: Read binary stats for unlock status (bitfield extraction)
+  let mut unlock_map: std::collections::HashMap<String, (bool, Option<u64>)> = std::collections::HashMap::new();
+  let mut progress_available = false;
+
+  // If KV parser extracted entries with stat_id+bit, progress metadata is available
+  // (even if stats binary isn't read yet — unlock status comes from binary stats later)
+  if kv_entries.iter().any(|e| e.stat_id.is_some() && e.bit.is_some()) {
+    progress_available = true;
+    schema_log!("[ACH][SCHEMA_GEN] progress_available=true (entries have stat_id+bit)");
+  }
+
+  if let Some(ref acc_id) = steam_account_id {
+    let stats_path = stats_dir.join(format!("UserGameStats_{}_{}.bin", acc_id, app_id));
+    if stats_path.is_file() {
+      match fs::read(&stats_path) {
+        Ok(raw_data) => {
+          // Parse the KV tree ONCE to get both stat values AND AchievementTimes
+          if let Ok((_root_name, tree)) = kv_parse(&raw_data) {
+            let tree_value = serde_json::Value::Object(tree);
+
+            // Extract stat_id → data_u32 (bitmask) from the tree
+            let mut stats_map: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+            let mut stat_times: std::collections::HashMap<u32, std::collections::HashMap<u32, u64>> = std::collections::HashMap::new();
+            collect_stat_times(&tree_value, &[], &mut stat_times);
+
+            // Walk tree again to extract stat values
+            if let serde_json::Value::Object(ref root) = tree_value {
+              for (key, val) in root {
+                if let serde_json::Value::Object(obj) = val {
+                  if let Some(serde_json::Value::Number(n)) = obj.get("data") {
+                    if let Ok(stat_id) = key.parse::<u32>() {
+                      // Negative i32 (e.g. -16 for 0xFFFFFFF0) needs i64→u32 cast to preserve bits.
+                      let v = n.as_u64()
+                        .unwrap_or_else(|| n.as_i64().unwrap_or(0) as u64);
+                      stats_map.insert(stat_id, v as u32);
+                    }
+                  }
+                }
+              }
+            }
+
+            // AchievementTimes is AUTHORITATIVE for unlock detection.
+            // The bitmask (data_u32) can be stale: bits set without timestamps (false positives)
+            // or timestamps without bits set (false negatives).
+            // Reference app: earned = ts !== null
+            for entry in &kv_entries {
+              if let (Some(stat_id), Some(bit)) = (entry.stat_id, entry.bit) {
+                let has_timestamp = stat_times
+                  .get(&stat_id)
+                  .and_then(|bt| bt.get(&bit))
+                  .is_some();
+
+                if has_timestamp {
+                  // Timestamp exists → achievement IS unlocked (authoritative)
+                  let ts = stat_times[&stat_id][&bit];
+                  unlock_map.insert(entry.api_name.clone(), (true, Some(ts)));
+                } else {
+                  // No timestamp → achievement is NOT unlocked
+                  // (even if bitmask has the bit set — bitmask can be stale)
+                  unlock_map.insert(entry.api_name.clone(), (false, None));
+                }
+                progress_available = true;
+              }
+            }
+
+            schema_log!("[ACH][SCHEMA_GEN] binary stats: {} stat pairs, {} unlocked (from timestamps), progress={}",
+              stats_map.len(),
+              unlock_map.values().filter(|(u, _)| *u).count(),
+              progress_available,
+            );
+
+            // Fallback: if no entries matched via timestamps (no stat_id/bit in schema),
+            // try proto heuristic parser which extracts unlocked booleans directly.
+            if !progress_available {
+              schema_log!("[ACH][SCHEMA_GEN] no timestamp matches, trying proto heuristic parser...");
+              match try_parse_stats_proto(&raw_data) {
+                Ok(achievements) => {
+                  if !achievements.is_empty() {
+                    // First pass: exact name match
+                    for ach in &achievements {
+                      if kv_entries.iter().any(|e| e.api_name == ach.api_name) {
+                        unlock_map.insert(ach.api_name.clone(), (ach.unlocked, ach.unlock_time));
+                        progress_available = true;
+                      }
+                    }
+                    // Second pass: fuzzy match (strip common prefixes, lowercase, compare)
+                    if !progress_available {
+                      for kv_entry in &kv_entries {
+                        if let Some(ach) = achievements.iter().find(|a| {
+                          fuzzy_achievement_name_match(&a.api_name, &kv_entry.api_name)
+                        }) {
+                          unlock_map.insert(kv_entry.api_name.clone(), (ach.unlocked, ach.unlock_time));
+                          progress_available = true;
+                        }
+                      }
+                    }
+                    schema_log!("[ACH][SCHEMA_GEN] proto heuristic: {} achievements, {} matched, progress={}",
+                      achievements.len(),
+                      unlock_map.len(),
+                      progress_available,
+                    );
+                  } else {
+                    schema_log!("[ACH][SCHEMA_GEN] proto heuristic returned 0 entries");
+                  }
+                }
+                Err(e) => {
+                  schema_log!("[ACH][SCHEMA_GEN] proto heuristic failed: {}", e);
+                }
+              }
+            }
+          } else {
+            schema_log!("[ACH][SCHEMA_GEN] KV stats parse failed");
+          }
+        }
+        Err(e) => {
+          schema_log!("[ACH][SCHEMA_GEN] stats read failed: {}", e);
+        }
+      }
+    } else {
+      schema_log!("[ACH][SCHEMA_GEN] stats file not found: {}", stats_path.display());
+    }
+  }
+
+  // Step 3: Enrich with Steam Web API (display names, icons, descriptions)
+  let mut api_enriched = false;
+  if let Some(ref api_key) = steam_web_api_key {
+    if !api_key.trim().is_empty() {
+      match fetch_schema_from_api(app_id, api_key) {
+        Ok(api_schema) => {
+          schema_log!("[ACH][SCHEMA_GEN] API enrichment: {} entries", api_schema.len());
+          // Merge API data into kv_entries — API takes priority for display fields
+          // We'll use a separate merge loop below
+          api_enriched = true;
+
+          // Step 4: Fetch global achievement percentages
+          let global_pcts = fetch_global_percentages(app_id);
+
+          // Build final entries merging KV schema + API enrichment + unlock status
+          let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+          let mut final_entries: Vec<AppAchievementCacheEntry> = Vec::new();
+
+          for kv_entry in &kv_entries {
+            let api_entry = api_schema.iter().find(|a| a.name == kv_entry.api_name);
+            let (unlocked, unlock_time) = unlock_map.get(&kv_entry.api_name).copied().unwrap_or((false, None));
+            let global_pct = global_pcts.iter().find(|p| p.name == kv_entry.api_name).map(|p| p.percent);
+
+            // Icon resolution: prefer API CDN URLs (reliable), fallback to KV binary paths
+            // KV binary icons are relative (e.g. "img/hash.jpg" or "hash.jpg") — convert to CDN URLs
+            let icon_url = api_entry
+              .and_then(|a| a.icon.clone())
+              .or_else(|| kv_entry.icon.clone())
+              .map(|url| kv_icon_to_cdn_url(app_id, &url));
+            let icon_gray_url = api_entry
+              .and_then(|a| a.icongray.clone())
+              .or_else(|| kv_entry.icon_gray.clone())
+              .map(|url| kv_icon_to_cdn_url(app_id, &url));
+
+            // Display name: prefer API, fallback to KV
+            let name = api_entry
+              .and_then(|a| a.display_name.clone())
+              .or_else(|| kv_entry.display_name.clone())
+              .unwrap_or_else(|| kv_entry.api_name.clone());
+
+            // Description: prefer API, fallback to KV
+            let description = api_entry
+              .and_then(|a| a.description.clone())
+              .or_else(|| kv_entry.description.clone());
+
+            // Hidden: prefer API, fallback to KV
+            let hidden = api_entry
+              .and_then(|a| a.hidden)
+              .or_else(|| kv_entry.hidden)
+              .unwrap_or(false);
+
+            final_entries.push(AppAchievementCacheEntry {
+              id: kv_entry.api_name.clone(),
+              api_name: kv_entry.api_name.clone(),
+              name,
+              description,
+              icon_url: icon_url.clone(),
+              icon_gray_url: icon_gray_url.clone(),
+              unlocked,
+              unlock_time: unlock_time.map(|t| {
+                // Normalize: if < 1000000000000 it's seconds, convert to ms
+                if t > 0 && t < 1000000000000 { t * 1000 } else { t }
+              }),
+              rarity_percent: global_pct,
+              stat_id: kv_entry.stat_id,
+              bit: kv_entry.bit,
+              progress_stat_id: kv_entry.progress_stat_id,
+              progress_min: kv_entry.progress_min,
+              progress_max: kv_entry.progress_max,
+            });
+          }
+
+          // Sort: unlocked first, then alphabetical
+          final_entries.sort_by(|a, b| {
+            if a.unlocked != b.unlocked { return a.unlocked.cmp(&b.unlocked).reverse(); }
+            a.name.cmp(&b.name)
+          });
+
+          let total = final_entries.len() as u32;
+          let unlocked_count = final_entries.iter().filter(|e| e.unlocked).count() as u32;
+          let percent = if total > 0 { (unlocked_count as f64 / total as f64) * 100.0 } else { 0.0 };
+
+          let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+          let cache = AppAchievementCache {
+            achievements: final_entries.clone(),
+            achievement_percentages: global_pcts,
+            summary: AppAchievementSummary {
+              app_id: app_id.to_string(),
+              total,
+              unlocked: unlocked_count,
+              percent,
+              progress_available,
+              source: if progress_available { "schema-generated".to_string() } else { "schema-only".to_string() },
+              updated_at: now,
+              cache_version: Some(7),
+            },
+          };
+
+          // Only write cache if entries have real data (stat_id/bit from KV parser)
+          // Don't overwrite existing good cache with text fallback entries (no stat_id)
+          let has_stat_id = final_entries.iter().any(|e| e.stat_id.is_some() && e.bit.is_some());
+          if has_stat_id || progress_available {
+            let write_platform = platform.as_deref().unwrap_or("steam-official");
+            let cache_dir = get_achievement_write_dir(&app_handle, app_id, write_platform)?;
+            fs::create_dir_all(&cache_dir).map_err(|e| format!("Failed to create cache dir: {}", e))?;
+            let achievements_path = cache_dir.join("achievements.json");
+            let summary_path = cache_dir.join("summary.json");
+            let pcts_path = cache_dir.join("achievementpercentages.json");
+            fs::write(&achievements_path, serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?)
+              .map_err(|e| format!("Failed to write achievements: {}", e))?;
+            fs::write(&summary_path, serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?)
+              .map_err(|e| format!("Failed to write summary: {}", e))?;
+            fs::write(&pcts_path, serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?)
+              .map_err(|e| format!("Failed to write percentages: {}", e))?;
+            schema_log!("[ACH][SCHEMA_GEN] written {} entries to {} (unlocked={}/{}, progress={})",
+              total, cache_dir.display(), unlocked_count, total, progress_available);
+          } else {
+            schema_log!("[ACH][SCHEMA_GEN] skipping cache write — entries lack stat_id (text fallback)");
+          }
+
+          return Ok(GenerateSchemaResult {
+            entries_count: total,
+            source: "kv+api".to_string(),
+            icons_downloaded: 0,
+            progress_available,
+            error: None,
+          });
+        }
+        Err(e) => {
+          schema_log!("[ACH][SCHEMA_GEN] API enrichment failed: {}", e);
+        }
+      }
+    }
+  }
+
+  // Fallback: KV-only (no API enrichment)
+  {
+    let global_pcts = if !api_enriched { fetch_global_percentages(app_id) } else { vec![] };
+
+    let mut final_entries: Vec<AppAchievementCacheEntry> = Vec::new();
+    for kv_entry in &kv_entries {
+      let (unlocked, unlock_time) = unlock_map.get(&kv_entry.api_name).copied().unwrap_or((false, None));
+      let global_pct = global_pcts.iter().find(|p| p.name == kv_entry.api_name).map(|p| p.percent);
+
+      final_entries.push(AppAchievementCacheEntry {
+        id: kv_entry.api_name.clone(),
+        api_name: kv_entry.api_name.clone(),
+        name: kv_entry.display_name.clone().unwrap_or_else(|| kv_entry.api_name.clone()),
+        description: kv_entry.description.clone(),
+        icon_url: kv_entry.icon.clone().map(|url| kv_icon_to_cdn_url(app_id, &url)),
+        icon_gray_url: kv_entry.icon_gray.clone().map(|url| kv_icon_to_cdn_url(app_id, &url)),
+        unlocked,
+        unlock_time: unlock_time.map(|t| if t > 0 && t < 1000000000000 { t * 1000 } else { t }),
+        rarity_percent: global_pct,
+        stat_id: kv_entry.stat_id,
+        bit: kv_entry.bit,
+        progress_stat_id: kv_entry.progress_stat_id,
+        progress_min: kv_entry.progress_min,
+        progress_max: kv_entry.progress_max,
+      });
+    }
+
+    final_entries.sort_by(|a, b| {
+      if a.unlocked != b.unlocked { return a.unlocked.cmp(&b.unlocked).reverse(); }
+      a.name.cmp(&b.name)
+    });
+
+    let total = final_entries.len() as u32;
+    let unlocked_count = final_entries.iter().filter(|e| e.unlocked).count() as u32;
+    let percent = if total > 0 { (unlocked_count as f64 / total as f64) * 100.0 } else { 0.0 };
+
+    let now = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .map(|d| d.as_secs())
+      .unwrap_or(0);
+
+    let cache = AppAchievementCache {
+      achievements: final_entries.clone(),
+      achievement_percentages: global_pcts,
+      summary: AppAchievementSummary {
+        app_id: app_id.to_string(),
+        total,
+        unlocked: unlocked_count,
+        percent,
+        progress_available,
+        source: if progress_available { "schema-generated".to_string() } else { "schema-only".to_string() },
+        updated_at: now,
+        cache_version: Some(7),
+      },
+    };
+
+    // Only write cache if entries have real data (stat_id/bit from KV parser)
+    let has_stat_id = final_entries.iter().any(|e| e.stat_id.is_some() && e.bit.is_some());
+    if has_stat_id || progress_available {
+      let write_platform = platform.as_deref().unwrap_or("steam-official");
+      let cache_dir = get_achievement_write_dir(&app_handle, app_id, write_platform)?;
+      fs::create_dir_all(&cache_dir).map_err(|e| format!("Failed to create cache dir: {}", e))?;
+      let achievements_path = cache_dir.join("achievements.json");
+      let summary_path = cache_dir.join("summary.json");
+      let pcts_path = cache_dir.join("achievementpercentages.json");
+      fs::write(&achievements_path, serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Failed to write achievements: {}", e))?;
+      fs::write(&summary_path, serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Failed to write summary: {}", e))?;
+      fs::write(&pcts_path, serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Failed to write percentages: {}", e))?;
+      schema_log!("[ACH][SCHEMA_GEN] KV-only: {} entries written to {} (unlocked={}/{}, progress={})",
+        total, cache_dir.display(), unlocked_count, total, progress_available);
+    } else {
+      schema_log!("[ACH][SCHEMA_GEN] KV-only: skipping cache write — entries lack stat_id");
+    }
+
+    Ok(GenerateSchemaResult {
+      entries_count: total,
+      source: if progress_available { "kv-binary".to_string() } else { "kv-only".to_string() },
+      icons_downloaded: 0,
+      progress_available,
+      error: None,
+    })
+  }
+}
+
+/// Convert a KV binary icon path (relative) to a full Steam CDN URL.
+/// KV icons are like "img/hash.jpg" or "hash.jpg" — CDN URLs are
+/// `https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/{appid}/{hash}`
+fn kv_icon_to_cdn_url(app_id: u32, path: &str) -> String {
+  // Already a full URL — return as-is
+  if path.starts_with("http://") || path.starts_with("https://") {
+    return path.to_string();
+  }
+  // Extract just the hash/filename from relative paths like "img/hash.jpg"
+  let hash = path.rsplit('/').next().unwrap_or(path);
+  format!(
+    "https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/{}/{}",
+    app_id, hash
+  )
+}
+
+/// Fuzzy match between a proto-heuristic achievement name and a KV schema api_name.
+/// Strips common prefixes/suffixes, lowercases, and compares.
+fn fuzzy_achievement_name_match(proto_name: &str, schema_name: &str) -> bool {
+  let normalize = |s: &str| -> String {
+    s.trim()
+      .to_lowercase()
+      .replace(['-', ' ', '.'], "_")
+      .chars()
+      .filter(|c| c.is_alphanumeric() || *c == '_')
+      .collect()
+  };
+
+  let pn = normalize(proto_name);
+  let sn = normalize(schema_name);
+
+  // Exact match after normalization
+  if pn == sn {
+    return true;
+  }
+
+  // One contains the other
+  if pn.contains(&sn) || sn.contains(&pn) {
+    return true;
+  }
+
+  // Strip common prefixes and compare
+  let strip_prefixes = ["ach_", "achievement_", "progress_", "stat_"];
+  for prefix in &strip_prefixes {
+    let pn_stripped = pn.strip_prefix(prefix).unwrap_or(&pn);
+    let sn_stripped = sn.strip_prefix(prefix).unwrap_or(&sn);
+    if pn_stripped == sn_stripped {
+      return true;
+    }
+    if pn_stripped.contains(sn_stripped) || sn_stripped.contains(pn_stripped) {
+      return true;
+    }
+  }
+
+  false
+}
+
+/// Fetch schema from Steam Web API (GetSchemaForGame/v2).
+/// Returns parsed achievement entries with display names, icons, descriptions.
+fn fetch_schema_from_api(
+  app_id: u32,
+  api_key: &str,
+) -> Result<Vec<SchemaAchievementFromApi>, String> {
+  let url = format!(
+    "https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?appid={}&key={}",
+    app_id, api_key
+  );
+  let client = build_client()?;
+  let response = client.get(&url).send()
+    .map_err(|e| format!("Schema API request failed: {}", e))?;
+
+  if !response.status().is_success() {
+    return Err(format!("Schema API returned HTTP {}", response.status()));
+  }
+
+  let body: serde_json::Value = response.json()
+    .map_err(|e| format!("Failed to parse schema API response: {}", e))?;
+
+  let achievements = body
+    .get("game")
+    .and_then(|g| g.get("availableGameStats"))
+    .and_then(|s| s.get("achievements"))
+    .and_then(|a| a.as_array())
+    .cloned()
+    .unwrap_or_default();
+
+  let mut result = Vec::new();
+  for ach in &achievements {
+    let name = ach.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if name.is_empty() { continue; }
+
+    result.push(SchemaAchievementFromApi {
+      name: name.clone(),
+      display_name: ach.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
+      description: ach.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+      hidden: ach.get("hidden").and_then(|v| v.as_u64()).map(|h| h != 0),
+      icon: ach.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string()),
+      icongray: ach.get("icongray").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    });
+  }
+
+  Ok(result)
+}
+
+#[derive(Debug, Clone)]
+struct SchemaAchievementFromApi {
+  name: String,
+  display_name: Option<String>,
+  description: Option<String>,
+  hidden: Option<bool>,
+  icon: Option<String>,
+  icongray: Option<String>,
+}
+
+/// Fetch global achievement percentages for rarity display.
+fn fetch_global_percentages(app_id: u32) -> Vec<AppAchievementPercentagesEntry> {
+  let url = format!(
+    "https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid={}&format=json",
+    app_id
+  );
+  let client = match build_client() {
+    Ok(c) => c,
+    Err(_) => return vec![],
+  };
+  let response = match client.get(&url).send() {
+    Ok(r) => r,
+    Err(_) => return vec![],
+  };
+  if !response.status().is_success() {
+    return vec![];
+  }
+  let body: serde_json::Value = match response.json() {
+    Ok(v) => v,
+    Err(_) => return vec![],
+  };
+
+  let achievements = body
+    .get("achievementpercentages")
+    .and_then(|a| a.get("achievements"))
+    .and_then(|a| a.as_array())
+    .cloned()
+    .unwrap_or_default();
+
+  achievements.iter().filter_map(|a| {
+    let name = a.get("name")?.as_str()?.to_string();
+    let percent = a.get("percent")?.as_f64()?;
+    Some(AppAchievementPercentagesEntry { name, percent })
+  }).collect()
+}
+
+/// Download a single achievement icon to the cache img/ directory.
+fn download_achievement_icon(
+  app_handle: &AppHandle,
+  app_id: u32,
+  url: &str,
+  is_gray: bool,
+) -> Result<bool, String> {
+  let cache_dir = get_achievement_cache_dir(app_handle, app_id)?;
+  let img_dir = cache_dir.join("img");
+  fs::create_dir_all(&img_dir).map_err(|e| format!("Failed to create img dir: {}", e))?;
+
+  // Extract filename from URL
+  let filename = url.rsplit('/').next().unwrap_or("");
+  if filename.is_empty() {
+    return Err("Empty filename from URL".to_string());
+  }
+
+  // For gray icons, ensure _gray suffix
+  let final_filename = if is_gray && !filename.contains("_gray") {
+    let base = if let Some(pos) = filename.rfind('.') {
+      &filename[..pos]
+    } else {
+      filename
+    };
+    let ext = if let Some(pos) = filename.rfind('.') {
+      &filename[pos..]
+    } else {
+      ".jpg"
+    };
+    format!("{}_gray{}", base, ext)
+  } else {
+    filename.to_string()
+  };
+
+  let dest = img_dir.join(&final_filename);
+  if dest.exists() {
+    return Ok(false); // Already exists
+  }
+
+  // Download
+  let client = build_client()?;
+  let response = client.get(url).send()
+    .map_err(|e| format!("Icon download failed: {}", e))?;
+  if !response.status().is_success() {
+    return Err(format!("Icon download HTTP {}", response.status()));
+  }
+
+  let bytes = response.bytes()
+    .map_err(|e| format!("Failed to read icon bytes: {}", e))?;
+  fs::write(&dest, &bytes)
+    .map_err(|e| format!("Failed to write icon: {}", e))?;
+
+  Ok(true)
+}
+
+/// Collect achievement unlock timestamps from KV tree, keyed by stat_id → bit → timestamp.
+fn collect_stat_times(
+  obj: &serde_json::Value,
+  path: &[&str],
+  result: &mut std::collections::HashMap<u32, std::collections::HashMap<u32, u64>>,
+) {
+  if let serde_json::Value::Object(map) = obj {
+    // Check if this node has a "data" field (stat entry) and AchievementTimes child
+    if let Some(serde_json::Value::Number(_)) = map.get("data") {
+      // This is a stat node — its last path segment is the stat_id
+      if let Some(stat_id) = path.last().and_then(|s| s.parse::<u32>().ok()) {
+        let times_keys = ["AchievementTimes", "achievementTimes", "AchievementsTimes", "achievement_times"];
+        for key in &times_keys {
+          if let Some(serde_json::Value::Object(times)) = map.get(*key) {
+            let mut bit_times = std::collections::HashMap::new();
+            for (bit_str, ts_val) in times {
+              if let Some(bit) = bit_str.parse::<u32>().ok() {
+                if let Some(ts) = ts_val.as_u64() {
+                  bit_times.insert(bit, ts);
+                }
+              }
+            }
+            if !bit_times.is_empty() {
+              result.insert(stat_id, bit_times);
+            }
+          }
+        }
+      }
+    }
+
+    // Recurse into child objects
+    for (k, v) in map {
+      let mut child_path = path.to_vec();
+      child_path.push(k);
+      collect_stat_times(v, &child_path, result);
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// Regression: negative i32 bitmask (e.g. -16 = 0xFFFFFFF0) must preserve bits.
+  #[test]
+  fn kv_extract_user_stats_preserves_negative_i32_bitmask() {
+    use serde_json::json;
+
+    // Build a minimal tree: root "cache" → stat_id "2" with data=-16
+    let mut root_map = serde_json::Map::new();
+    let mut stat_node = serde_json::Map::new();
+    // -16 as i32 → 0xFFFFFFF0 bitmask (bits 4-31 set)
+    stat_node.insert("data".into(), json!(-16i32));
+    stat_node.insert("state".into(), json!(2));
+    root_map.insert("2".into(), Value::Object(stat_node));
+
+    // stat_id=1 with data=100 (positive, unaffected)
+    let mut stat1 = serde_json::Map::new();
+    stat1.insert("data".into(), json!(100));
+    root_map.insert("1".into(), Value::Object(stat1));
+
+    // stat_id=5 with data=16383 (positive, unaffected)
+    let mut stat5 = serde_json::Map::new();
+    stat5.insert("data".into(), json!(16383));
+    root_map.insert("5".into(), Value::Object(stat5));
+
+    let result = kv_extract_user_stats(&root_map);
+
+    // Find stat_id=2 entry
+    let entry2 = result.iter().find(|(sid, _, _)| sid == "2").expect("stat_id 2 missing");
+    assert_eq!(entry2.1, 0xFFFFFFF0, "Negative i32 -16 must produce bitmask 0xFFFFFFF0, got {:#x}", entry2.1);
+
+    // Verify bit 4 and bit 31 are set
+    assert_ne!(entry2.1 & (1 << 4), 0, "Bit 4 must be set");
+    assert_ne!(entry2.1 & (1 << 31), 0, "Bit 31 must be set");
+    assert_eq!(entry2.1 & (1 << 0), 0, "Bit 0 must be clear");
+
+    // stat_id=1 and stat_id=5 unchanged
+    let entry1 = result.iter().find(|(sid, _, _)| sid == "1").expect("stat_id 1 missing");
+    assert_eq!(entry1.1, 100);
+    let entry5 = result.iter().find(|(sid, _, _)| sid == "5").expect("stat_id 5 missing");
+    assert_eq!(entry5.1, 16383);
+  }
+}
+
+// ===================================================================
+// Scan both achievement schema folders and return summaries with
+// source derived from the folder name: "steam" = crack, "steam-official"
+// = official Steam. Used by ActivityStats GameAchievementsCards.
+// ===================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderAchievementSummary {
+    pub app_id: String,
+    pub source: String,
+    pub total: u32,
+    pub unlocked: u32,
+    pub percent: f64,
+}
+
+#[tauri::command]
+pub fn scan_achievement_folders(app_handle: AppHandle) -> Result<Vec<FolderAchievementSummary>, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let schema_dir = app_dir.join("achievements").join("schema");
+    let mut results: Vec<FolderAchievementSummary> = Vec::new();
+
+    for (platform, source_label) in [("steam", "crack"), ("steam-official", "steam")] {
+        let platform_dir = schema_dir.join(platform);
+        if !platform_dir.exists() {
+            continue;
+        }
+
+        let entries = match fs::read_dir(&platform_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let app_id = entry.file_name().to_string_lossy().to_string();
+            let summary_path = entry.path().join("summary.json");
+            if !summary_path.exists() {
+                continue;
+            }
+
+            let content = match fs::read_to_string(&summary_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let summary: AppAchievementSummary = match serde_json::from_str(&content) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if summary.total == 0 {
+                continue;
+            }
+
+            results.push(FolderAchievementSummary {
+                app_id,
+                source: source_label.to_string(),
+                total: summary.total,
+                unlocked: summary.unlocked,
+                percent: summary.percent,
+            });
+        }
+    }
+
+    Ok(results)
 }

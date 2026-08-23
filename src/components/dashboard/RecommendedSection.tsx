@@ -16,8 +16,9 @@ import { getRecommendedWithGlobalFill } from "../../services/recommendationServi
 
 const DEBUG_DASH_RECOMMEND = false;
 const DEBUG_DASH_RECOMMEND_PER_GAME = false;
+const DEBUG_DASH_SECTION_LOGS = false;
 import { useSettings } from "../../context/SettingsContext";
-import { localPathToUrl, deduplicateByAppId } from "../../services/gameCacheService";
+import { localPathToUrl, deduplicateByAppId, getFavoriteKey } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
 import AsyncImage from "../common/AsyncImage";
@@ -27,6 +28,7 @@ import DashboardHorizontalRail from "./DashboardHorizontalRail";
 type Props = {
   onNavigate?: (page: AppPage) => void;
   continuePlayingAppIds: Set<string>;
+  maxItems?: number;
 };
 
 function resolveImageSrc(src: string | undefined): string | undefined {
@@ -36,7 +38,7 @@ function resolveImageSrc(src: string | undefined): string | undefined {
   return src;
 }
 
-export default function RecommendedSection({ onNavigate, continuePlayingAppIds }: Props) {
+export default function RecommendedSection({ onNavigate, continuePlayingAppIds, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
@@ -101,17 +103,19 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
     if (catalogEntries.length === 0) return;
     if (catalogLogRef.current === catalogLogKey) return;
     catalogLogRef.current = catalogLogKey;
-    const withMeta = catalogEntries.filter((e) => e.metadataJson && e.metadataJson !== "{}").length;
-    const withInstalled = catalogEntries.filter((e) => e.installed).length;
-    console.log(
-      `[DASH][GLOBAL_CATALOG] total=${catalogEntries.length} withMetadata=${withMeta} installed=${withInstalled}`,
-    );
+    if (DEBUG_DASH_SECTION_LOGS) {
+      const withMeta = catalogEntries.filter((e) => e.metadataJson && e.metadataJson !== "{}").length;
+      const withInstalled = catalogEntries.filter((e) => e.installed).length;
+      console.log(
+        `[DASH][GLOBAL_CATALOG] total=${catalogEntries.length} withMetadata=${withMeta} installed=${withInstalled}`,
+      );
+    }
   }, [catalogEntries, catalogLogKey]);
 
   const displayGames = useMemo(() => {
-    const result = getRecommendedWithGlobalFill(libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, 10);
+    const result = getRecommendedWithGlobalFill(libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, maxItems ?? 10);
     return result;
-  }, [libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds]);
+  }, [libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, maxItems]);
 
   useEffect(() => {
     for (const game of displayGames) {
@@ -187,8 +191,10 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
   if (displayGames.length === 0) return null;
 
   function handleOpen(game: LibraryGame) {
-    if (!game.appId) return;
-    const libGame = libraryGames.find((g) => g.appId === game.appId);
+    // Support both Steam and manual games
+    const libGame = game.appId
+      ? libraryGames.find((g) => g.appId === game.appId)
+      : libraryGames.find((g) => g.id === game.id || g.libraryId === game.libraryId);
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
@@ -234,7 +240,7 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
                     handleOpen(game);
                   }
                 }}
-                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
+                className="lf-dash-card group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
                 <div className="relative aspect-video overflow-hidden">
                   {imgSrc ? (
@@ -258,20 +264,21 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (game.appId) toggleFavorite(game.appId);
+                      const fk = getFavoriteKey(game);
+                      if (fk) toggleFavorite(fk);
                     }}
                     className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
-                    title={favoriteIds.has(game.appId!) ? "Remove from favorites" : "Add to favorites"}
+                    title={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? "Remove from favorites" : "Add to favorites"}
                   >
                     <Heart
                       className="h-4 w-4"
-                      fill={favoriteIds.has(game.appId!) ? "currentColor" : "none"}
+                      fill={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? "currentColor" : "none"}
                     />
                   </button>
                 </div>
 
                 <div className="p-3">
-                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                  <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
                   {game.metadata?.genres && game.metadata.genres.length > 0 && (

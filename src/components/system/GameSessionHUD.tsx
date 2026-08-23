@@ -36,7 +36,7 @@ type Props = {
 };
 
 export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
-  const { sessions, stopSession } = useGameSession();
+  const { sessions, stopSession, getSessionMedia } = useGameSession();
   const [hovered, setHovered] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [renderPhase, setRenderPhase] = useState<"hidden" | "visible" | "exiting">("hidden");
@@ -66,13 +66,34 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
   }, [activeSession?.gameKey]);
 
   useEffect(() => {
-    const appId = activeSession?.appId;
-    if (!appId) {
+    const sessionKey = activeSession?.gameKey;
+    if (!sessionKey) {
       setImageUrl(null);
       fetchRef.current = undefined;
       return;
     }
 
+    const appId = activeSession?.appId;
+
+    // Manual games: ALWAYS use sessionMediaRef (resolved at launch time).
+    // When a manual game has an appId, artwork lives at the manual provider path,
+    // NOT at games/steam/<appId>/media/ — so getMediaPaths would fail.
+    if (activeSession?.source === "manual") {
+      const media = getSessionMedia(sessionKey);
+      setImageUrl(media?.iconUrl ?? media?.imageUrl ?? null);
+      fetchRef.current = undefined;
+      return;
+    }
+
+    // Non-Steam games without appId: use sessionMediaRef
+    if (!appId) {
+      const media = getSessionMedia(sessionKey);
+      setImageUrl(media?.iconUrl ?? media?.imageUrl ?? null);
+      fetchRef.current = undefined;
+      return;
+    }
+
+    // Steam games: resolve via getMediaPaths as before
     if (fetchRef.current === appId) return;
     fetchRef.current = appId;
 
@@ -86,7 +107,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
     return () => {
       fetchRef.current = undefined;
     };
-  }, [activeSession?.appId]);
+  }, [activeSession?.appId, activeSession?.gameKey, getSessionMedia]);
 
   const elapsed = useElapsedTime(activeSession?.launchedAt);
   const isLaunching = activeSession?.state === "launching";
@@ -109,7 +130,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
   if (renderPhase === "hidden") return null;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-5 z-[99999] flex justify-center">
+    <div className="pointer-events-none fixed inset-x-0 top-5 z-99999 flex justify-center">
       <div
         className={`pointer-events-auto origin-center ${
           renderPhase === "exiting" ? "lf-hud-exit" : "lf-hud-entry"
@@ -140,7 +161,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
 
           {/* Title + Elapsed / Launching */}
           <div className="flex flex-col leading-tight">
-            <span className="max-w-[140px] truncate text-sm font-medium text-(--color-text)">
+            <span className="max-w-35 truncate text-sm font-medium text-(--color-text)">
               {activeSession?.title || "Unknown Game"}
             </span>
             {isLaunching ? (
@@ -172,7 +193,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
 
             <button
               onClick={handleStop}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-(--color-accent) text-black transition hover:brightness-110 active:scale-90"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-(--color-accent) text-(--color-accent-text) transition hover:brightness-110 active:scale-90"
               aria-label="Stop game"
             >
               <Square className="h-3 w-3 fill-current" />

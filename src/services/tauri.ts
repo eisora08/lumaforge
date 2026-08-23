@@ -5,11 +5,10 @@ import type { InstallResult } from "../types/install";
 import type { ProviderAvailabilityResult } from "../types/providerAvailability";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { LuaActionResult } from "../types/luaAction";
-import type { GameNameResult } from "../types/gameName";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
-import type { SteamGridDbArtwork } from "../types/steamGridDb";
+import type { SteamGridDbArtwork, SteamGridDbGameSearchResult } from "../types/steamGridDb";
 import type { SteamInstalledGame } from "../types/steamInstalled";
 import type { SteamUserGameStats } from "../types/steamUserStats";
 import type { LocalDiscoveredGame } from "../types/localGame";
@@ -20,6 +19,10 @@ import type { OwnedSteamGame } from "../types/ownedSteamGame";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
+}
+
+export async function detectSteamAccountIdForApp(steamPath: string, appId: number): Promise<string | null> {
+  return await invoke<string | null>("detect_steam_account_id_for_app", { steamPath, appId });
 }
 
 export async function downloadAndInstallPackage(params: {
@@ -60,12 +63,49 @@ export async function checkProviderAvailability(params: {
 }
 
 
+const LUA_SCAN_TTL_MS = 30_000;
+let _luaScanCache: { luaPath: string; result: InstalledLuaScript[]; ts: number } | null = null;
+let _luaScanInFlight: { luaPath: string; promise: Promise<InstalledLuaScript[]> } | null = null;
+
+function invalidateLuaScanCache(): void {
+  // Null both the cached result and the in-flight scan so an orphaned boot scan
+  // that completes later cannot re-populate stale (pre-mutation) state.
+  _luaScanCache = null;
+  _luaScanInFlight = null;
+}
+
 export async function scanInstalledLuaScripts(
-  luaPath: string
+  luaPath: string,
+  options?: { force?: boolean }
 ): Promise<InstalledLuaScript[]> {
-  return await invoke<InstalledLuaScript[]>("scan_installed_lua_scripts", {
-    luaPath,
-  });
+  const force = options?.force === true;
+  if (
+    !force &&
+    _luaScanCache &&
+    _luaScanCache.luaPath === luaPath &&
+    Date.now() - _luaScanCache.ts < LUA_SCAN_TTL_MS
+  ) {
+    return _luaScanCache.result;
+  }
+  if (!force && _luaScanInFlight && _luaScanInFlight.luaPath === luaPath) {
+    return _luaScanInFlight.promise;
+  }
+  let wrapped: Promise<InstalledLuaScript[]>;
+  const raw = invoke<InstalledLuaScript[]>("scan_installed_lua_scripts", { luaPath });
+  wrapped = raw
+    .then((result) => {
+      if (_luaScanInFlight && _luaScanInFlight.promise === wrapped) {
+        _luaScanCache = { luaPath, result, ts: Date.now() };
+      }
+      return result;
+    })
+    .finally(() => {
+      if (_luaScanInFlight && _luaScanInFlight.promise === wrapped) {
+        _luaScanInFlight = null;
+      }
+    });
+  _luaScanInFlight = { luaPath, promise: wrapped };
+  return await wrapped;
 }
 
 
@@ -74,6 +114,7 @@ export async function setLuaScriptEnabled(params: {
   fileName: string;
   enabled: boolean;
 }): Promise<LuaActionResult> {
+  invalidateLuaScanCache();
   return await invoke<LuaActionResult>("set_lua_script_enabled", {
     luaPath: params.luaPath,
     fileName: params.fileName,
@@ -85,6 +126,7 @@ export async function deleteLuaScript(params: {
   luaPath: string;
   fileName: string;
 }): Promise<LuaActionResult> {
+  invalidateLuaScanCache();
   return await invoke<LuaActionResult>("delete_lua_script", {
     luaPath: params.luaPath,
     fileName: params.fileName,
@@ -92,26 +134,25 @@ export async function deleteLuaScript(params: {
 }
 
 
-export async function resolveSteamAppNames(
-  appIds: number[]
-): Promise<GameNameResult[]> {
-  return await invoke<GameNameResult[]>("resolve_steam_app_names", {
-    appIds,
-  });
-}
-
-
-
 export async function resolveSteamAppMetadata(
   appIds: number[],
   language?: string,
   country?: string,
 ): Promise<SteamAppMetadata[]> {
-  return await invoke<SteamAppMetadata[]>("resolve_steam_app_metadata", {
-    appIds,
-    language: language ?? null,
-    country: country ?? null,
-  });
+  // Timeout wrapper — Rust side has 15s per-request timeout but no overall timeout.
+  // If the invoke hangs (semaphore contention, Cloudflare), we timeout after 25s.
+  const METADATA_TIMEOUT_MS = 25_000;
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Steam Store API timeout — metadata fetch exceeded 25s")), METADATA_TIMEOUT_MS)
+  );
+  return await Promise.race([
+    invoke<SteamAppMetadata[]>("resolve_steam_app_metadata", {
+      appIds,
+      language: language ?? null,
+      country: country ?? null,
+    }),
+    timeoutPromise,
+  ]);
 }
 
 export async function fetchSteamStoreDrmNotice(
@@ -120,6 +161,10 @@ export async function fetchSteamStoreDrmNotice(
   return await invoke<string | null>("fetch_steam_store_drm_notice", {
     appId,
   });
+}
+
+export async function fetchJsonFromUrl(url: string): Promise<string> {
+  return await invoke<string>("fetch_json_from_url", { url });
 }
 
 export async function resolveSteamReviewSummaries(
@@ -179,18 +224,27 @@ export async function readSteamOwnedCache(): Promise<OwnedSteamGame[]> {
   return await invoke<OwnedSteamGame[]>("read_steam_owned_cache");
 }
 
+// Global scan guard — prevents concurrent Steam scans (each takes ~3s, blocks thread pool)
+let _steamScanPromise: Promise<SteamInstalledGame[]> | null = null;
+
 export async function scanSteamInstalledGames(params?: {
   steamPath?: string;
   luaPath?: string;
   depotcachePath?: string;
   gameScanFolders?: string[];
 }): Promise<SteamInstalledGame[]> {
-  return await invoke<SteamInstalledGame[]>("scan_steam_installed_games", {
+  // If a scan is already in progress, wait for it instead of starting another
+  if (_steamScanPromise) {
+    console.log("[STEAM_SCAN][GUARD] reusing in-progress scan");
+    return _steamScanPromise;
+  }
+  _steamScanPromise = invoke<SteamInstalledGame[]>("scan_steam_installed_games", {
     steamPath: params?.steamPath ?? null,
     luaPath: params?.luaPath ?? null,
     depotcachePath: params?.depotcachePath ?? null,
     gameScanFolders: params?.gameScanFolders ?? null,
-  });
+  }).finally(() => { _steamScanPromise = null; });
+  return _steamScanPromise;
 }
 
 export async function scanSteamUserGameStats(params?: {
@@ -221,8 +275,8 @@ export async function scanLocalGameFolders(
   });
 }
 
-export async function launchSteamApp(appId: number): Promise<void> {
-  return await invoke("launch_steam_app", { appId });
+export async function launchSteamApp(appId: number, steamPath?: string): Promise<void> {
+  return await invoke("launch_steam_app", { appId, steamPath });
 }
 
 export async function installSteamApp(appId: number): Promise<void> {
@@ -235,6 +289,10 @@ export async function uninstallSteamApp(appId: number): Promise<void> {
 
 export async function openSteamStoreApp(appId: number): Promise<void> {
   return await invoke("open_steam_store_app", { appId });
+}
+
+export async function openSteamLibrary(appId: number): Promise<void> {
+  return await invoke("open_steam_library", { appId });
 }
 
 export type DownloadProgress = {
@@ -393,6 +451,9 @@ export type AppAchievementCacheEntry = {
   rarity_percent?: number;
   stat_id?: number;
   bit?: number;
+  progress_stat_id?: number;
+  progress_min?: number;
+  progress_max?: number;
 };
 
 /** Helper: resolve the effective icon path from an achievement cache entry.
@@ -426,12 +487,16 @@ export type AppAchievementCache = {
   summary: AppAchievementSummaryData;
 };
 
-export async function readAchievementCache(appId: number): Promise<AppAchievementCache | null> {
-  return await invoke<AppAchievementCache | null>("read_achievement_cache", { appId });
+export async function readAchievementCache(appId: number, platform?: string): Promise<AppAchievementCache | null> {
+  return await invoke<AppAchievementCache | null>("read_achievement_cache", { appId, platform });
 }
 
-export async function writeAchievementCache(appId: number, data: AppAchievementCache, migrateIcons = true): Promise<void> {
-  return await invoke<void>("write_achievement_cache", { appId, data, migrateIcons });
+export async function writeAchievementCache(appId: number, data: AppAchievementCache, migrateIcons = true, platform?: string): Promise<void> {
+  return await invoke<void>("write_achievement_cache", { appId, data, migrateIcons, platform });
+}
+
+export async function deleteAchievementCache(appId: number, platform?: string): Promise<void> {
+  return await invoke<void>("delete_achievement_cache", { appId, platform });
 }
 
 export type AchievementsAppSchemaResult = {
@@ -447,6 +512,7 @@ export async function readAchievementsAppSchemaFolder(path: string, appId: numbe
 export type StatPair = {
   stat_id: number;
   value: number;
+  unlock_times?: Record<string, number>;
 };
 
 export type UserGameStatsRawResult = {
@@ -473,11 +539,13 @@ export async function downloadAchievementImage(params: {
   appId: number;
   url: string;
   fileName: string;
+  platform?: string;
 }): Promise<string | null> {
   return await invoke<string | null>("download_achievement_image", {
     appId: params.appId,
     url: params.url,
     fileName: params.fileName,
+    platform: params.platform ?? null,
   });
 }
 
@@ -505,20 +573,6 @@ export async function cleanupAchievementOrphanImages(params: {
   return await invoke<OrphanCleanupResult>("cleanup_achievement_orphan_images", {
     appId: params.appId,
     dryRun: params.dryRun,
-  });
-}
-
-export async function ensureAchievementImages(params: {
-  appId: number;
-  mode: string;
-  schemaUrls: string[];
-  schemaGrayUrls: string[];
-}): Promise<[number, number]> {
-  return await invoke<[number, number]>("ensure_achievement_images", {
-    appId: params.appId,
-    mode: params.mode,
-    schemaUrls: params.schemaUrls,
-    schemaGrayUrls: params.schemaGrayUrls,
   });
 }
 
@@ -741,6 +795,155 @@ export async function debugAchievementProgress(params: {
   });
 }
 
+// ── Achievement Progress Index ──
+
+export interface AchievementProgressEntry {
+  appId: number;
+  unlocked: number;
+  total: number;
+  percentage: number;
+  allUnlocked: boolean;
+  cacheTime: number;
+}
+
+export async function readAchievementProgressIndex(params: {
+  steamPath?: string;
+  steamAccountId: string;
+}): Promise<AchievementProgressEntry[]> {
+  return await invoke<AchievementProgressEntry[]>("read_achievement_progress_index", {
+    steamPath: params.steamPath ?? null,
+    steamAccountId: params.steamAccountId,
+  });
+}
+
+// ── Verified Steam Achievement Sources ──
+
+export interface RejectedSourceFileTs {
+  fileName: string;
+  sourceKind: string;
+  reason: string;
+}
+
+export interface VerifiedSourceFileTs {
+  sourceKind: string;
+  logicalPath: string;
+  absolutePath: string;
+  size: number;
+  modifiedAt: number;
+  checksum: string;
+  requiresSteamClosed: boolean;
+}
+
+export interface VerifiedSourceGameEntryTs {
+  appId: string;
+  files: VerifiedSourceFileTs[];
+  totalSize: number;
+}
+
+export interface VerifiedSourcesManifestTs {
+  schemaVersion: number;
+  accountScope: string;
+  steamRoot: string;
+  totalGames: number;
+  totalFiles: number;
+  totalSize: number;
+  games: VerifiedSourceGameEntryTs[];
+  rejected: RejectedSourceFileTs[];
+  statsCount: number;
+  schemaCount: number;
+  librarycacheCount: number;
+}
+
+export interface ExportedSourceFileTs {
+  logicalPath: string;
+  sourceKind: string;
+  base64Content: string;
+  checksum: string;
+  size: number;
+}
+
+export interface ExportedSourceResultTs {
+  appId: string;
+  files: ExportedSourceFileTs[];
+  totalSize: number;
+}
+
+export interface SteamProcessCheckResultTs {
+  running: boolean;
+  message: string;
+}
+
+export interface RestoreSourceResultTs {
+  restored: number;
+  failed: number;
+  errors: string[];
+  checksumsValid: boolean;
+}
+
+export async function auditSteamAchievementSources(
+  steamPath?: string,
+  steamAccountId?: string,
+): Promise<VerifiedSourcesManifestTs> {
+  return await invoke<VerifiedSourcesManifestTs>(
+    "audit_steam_achievement_sources",
+    {
+      steamPath: steamPath || null,
+      steamAccountId: steamAccountId || "",
+    },
+  );
+}
+
+export async function exportSteamAchievementSourcesRaw(
+  steamPath?: string,
+  steamAccountId?: string,
+  appIds?: string[],
+): Promise<ExportedSourceResultTs[]> {
+  return await invoke<ExportedSourceResultTs[]>(
+    "export_steam_achievement_sources",
+    {
+      steamPath: steamPath || null,
+      steamAccountId: steamAccountId || "",
+      appIds: appIds || [],
+    },
+  );
+}
+
+export async function readSteamAchievementSourceForGame(
+  steamPath?: string,
+  steamAccountId?: string,
+  appId?: string,
+): Promise<ExportedSourceResultTs | null> {
+  return (
+    (await invoke<ExportedSourceResultTs | null>(
+      "read_steam_achievement_source_for_game",
+      {
+        steamPath: steamPath || null,
+        steamAccountId: steamAccountId || "",
+        appId: appId || "",
+      },
+    )) ?? null
+  );
+}
+
+export async function checkSteamRunning(): Promise<SteamProcessCheckResultTs> {
+  return await invoke<SteamProcessCheckResultTs>("check_steam_running");
+}
+
+export async function restoreSteamAchievementSources(
+  steamPath?: string,
+  steamAccountId?: string,
+  exports?: ExportedSourceResultTs[],
+): Promise<RestoreSourceResultTs> {
+  return await invoke<RestoreSourceResultTs>(
+    "restore_steam_achievement_sources",
+    {
+      steamPath: steamPath || null,
+      steamAccountId: steamAccountId || "",
+      exports: exports || [],
+    },
+  );
+}
+
 export async function resolveSteamGridDbArtwork(
   appIds: number[],
   apiKey: string
@@ -751,6 +954,26 @@ export async function resolveSteamGridDbArtwork(
       appIds,
       apiKey,
     }
+  );
+}
+
+export async function searchSteamGridDbGames(
+  name: string,
+  apiKey: string
+): Promise<SteamGridDbGameSearchResult[]> {
+  return await invoke<SteamGridDbGameSearchResult[]>(
+    "search_steamgriddb_games",
+    { name, apiKey }
+  );
+}
+
+export async function resolveSteamGridDbArtworkByGameId(
+  sgdbGameId: number,
+  apiKey: string
+): Promise<SteamGridDbArtwork> {
+  return await invoke<SteamGridDbArtwork>(
+    "resolve_steamgriddb_artwork_by_game_id",
+    { sgdbGameId, apiKey }
   );
 }
 
@@ -768,8 +991,16 @@ export type ProcessInfo = {
   exe?: string;
 };
 
-export async function launchExecutable(path: string): Promise<SpawnResult> {
-  return await invoke<SpawnResult>("launch_executable", { path });
+export async function launchExecutable(
+  path: string,
+  args?: string[],
+  workingDir?: string,
+): Promise<SpawnResult> {
+  return await invoke<SpawnResult>("launch_executable", {
+    path,
+    args: args ?? null,
+    workingDir: workingDir ?? null,
+  });
 }
 
 export async function terminateProcess(pid: number): Promise<void> {
@@ -810,6 +1041,22 @@ export async function discoverExecutables(dir: string): Promise<DiscoveredExecut
   }
 }
 
+export type InstalledProgram = {
+  name: string;
+  installPath: string;
+  exePath?: string;
+  displayIcon?: string;
+  estimatedSizeKb?: number;
+};
+
+export async function scanInstalledPrograms(): Promise<InstalledProgram[]> {
+  try {
+    return await invoke<InstalledProgram[]>("scan_installed_programs");
+  } catch {
+    return [];
+  }
+}
+
 // --- Store cache ---
 // All Store data lives under app_data/store/ to keep it separate from Library cache.
 
@@ -826,13 +1073,6 @@ export type StoreAppInfoEntry = {
 };
 
 export type StoreAppInfoMap = Record<string, StoreAppInfoEntry>;
-
-export type StoreGameDetailsEntry = {
-  app_id: number;
-  data: unknown;
-  updated_at: number;
-  version: number;
-};
 
 export type StoreReviewEntry = {
   app_id: number;
@@ -865,19 +1105,6 @@ export async function updateStoreAppinfoEntry(
   return await invoke<void>("update_store_appinfo_entry", { appId, entry });
 }
 
-export async function readStoreGameDetails(
-  appId: number
-): Promise<StoreGameDetailsEntry | null> {
-  return await invoke<StoreGameDetailsEntry | null>("read_store_game_details", { appId });
-}
-
-export async function writeStoreGameDetails(
-  appId: number,
-  entry: StoreGameDetailsEntry
-): Promise<void> {
-  return await invoke<void>("write_store_game_details", { appId, entry });
-}
-
 export async function readStoreReviewSummary(
   appId: number
 ): Promise<StoreReviewEntry | null> {
@@ -897,26 +1124,6 @@ export async function getStoreMediaCache(
   return await invoke<StoreMediaCacheEntry | null>("get_store_media_cache", { appId });
 }
 
-export async function cacheStoreRemoteMedia(
-  appId: number,
-  urls: {
-    capsuleUrl: string | null;
-    headerUrl: string | null;
-    heroUrl: string | null;
-    backgroundUrl: string | null;
-    logoUrl: string | null;
-  }
-): Promise<StoreMediaCacheEntry> {
-  return await invoke<StoreMediaCacheEntry>("cache_store_remote_media", {
-    appId,
-    capsuleUrl: urls.capsuleUrl,
-    headerUrl: urls.headerUrl,
-    heroUrl: urls.heroUrl,
-    backgroundUrl: urls.backgroundUrl,
-    logoUrl: urls.logoUrl,
-  });
-}
-
 export async function clearStoreCache(): Promise<void> {
   return await invoke("clear_store_cache");
 }
@@ -927,6 +1134,468 @@ export async function readStoreDiscoveryIndex(): Promise<unknown | null> {
 
 export async function writeStoreDiscoveryIndex(data: unknown): Promise<void> {
   return await invoke<void>("write_store_discovery_index", { data });
+}
+
+export async function readStoreSgdbArtworkCache(): Promise<unknown | null> {
+  return await invoke<unknown | null>("read_store_sgdb_artwork_cache");
+}
+
+export async function writeStoreSgdbArtworkCache(data: unknown): Promise<void> {
+  return await invoke<void>("write_store_sgdb_artwork_cache", { data });
+}
+
+export async function readStoreCatalogSectionsCache(): Promise<unknown | null> {
+  return await invoke<unknown | null>("read_store_catalog_sections_cache");
+}
+
+export async function writeStoreCatalogSectionsCache(data: unknown): Promise<void> {
+  return await invoke<void>("write_store_catalog_sections_cache", { data });
+}
+
+// --- Store catalog (versioned local index) ---
+
+/**
+ * Result from `get_catalog_meta` — indicates whether a catalog has been
+ * imported into SQLite and its version/checksum for freshness checks.
+ */
+export type CatalogMetaResult = {
+  schemaVersion: number;
+  catalogVersion: number;
+  importedAt: string;
+  recordCount: number;
+  gameCount: number;
+  checksum: string;
+  hasCatalog: boolean;
+};
+
+/**
+ * Single catalog game record returned by all query commands.
+ * Maps 1:1 to the Rust `CatalogGameResult` struct (camelCase serialization).
+ */
+export type CatalogGameResult = {
+  appId: number;
+  name: string;
+  type: string;
+  genres: string[];
+  categories: string[];
+  releaseTimestamp: number;
+  comingSoon: boolean;
+  isFree: boolean;
+  reviewPercent: number;
+  reviewCount: number;
+  headerImage: string;
+  capsuleImage: string;
+  developers: string[];
+  publishers: string[];
+};
+
+/** Read catalog metadata (schema version, game count, checksum). */
+export async function getCatalogMeta(): Promise<CatalogMetaResult> {
+  return await invoke<CatalogMetaResult>("get_catalog_meta");
+}
+
+/** Import a catalog artifact JSON blob into SQLite. Returns number of records inserted. */
+export async function importSteamCatalog(
+  artifactJson: string,
+  checksum: string,
+): Promise<number> {
+  return await invoke<number>("import_steam_catalog", { artifactJson, checksum });
+}
+
+/** Query catalog games by genre, ordered by review score descending. */
+export async function queryCatalogByGenre(
+  genre: string,
+  limit: number,
+  offset: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_by_genre", { genre, limit, offset });
+}
+
+/** Search catalog games by name (case-insensitive LIKE match). */
+export async function queryCatalogSearch(
+  query: string,
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_search", { query, limit });
+}
+
+/** Get a single catalog game by Steam app ID. Returns null if not found. */
+export async function queryCatalogGame(
+  appId: number,
+): Promise<CatalogGameResult | null> {
+  return await invoke<CatalogGameResult | null>("query_catalog_game", { appId });
+}
+
+/** Query featured games (high review percent + minimum review count + has image). */
+export async function queryCatalogFeatured(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_featured", { limit });
+}
+
+/** Query new & noteworthy games (released within 180 days, not coming soon). */
+export async function queryCatalogNewNoteworthy(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_new_noteworthy", { limit });
+}
+
+/** Query hidden gems (high review%, moderate review count, niche but beloved). */
+export async function queryCatalogHiddenGems(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_hidden_gems", { limit });
+}
+
+/** Query top rated games (highest review% with significant review count). */
+export async function queryCatalogTopRated(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_top_rated", { limit });
+}
+
+/** Query cult classics (old + high review% + sustained community). */
+export async function queryCatalogCultClassics(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_cult_classics", { limit });
+}
+
+// --- Repack catalog ---
+
+export type RepackQueryResult = {
+  id: string;
+  title: string;
+  appId: number;
+  repacker: string;
+  installerType: string;
+  fileSize: number;
+  installSize: number | null;
+  languages: string[];
+  downloadUris: string[];
+  sourceUrl: string;
+  checksum: string | null;
+  updatedAt: string;
+  tags: string[];
+};
+
+export type RepackCatalogMeta = {
+  hasCatalog: boolean;
+  schemaVersion: number;
+  recordCount: number;
+  gamesWithAppId: number;
+  checksum: string;
+  importedAt: string;
+};
+
+export type RepackGroupStat = {
+  repacker: string;
+  count: number;
+};
+
+/** Get repack catalog metadata (counts, version, checksum). */
+export async function getRepackCatalogMeta(): Promise<RepackCatalogMeta> {
+  return await invoke<RepackCatalogMeta>("get_repack_catalog_meta");
+}
+
+/** Import a repack catalog artifact JSON blob into SQLite. Returns number of records inserted. */
+export async function importRepackCatalog(
+  artifactJson: string,
+  checksum: string,
+): Promise<number> {
+  return await invoke<number>("import_repack_catalog", { artifactJson, checksum });
+}
+
+/** Query repack catalog by fuzzy title match (case-insensitive). */
+export async function queryRepackCatalogFuzzy(
+  query: string,
+  limit: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_fuzzy", { query, limit });
+}
+
+/** Query repack catalog by fuzzy title match constrained to a single repacker. */
+export async function queryRepackCatalogByRepackerFuzzy(
+  repacker: string,
+  query: string,
+  limit: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_by_repacker_fuzzy", {
+    repacker,
+    query,
+    limit,
+  });
+}
+
+/** Query repack catalog by Steam app ID — returns all repacks for that app. */
+export async function queryRepackCatalogByAppId(
+  appId: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_by_app_id", { appId });
+}
+
+/** Query all repack catalog entries. */
+export async function queryRepackCatalogAll(): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_all");
+}
+
+/** Query repack catalog by repacker name, with pagination. */
+export async function queryRepackCatalogByRepacker(
+  repacker: string,
+  limit: number,
+  offset: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_by_repacker", {
+    repacker, limit, offset,
+  });
+}
+
+/** Query a page of the whole repack catalog (browse-all). */
+export async function queryRepackCatalogPage(
+  limit: number,
+  offset: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_page", { limit, offset });
+}
+
+/** List distinct repackers with entry counts (for filter chips). */
+export async function queryRepackRepackers(): Promise<RepackGroupStat[]> {
+  return await invoke<RepackGroupStat[]>("query_repack_repackers");
+}
+
+// --- Debrid Installer ---
+
+/** Result from download_debrid_package — download + extract or save installer. */
+export type DebridDownloadResult = {
+  success: boolean;
+  status: "ready" | "needs-setup" | "installing" | "paused" | "downloaded";
+  installDir: string;
+  executablePath: string | null;
+  installerPath: string | null;
+  installerPid: number | null;
+  message: string;
+};
+
+/** Result from setup_debrid_game — run the already-extracted installer. */
+export type DebridSetupResult = {
+  success: boolean;
+  status: "ready" | "installing";
+  installDir: string;
+  executablePath: string | null;
+  installerPath: string | null;
+  installerPid: number | null;
+  message: string;
+};
+
+/** Result from check_installer_status — poll an installer process. */
+export type InstallerCheckResult = {
+  status: "running" | "ready" | "needs-path";
+  executablePath: string | null;
+  error: string | null;
+};
+
+/** Result from verify_debrid_installation — check if game .exe exists. */
+export type DebridVerifyResult = {
+  installed: boolean;
+  installDir: string;
+  executablePath: string | null;
+};
+
+/**
+ * Download a Debrid repack: download + extract (ZIP/RAR) or save installer (EXE/SFX).
+ * `autoExtract=false` stops after the download (status `"downloaded"`, archive left on disk);
+ * `deleteArchive=true` removes the `.rar`/`.zip` after a successful extraction.
+ */
+export async function downloadDebridPackage(params: {
+  jobId: string;
+  downloadUri: string;
+  downloadName?: string;
+  destDir: string;
+  autoExtract: boolean;
+  deleteArchive: boolean;
+  /**
+   * Stable origin URL (the page/magnet the user started from, i.e. the job's
+   * `downloadUrl`), used to key the `.part` resume checkpoint. The resolved
+   * CDN link in `downloadUri` can rotate between calls (gofile); keying the
+   * checkpoint on it would restart the download on every resume.
+   */
+  sourceKey?: string;
+}): Promise<DebridDownloadResult> {
+  return await invoke<DebridDownloadResult>("download_debrid_package", params);
+}
+
+/**
+ * Download a Debrid repack whose source is a `magnet:` URI via the built-in
+ * torrent client (librqbit). Returns the same `DebridDownloadResult` shape as
+ * `download_debrid_package`, so the install pipeline is unchanged.
+ * `autoExtract=false` stops after the download (status `"downloaded"`);
+ * `deleteArchive` removes the `.rar`/`.zip` after a successful extraction.
+ */
+export async function startTorrentDownload(params: {
+  jobId: string;
+  magnet: string;
+  destDir: string;
+  autoExtract: boolean;
+  deleteArchive: boolean;
+}): Promise<DebridDownloadResult> {
+  return await invoke<DebridDownloadResult>("start_torrent_download", params);
+}
+
+/**
+ * Run a previously-downloaded repack installer (setup.exe) in the foreground.
+ * This is the second phase for `needs-setup` results — no download, no extraction.
+ */
+export async function setupDebridGame(params: {
+  installerPath: string;
+  installDir: string;
+}): Promise<DebridSetupResult> {
+  return await invoke<DebridSetupResult>("setup_debrid_game", params);
+}
+
+/** Abort an in-flight debrid download by job ID. */
+export async function cancelDebridDownload(jobId: string): Promise<void> {
+  await invoke("cancel_debrid_download", { jobId });
+}
+
+/**
+ * Pause an in-flight debrid download by job ID. HTTP downloads checkpoint a
+ * `.part` file; torrent downloads keep fastresume + persistence. Both can be
+ * resumed later by re-invoking `downloadDebridPackage` / `startTorrentDownload`.
+ */
+export async function pauseDebridDownload(jobId: string): Promise<void> {
+  await invoke("pause_debrid_download", { jobId });
+}
+
+/**
+ * Remove leftover .part/.part.meta temp files for a cancelled debrid download.
+ */
+export async function cleanDebridTempFiles(destDir: string): Promise<number> {
+  return await invoke("clean_debrid_temp_files", { destDir });
+}
+
+/**
+ * Check if a debrid download directory has leftover temp files.
+ */
+export async function hasDebridTempFiles(destDir: string): Promise<boolean> {
+  return await invoke("has_debrid_temp_files", { destDir });
+}
+
+/** Check whether a Debrid install directory has a game executable. */
+export async function verifyDebridInstallation(params: {
+  installDir: string;
+}): Promise<DebridVerifyResult> {
+  return await invoke<DebridVerifyResult>("verify_debrid_installation", params);
+}
+
+export type DebridLaunchResult = {
+  success: boolean;
+  method: string;
+  error?: string | null;
+  pid?: number | null;
+};
+
+export async function launchDebridGame(params: {
+  executablePath: string;
+  launchArguments?: string | null;
+  workingDirectory?: string | null;
+}): Promise<DebridLaunchResult> {
+  return await invoke<DebridLaunchResult>("launch_debrid_game", params);
+}
+
+/** Poll an installer process status by PID. */
+export async function checkInstallerStatus(params: {
+  pid: number;
+  installDir: string;
+}): Promise<InstallerCheckResult> {
+  return await invoke<InstallerCheckResult>("check_installer_status", params);
+}
+
+/** Re-run the installer (detached) after a previous run failed or was cancelled. */
+export async function runInstallerAgain(params: {
+  installerPath: string;
+  installDir: string;
+}): Promise<DebridDownloadResult> {
+  return await invoke<DebridDownloadResult>("run_installer_again", params);
+}
+
+/** Result from scanning Windows Uninstall registry for a game. */
+export type RegistryMatch = {
+  installLocation: string;
+  displayIcon: string | null;
+  displayName: string | null;
+  confidence: number;
+};
+
+/** Scan Windows Uninstall registry for a game matching the given title. */
+export async function detectInstallPathFromRegistry(gameTitle: string): Promise<RegistryMatch | null> {
+  return await invoke<RegistryMatch | null>("detect_install_path_from_registry", { gameTitle });
+}
+
+// --- Debrid Games Registry ---
+
+export type DebridGameEntryJson = {
+  id: string;
+  appId?: number | null;
+  title: string;
+  status: string; // "not-downloaded" | "downloading" | "needs-install" | "waiting-installer" | "ready"
+  installDir?: string | null;
+  executablePath?: string | null;
+  workingDirectory?: string | null;
+  installerPath?: string | null;
+  launchArguments?: string[] | null;
+  repacker?: string | null;
+  fileSize?: number | null;
+  installSize?: number | null;
+  installedAt: number;
+  updatedAt: number;
+};
+
+/** Read all installed Debrid game entries from `games/debrid/debrid-games.json`. */
+export async function readDebridGames(): Promise<DebridGameEntryJson[]> {
+  return await invoke<DebridGameEntryJson[]>("read_debrid_games");
+}
+
+/** Atomically write the full Debrid games array to `games/debrid/debrid-games.json`. */
+export async function writeDebridGames(entries: DebridGameEntryJson[]): Promise<void> {
+  return await invoke<void>("write_debrid_games", { entries });
+}
+
+/** Create a timestamped backup of `debrid-games.json`. Returns backup filename. */
+export async function backupDebridGames(): Promise<string> {
+  return await invoke<string>("backup_debrid_games");
+}
+
+// --- Launcher achievements (meta-achievement system) ---
+
+export type LauncherAchievementUnlockJson = {
+  achievementId: string;
+  unlockedAt: number;
+  xpAwarded: number;
+};
+
+export type LauncherXpEventJson = {
+  id: string;
+  source: string;
+  amount: number;
+  timestamp: number;
+  label: string;
+  refId?: string;
+};
+
+export async function readLauncherAchievements(): Promise<LauncherAchievementUnlockJson[]> {
+  return await invoke<LauncherAchievementUnlockJson[]>("read_launcher_achievements");
+}
+
+export async function writeLauncherAchievements(unlocks: LauncherAchievementUnlockJson[]): Promise<void> {
+  return await invoke<void>("write_launcher_achievements", { unlocks });
+}
+
+export async function readLauncherXpEvents(): Promise<LauncherXpEventJson[]> {
+  return await invoke<LauncherXpEventJson[]>("read_launcher_xp_events");
+}
+
+export async function writeLauncherXpEvents(events: LauncherXpEventJson[]): Promise<void> {
+  return await invoke<void>("write_launcher_xp_events", { events });
 }
 
 // --- Library cache ---
@@ -1044,10 +1713,6 @@ export async function libraryClearGameMediaCache(
   return await invoke<void>("library_clear_game_media_cache", { gameKey });
 }
 
-export async function libraryClearAllGameMediaCache(): Promise<void> {
-  return await invoke<void>("library_clear_all_game_media_cache");
-}
-
 // --- Unprefixed convenience aliases for library cache wrappers ---
 
 export async function getGameMediaCache(
@@ -1067,10 +1732,6 @@ export async function clearGameMediaCache(
   gameKey: string
 ): Promise<void> {
   return await libraryClearGameMediaCache(gameKey);
-}
-
-export async function clearAllGameMediaCache(): Promise<void> {
-  return await libraryClearAllGameMediaCache();
 }
 
 export async function readImageAsDataUrl(path: string): Promise<string | null> {
@@ -1397,20 +2058,6 @@ export async function repairAppinfoMediaPaths(appId: string): Promise<boolean> {
   }
 }
 
-// cacheTrailerFile — download a trailer video/thumbnail to
-// <gameDir>/media/trailers/<filename>. Returns local path or null.
-export async function cacheTrailerFile(
-  appId: string,
-  filename: string,
-  url: string,
-): Promise<string | null> {
-  try {
-    return await invoke<string | null>("cache_trailer_file", { appId, filename, url });
-  } catch {
-    return null;
-  }
-}
-
 // repair_media_roles — inspect cached images and fix misclassified files
 // (e.g. vertical image saved as landscape.jpg)
 export async function repairMediaRoles(appId: string): Promise<boolean> {
@@ -1434,6 +2081,10 @@ export async function updateGameAppinfoMedia(appId: string, name: string | null,
   return await invoke("update_game_appinfo_media", { appId, name, media, remote: remote ?? null, mediaSources: mediaSources ?? null });
 }
 
+export async function batchUpdateGameNames(apps: [string, string | null][]): Promise<number> {
+  return await invoke<number>("batch_update_game_names", { apps });
+}
+
 export async function saveGameMediaFile(appId: string, role: string, contentBase64: string, ext: string): Promise<string> {
   return await invoke<string>("save_game_media_file", { appId, role, contentBase64, ext });
 }
@@ -1442,12 +2093,111 @@ export async function deleteGameMediaFile(appId: string, role: string): Promise<
   return await invoke("delete_game_media_file", { appId, role });
 }
 
+// ── Provider-aware media commands (Step 7) ──
+
+export async function saveProviderMediaFromPath(
+  provider: string,
+  providerGameId: string,
+  role: string,
+  sourcePath: string,
+): Promise<string> {
+  return await invoke<string>("save_provider_media_from_path", {
+    provider,
+    providerGameId,
+    role,
+    sourcePath,
+  });
+}
+
+export async function downloadProviderMediaFromUrl(
+  provider: string,
+  providerGameId: string,
+  role: string,
+  url: string,
+): Promise<string> {
+  return await invoke<string>("download_provider_media_from_url", {
+    provider,
+    providerGameId,
+    role,
+    url,
+  });
+}
+
+export async function deleteProviderMediaFile(
+  provider: string,
+  providerGameId: string,
+  role: string,
+): Promise<void> {
+  return await invoke("delete_provider_media_file", {
+    provider,
+    providerGameId,
+    role,
+  });
+}
+
+export async function saveProviderMediaFromBase64(
+  provider: string,
+  providerGameId: string,
+  role: string,
+  contentBase64: string,
+  ext: string,
+): Promise<string> {
+  return await invoke<string>("save_provider_media_from_base64", {
+    provider,
+    providerGameId,
+    role,
+    contentBase64,
+    ext,
+  });
+}
+
+export async function openFolder(path: string): Promise<void> {
+  return await invoke("open_folder", { path });
+}
+
 export async function openGameMetadataFolder(appId: string): Promise<void> {
   return await invoke("open_game_metadata_folder", { appId });
 }
 
 export async function openGameMediaFolder(appId: string): Promise<void> {
   return await invoke("open_game_media_folder", { appId });
+}
+
+export async function openProviderMediaFolder(providerId: string, providerGameId: string): Promise<void> {
+  return await invoke("open_provider_media_folder", { provider: providerId, providerGameId });
+}
+
+// ── Provider media directory listing ──
+
+export type ProviderMediaFileEntry = {
+  filename: string;
+  role: string;
+  extension: string;
+  relativePath: string;
+  sizeBytes: number;
+  modifiedAt: number | null;
+};
+
+export async function listProviderMediaFiles(
+  provider: string,
+  providerGameId: string,
+): Promise<ProviderMediaFileEntry[]> {
+  const raw = await invoke<Array<{
+    filename: string;
+    role: string;
+    extension: string;
+    relative_path: string;
+    size_bytes: number;
+    modified_at: number | null;
+  }>>("list_provider_media_files", { provider, providerGameId });
+  return raw.map((e) => ({
+    filename: e.filename,
+    role: e.role,
+    extension: e.extension,
+    relativePath: e.relative_path,
+    sizeBytes: e.size_bytes,
+    modifiedAt: e.modified_at,
+  }));
 }
 
 export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | null, paths: GameMediaPaths): Promise<void> {
@@ -1616,6 +2366,364 @@ export async function getMetadataCacheSqlite(gameId: string): Promise<SqliteMeta
   }
 }
 
+// ── Backup Archive ──
+
+export type BackupFileInfo = {
+  relative_path: string;
+  section: string;
+  size: number;
+  checksum: string;
+};
+
+export type BackupManifestJson = {
+  schema_version: number;
+  backup_id: string;
+  created_at: string;
+  app_version: string;
+  device_id: string;
+  sections: Record<string, boolean>;
+  files: BackupFileInfo[];
+  total_size: number;
+  total_files: number;
+};
+
+export async function writeBackupArchive(
+  backupJson: string,
+  filename: string,
+): Promise<string> {
+  return await invoke<string>("write_backup_archive", { backupJson, filename });
+}
+
+export async function readBackupArchive(filename: string): Promise<string> {
+  return await invoke<string>("read_backup_archive", { filename });
+}
+
+export async function listBackupArchives(): Promise<string[]> {
+  return await invoke<string[]>("list_backup_archives");
+}
+
+export async function deleteBackupArchive(filename: string): Promise<void> {
+  return await invoke("delete_backup_archive", { filename });
+}
+
+export async function validateBackupFile(filename: string): Promise<BackupManifestJson> {
+  return await invoke<BackupManifestJson>("validate_backup_file", { filename });
+}
+
+// ── External file collection (backup for Lua / achievement disk files) ──
+
+export type ExternalFileEntry = {
+  relativePath: string;
+  absolutePath: string;
+  size: number;
+  modifiedAt: number;
+  checksum: string;
+  fileName: string;
+};
+
+export type ExternalFileCollection = {
+  rootLabel: string;
+  rootPath: string;
+  totalFiles: number;
+  totalSize: number;
+  files: ExternalFileEntry[];
+};
+
+export type ExternalFileRestoreEntry = {
+  relativePath: string;
+  content: string;
+  expectedChecksum: string;
+};
+
+export type ExternalRestoreResult = {
+  restored: number;
+  failed: number;
+  errors: string[];
+};
+
+export type ExternalVerifyResult = {
+  allValid: boolean;
+  checked: number;
+  errors: string[];
+};
+
+export async function scanExternalFileCollection(
+  rootPath: string,
+  rootLabel: string,
+  allowedExtensions: string[],
+  maxFileSize?: number,
+  maxFiles?: number,
+): Promise<ExternalFileCollection> {
+  return await invoke<ExternalFileCollection>("scan_external_file_collection", {
+    rootPath,
+    rootLabel,
+    allowedExtensions,
+    maxFileSize,
+    maxFiles,
+  });
+}
+
+export async function readFileCollectionContent(
+  rootPath: string,
+  relativePaths: string[],
+): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("read_file_collection_content", {
+    rootPath,
+    relativePaths,
+  });
+}
+
+export async function restoreExternalFiles(
+  targetRoot: string,
+  files: ExternalFileRestoreEntry[],
+  dryRun?: boolean,
+): Promise<ExternalRestoreResult> {
+  return await invoke<ExternalRestoreResult>("restore_external_files", {
+    targetRoot,
+    files,
+    dryRun,
+  });
+}
+
+export async function createExternalSafetyBackup(
+  operationId: string,
+  sourceRoot: string,
+  relativePaths: string[],
+): Promise<string> {
+  return await invoke<string>("create_external_safety_backup", {
+    operationId,
+    sourceRoot,
+    relativePaths,
+  });
+}
+
+export async function restoreFromSafetyBackup(
+  operationId: string,
+  targetRoot: string,
+  relativePaths: string[],
+): Promise<ExternalRestoreResult> {
+  return await invoke<ExternalRestoreResult>("restore_from_safety_backup", {
+    operationId,
+    targetRoot,
+    relativePaths,
+  });
+}
+
+export async function verifyFileChecksums(
+  rootPath: string,
+  files: [string, string][],
+): Promise<ExternalVerifyResult> {
+  return await invoke<ExternalVerifyResult>("verify_file_checksums", {
+    rootPath,
+    files,
+  });
+}
+
+export async function resolveAchievementsRootDir(
+  provider: string,
+): Promise<string> {
+  return await invoke<string>("resolve_achievements_root_dir", {
+    provider,
+  });
+}
+
+// ── Extension Lifecycle ──
+
+export interface LuaFunctionResult {
+  success: boolean;
+  value: string | null;
+  error: string | null;
+}
+
+export interface LuaExtensionTable {
+  name: string;
+  version: string;
+  min_launcher_version: string | null;
+  has_detect: boolean;
+  has_install: boolean;
+  has_enable: boolean;
+  has_disable: boolean;
+  has_uninstall: boolean;
+  error: string | null;
+}
+
+export interface ExtensionDirEntry {
+  dir_name: string;
+  manifest_json: string | null;
+  has_extension_lua: boolean;
+}
+
+export interface ScanExtensionsResult {
+  entries: ExtensionDirEntry[];
+}
+
+/**
+ * Load a Lua extension into the backend engine.
+ * Must be called before any lifecycle functions.
+ */
+export async function loadExtension(
+  extensionId: string,
+  scriptPath: string,
+): Promise<LuaExtensionTable> {
+  return await invoke<LuaExtensionTable>("load_extension", {
+    extensionId,
+    scriptPath,
+  });
+}
+
+/**
+ * Call the detect lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionDetect(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_detect", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the install lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionInstall(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_install", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the enable lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionEnable(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_enable", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the disable lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionDisable(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_disable", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the uninstall lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionUninstall(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_uninstall", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Scan a directory for extension subdirectories.
+ * Returns entries for subdirectories that contain manifest.json and/or extension.lua.
+ */
+export async function scanExtensionsDirectory(
+  basePath: string,
+): Promise<ScanExtensionsResult> {
+  return await invoke<ScanExtensionsResult>("scan_extensions_directory", {
+    basePath,
+  });
+}
+
+// =============================================================================
+// Extension Config (cascading lifecycle support)
+// =============================================================================
+
+export interface ExtensionConfig {
+  enabled: boolean;
+}
+
+/**
+ * Write an extension-config.json into the extension's AppData directory.
+ * This marks the extension as enabled or disabled in the local registry.
+ */
+export async function writeExtensionConfig(
+  dirPath: string,
+  enabled: boolean,
+): Promise<void> {
+  return await invoke("write_extension_config", { dirPath, enabled });
+}
+
+/**
+ * Read the extension-config.json from the extension's AppData directory.
+ * Returns null when the file doesn't exist (pre-migration or first boot).
+ */
+export async function readExtensionConfig(
+  dirPath: string,
+): Promise<ExtensionConfig | null> {
+  return await invoke<ExtensionConfig | null>("read_extension_config", {
+    dirPath,
+  });
+}
+
+/**
+ * Delete the extension's entire AppData directory (extension.lua,
+ * manifest.json, config, and any other state files).
+ */
+export async function deleteExtensionDirectory(
+  dirPath: string,
+): Promise<void> {
+  return await invoke("delete_extension_directory", { dirPath });
+}
+
+export async function resolveAppDataDir(): Promise<string> {
+  return await invoke<string>("resolve_app_data_dir");
+}
+
+export type CrackSaveResult = {
+  crack_type: string;
+  save_path: string;
+};
+
+export async function detectCrackSaveType(appId: string, installDir?: string): Promise<CrackSaveResult | null> {
+  return await invoke<CrackSaveResult | null>("detect_crack_save_type", { appId, installDir });
+}
+
+export interface CrackAchievementEntry {
+  api_name: string;
+  earned: boolean;
+  earned_time: number;
+  progress?: number;
+  max_progress?: number;
+}
+
+export interface CrackAchievementsResult {
+  entries: CrackAchievementEntry[];
+  format: string;
+  file_path: string;
+}
+
+export async function parseTenokeUserStats(path: string): Promise<CrackAchievementsResult | null> {
+  return await invoke<CrackAchievementsResult | null>("parse_tenoke_user_stats", { path });
+}
+
+export async function parseOnlinefixAchievementsIni(path: string): Promise<CrackAchievementsResult | null> {
+  return await invoke<CrackAchievementsResult | null>("parse_onlinefix_achievements_ini", { path });
+}
+
 // ── Dev console exposure ──
 
 if (typeof window !== "undefined") {
@@ -1666,14 +2774,6 @@ export type GameEntry = {
   updatedAt: number;
 };
 
-export async function upsertGame(entry: GameEntry): Promise<void> {
-  try {
-    await invoke("upsert_game", { entry });
-  } catch {
-    // silent — best-effort only
-  }
-}
-
 export async function batchUpsertGames(entries: GameEntry[]): Promise<void> {
   try {
     await invoke("batch_upsert_games", { entries });
@@ -1690,28 +2790,294 @@ export async function readAllGames(): Promise<GameEntry[]> {
   }
 }
 
-export async function getGameCount(): Promise<number> {
+export async function updateGameMetadataJson(appId: string, metadataJson: string): Promise<void> {
   try {
-    return await invoke<number>("get_game_count");
+    await invoke("update_game_metadata_json", { appId, metadataJson });
   } catch {
-    return 0;
+    // silent — best-effort sync
   }
 }
 
-export async function scanAndBuildFullDataset(
-  settings: { steamPath?: string; luaPath?: string; depotcachePath?: string; gameScanFolders?: string[] },
-): Promise<number> {
+// ---------------------------------------------------------------------------
+// Achievement SQLite tables — volatile per-game progress
+// ---------------------------------------------------------------------------
+
+export type AchievementSummaryRow = {
+  appId: string;
+  unlocked: number;
+  total: number;
+  percent?: number;
+  progressAvailable?: boolean;
+  source?: string;
+  platform?: string;
+  inProgress?: number;
+  completionTime?: number | null;
+  lastUnlockAt?: number | null;
+  updatedAt: number;
+};
+
+export async function upsertAchievementSummary(row: AchievementSummaryRow): Promise<void> {
   try {
-    return await invoke<number>("scan_and_build_full_dataset", {
-      steamPath: settings.steamPath || null,
-      luaPath: settings.luaPath || null,
-      depotcachePath: settings.depotcachePath || null,
-      gameScanFolders: settings.gameScanFolders?.length ? settings.gameScanFolders : null,
-    });
+    await invoke("upsert_achievement_summary", { row });
   } catch {
-    return 0;
+    // silent — best-effort
   }
 }
+
+export async function getAchievementSummaryFromDb(appId: string): Promise<AchievementSummaryRow | null> {
+  try {
+    return await invoke<AchievementSummaryRow | null>("get_achievement_summary", { appId });
+  } catch {
+    return null;
+  }
+}
+
+export async function batchGetAchievementSummaries(appIds: string[]): Promise<AchievementSummaryRow[]> {
+  try {
+    return await invoke<AchievementSummaryRow[]>("batch_get_achievement_summaries", { appIds });
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllAchievementSummaries(): Promise<AchievementSummaryRow[]> {
+  try {
+    return await invoke<AchievementSummaryRow[]>("get_all_achievement_summaries");
+  } catch {
+    return [];
+  }
+}
+
+export type FolderAchievementSummary = {
+  appId: string;
+  source: string;
+  total: number;
+  unlocked: number;
+  percent: number;
+};
+
+export async function scanAchievementFolders(): Promise<FolderAchievementSummary[]> {
+  try {
+    return await invoke<FolderAchievementSummary[]>("scan_achievement_folders");
+  } catch {
+    return [];
+  }
+}
+
+export type AchievementEntryRow = {
+  appId: string;
+  apiName: string;
+  name?: string | null;
+  description?: string | null;
+  iconUrl?: string | null;
+  iconGray?: string | null;
+  hidden: boolean;
+  unlocked: boolean;
+  unlockTime?: number | null;
+  unlockedAt?: number | null;
+  globalPct?: number | null;
+  updatedAt: number;
+};
+
+export async function upsertAchievementEntry(row: AchievementEntryRow): Promise<void> {
+  try {
+    await invoke("upsert_achievement_entry", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function batchUpsertAchievementEntries(entries: AchievementEntryRow[]): Promise<void> {
+  try {
+    await invoke("batch_upsert_achievement_entries", { entries });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementEntriesFromDb(appId: string): Promise<AchievementEntryRow[]> {
+  try {
+    return await invoke<AchievementEntryRow[]>("get_achievement_entries", { appId });
+  } catch {
+    return [];
+  }
+}
+
+export type AchievementPercentageRow = {
+  appId: string;
+  entries: string;
+  updatedAt: number;
+};
+
+export async function upsertAchievementPercentages(row: AchievementPercentageRow): Promise<void> {
+  try {
+    await invoke("upsert_achievement_percentages", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementPercentagesFromDb(appId: string): Promise<AchievementPercentageRow | null> {
+  try {
+    return await invoke<AchievementPercentageRow | null>("get_achievement_percentages", { appId });
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Achievement read with SQLite-first fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads achievement cache: tries SQLite tables first, falls back to JSON file.
+ * Returns the same `AppAchievementCache` shape consumers expect.
+ */
+export async function readAchievementCacheWithFallback(appId: number): Promise<AppAchievementCache | null> {
+  const appIdStr = String(appId);
+  try {
+    const [summary, entries, pctRow] = await Promise.all([
+      getAchievementSummaryFromDb(appIdStr),
+      getAchievementEntriesFromDb(appIdStr),
+      getAchievementPercentagesFromDb(appIdStr),
+    ]);
+
+    if (summary && entries.length > 0) {
+      const percentages: AppAchievementPercentagesEntry[] = pctRow?.entries
+        ? JSON.parse(pctRow.entries)
+        : [];
+
+      return {
+        summary: {
+          app_id: summary.appId,
+          total: summary.total,
+          unlocked: summary.unlocked ?? 0,
+          percent: summary.percent ?? (summary.total > 0 ? Math.round((summary.unlocked / summary.total) * 100) : 0),
+          progress_available: summary.progressAvailable ?? (summary.total > 0),
+          source: summary.source ?? "sqlite",
+          updated_at: summary.updatedAt,
+        },
+        achievements: entries.map((e, idx) => ({
+          id: e.apiName || String(idx),
+          api_name: e.apiName,
+          name: e.name ?? e.apiName,
+          description: e.description ?? "",
+          icon: e.iconUrl ?? undefined,
+          icon_url: e.iconUrl ?? undefined,
+          icon_gray: e.iconGray ?? undefined,
+          icon_gray_url: e.iconGray ?? undefined,
+          unlocked: e.unlocked,
+          unlock_time: e.unlockTime ?? undefined,
+          rarity_percent: e.globalPct ?? undefined,
+          // Note: stat_id/bit/progress_* are NOT stored in SQLite achievement_entries table
+          // writeCacheInBackground merges these from the existing JSON disk cache
+        })),
+        achievement_percentages: percentages,
+      };
+    }
+  } catch {
+    // SQLite read failed — fall through to JSON
+  }
+
+  // Fallback: read from JSON files
+  return readAchievementCache(appId);
+}
+
+// ---------------------------------------------------------------------------
+// Store reviews — replaces store/reviews/{appid}.json
+// ---------------------------------------------------------------------------
+
+export type StoreReviewRow = {
+  appId: string;
+  data: string;
+  updatedAt: number;
+};
+
+export async function upsertStoreReview(row: StoreReviewRow): Promise<void> {
+  try {
+    await invoke("upsert_store_review", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getStoreReviewFromDb(appId: string): Promise<StoreReviewRow | null> {
+  try {
+    return await invoke<StoreReviewRow | null>("get_store_review", { appId });
+  } catch {
+    return null;
+  }
+}
+
+export async function batchGetStoreReviews(appIds: string[]): Promise<StoreReviewRow[]> {
+  try {
+    return await invoke<StoreReviewRow[]>("batch_get_store_reviews", { appIds });
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Provider status — replaces store/provider-status/{appId}/{providerId}.json
+// ---------------------------------------------------------------------------
+
+export type ProviderStatusRow = {
+  appId: string;
+  providerId: string;
+  data: string;
+  updatedAt: number;
+};
+
+export async function upsertProviderStatus(row: ProviderStatusRow): Promise<void> {
+  try {
+    await invoke("upsert_provider_status", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getProviderStatusFromDb(appId: string, providerId: string): Promise<ProviderStatusRow | null> {
+  try {
+    return await invoke<ProviderStatusRow | null>("get_provider_status_from_db", { appId, providerId });
+  } catch {
+    return null;
+  }
+}
+
+export async function getAllProviderStatusesFromDb(appId: string): Promise<ProviderStatusRow[]> {
+  try {
+    return await invoke<ProviderStatusRow[]>("get_all_provider_statuses", { appId });
+  } catch {
+    return [];
+  }
+}
+
+// --- Game Catalog Blob (single-row SQLite storage for volatile catalogs) ---
+
+const CATALOG_KEYS = {
+  steamOwned: (steamId: string) => `steam-owned:${steamId}`,
+  debridGames: "debrid-games",
+  installedGames: "installed-games",
+  startupSnapshot: "startup-snapshot",
+} as const;
+
+export async function upsertGameCatalogBlob(catalogKey: string, dataJson: string): Promise<void> {
+  try {
+    await invoke("upsert_game_catalog_blob", { catalogKey, dataJson });
+  } catch {
+    // Non-critical; JSON file is still written
+  }
+}
+
+export async function getGameCatalogBlob(catalogKey: string): Promise<string | null> {
+  try {
+    return await invoke<string | null>("get_game_catalog_blob", { catalogKey });
+  } catch {
+    return null;
+  }
+}
+
+export { CATALOG_KEYS };
 
 // --- Installed Games Registry (file-based) ---
 
@@ -1805,6 +3171,29 @@ export async function getFileMetadata(path: string): Promise<FileMetadata> {
   return await invoke<FileMetadata>("get_file_metadata", { path });
 }
 
+export interface FileFilter {
+  name: string;
+  extensions: string[];
+}
+
+export async function pickFile(
+  title?: string,
+  filters?: FileFilter[],
+): Promise<string | null> {
+  return await invoke<string | null>("pick_file", { title, filters });
+}
+
+export async function pickFolder(
+  title?: string,
+  startDir?: string,
+): Promise<string | null> {
+  return await invoke<string | null>("pick_folder", { title, startDir });
+}
+
+export async function calculateDirectorySize(path: string): Promise<number> {
+  return await invoke<number>("calculate_directory_size", { path });
+}
+
 // --- Provider Status Cache (sidecar JSON) ---
 
 export interface ProviderStatusLocal {
@@ -1865,6 +3254,7 @@ export interface ProviderStatusSnapshotEntryLocal {
   fileSizeAtInstall?: number | null;
   fileModifiedAtInstall?: string | null;
   versionAtInstall?: string | null;
+  metadataSource?: string | null;
 }
 
 export interface ProviderStatusSnapshotEntryRemote {
@@ -1977,3 +3367,576 @@ export async function powerHibernate(): Promise<void> {
 export async function powerRestart(): Promise<void> {
   await invoke("power_restart");
 }
+
+// ── IGDB (via Rust backend — no direct frontend fetch to api.igdb.com) ──
+
+export interface IgdbAccessToken {
+  access_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
+export interface IgdbArtworkBySteamIdResult {
+  cover_url: string | null;
+}
+
+export interface IgdbGameSearchResult {
+  igdb_id: number | null;
+  name: string | null;
+  summary: string | null;
+  release_date: string | null;
+  genres: string[] | null;
+  developers: string[] | null;
+  publishers: string[] | null;
+  cover_url: string | null;
+  screenshot_urls: string[] | null;
+}
+
+export async function igdbGetAccessToken(
+  clientId: string,
+  clientSecret: string,
+): Promise<IgdbAccessToken> {
+  return await invoke<IgdbAccessToken>("igdb_get_access_token", {
+    clientId,
+    clientSecret,
+  });
+}
+
+export async function igdbSearchBySteamAppId(
+  clientId: string,
+  accessToken: string,
+  appId: string,
+): Promise<IgdbArtworkBySteamIdResult> {
+  return await invoke<IgdbArtworkBySteamIdResult>("igdb_search_by_steam_app_id", {
+    clientId,
+    accessToken,
+    appId,
+  });
+}
+
+export async function igdbSearchGamesByName(
+  clientId: string,
+  accessToken: string,
+  name: string,
+  limit?: number,
+): Promise<IgdbGameSearchResult[]> {
+  return await invoke<IgdbGameSearchResult[]>("igdb_search_games_by_name", {
+    clientId,
+    accessToken,
+    name,
+    limit: limit ?? 3,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// IGDB Catalog Query
+// ---------------------------------------------------------------------------
+
+export interface IgdbCatalogGame {
+  igdb_id: number;
+  name: string | null;
+  summary: string | null;
+  first_release_date: string | null;
+  genres: string[] | null;
+  rating: number | null;
+  popularity: number | null;
+  cover_url: string | null;
+  screenshot_urls: string[] | null;
+  developers: string[] | null;
+  publishers: string[] | null;
+  steam_app_id: string | null;
+}
+
+export async function igdbQueryCatalog(
+  clientId: string,
+  accessToken: string,
+  query: string,
+): Promise<IgdbCatalogGame[]> {
+  return await invoke<IgdbCatalogGame[]>("igdb_query_catalog", {
+    clientId,
+    accessToken,
+    query,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Manual games JSON persistence
+// ---------------------------------------------------------------------------
+
+export type ManualGameEntryJson = {
+  id: string;
+  name: string;
+  executablePath?: string;
+  workingDirectory?: string;
+  launchArguments?: string;
+  installDir?: string;
+  libraryPath?: string;
+  coverPath?: string;
+  landscapePath?: string;
+  backgroundPath?: string;
+  logoPath?: string;
+  iconPath?: string;
+  genres?: string[];
+  developers?: string[];
+  publishers?: string[];
+  releaseDate?: string;
+  description?: string;
+  shortDescription?: string;
+  categories?: string[];
+  features?: string[];
+  tags?: string[];
+  sortingName?: string;
+  userScore?: string;
+  criticScore?: string;
+  communityScore?: string;
+  reviewSummary?: string;
+  reviewCount?: string;
+  reviewSource?: string;
+  series?: string;
+  ageRating?: string;
+  region?: string;
+  completionStatus?: string;
+  linkedSteamAppId?: string;
+  linkedIgdbId?: string;
+  appId?: string;
+  sizeOnDisk?: number;
+  isFavorite?: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** Read all manual game entries from `games/manual/manual-games.json`. */
+export async function readManualGames(): Promise<ManualGameEntryJson[]> {
+  return await invoke<ManualGameEntryJson[]>("read_manual_games");
+}
+
+/** Atomically write the full manual games array to `games/manual/manual-games.json`. */
+export async function writeManualGames(entries: ManualGameEntryJson[]): Promise<void> {
+  return await invoke<void>("write_manual_games", { entries });
+}
+
+/** Create a timestamped backup of `manual-games.json`. Returns backup filename. */
+export async function backupManualGames(): Promise<string> {
+  return await invoke<string>("backup_manual_games");
+}
+
+// ─── Epic Games Store Scanner (Phase 1A) ─────────────────────────────────
+
+export type EpicInstallClassification = "baseGame" | "dlc" | "addon" | "tool" | "unknown";
+
+export type EpicInstallSourceKind = "native" | "thirdPartyManaged";
+
+/** A single normalized Epic installation record (provider-level only, no LibraryGame UI state). */
+export type EpicInstalledGame = {
+  providerId: "epic";
+  /** Canonical Epic identity: `{namespace}:{catalogItemId}` or fallback. */
+  providerGameId: string;
+  namespace?: string;
+  catalogItemId?: string;
+  appName?: string;
+  displayName?: string;
+  installLocation?: string;
+  launchExecutable?: string;
+  executablePath?: string;
+  launchArguments?: string;
+  releaseVersion?: string;
+  installSize?: number;
+  manifestPath?: string;
+  processNames: string[];
+  mainGameAppName?: string;
+  mainGameCatalogItemId?: string;
+  mainGameCatalogNamespace?: string;
+  installed: boolean;
+  executableExists: boolean;
+  manifestValid: boolean;
+  incompleteInstall: boolean;
+  canRunOffline: boolean;
+  classification: EpicInstallClassification;
+  sourceKind: EpicInstallSourceKind;
+  warnings: string[];
+};
+
+/** The complete scan result envelope from the Epic local scanner. */
+export type EpicInstalledGamesScanResult = {
+  games: EpicInstalledGame[];
+  manifestDirectory: string;
+  directoryExists: boolean;
+  scannedFileCount: number;
+  validManifestCount: number;
+  invalidManifestCount: number;
+  staleManifestCount: number;
+  incompleteInstallCount: number;
+  duplicateCount: number;
+  warnings: string[];
+  scannedAt: string;
+};
+
+/**
+ * Scan for locally installed Epic Games Store games.
+ *
+ * Reads `.item` manifest files from the Epic Games Launcher data directory.
+ * No authentication, no network calls, no manifest modification.
+ *
+ * @param manifestDir Optional override for the manifest directory path.
+ *   Uses `%ProgramData%/Epic/EpicGamesLauncher/Data/Manifests` when omitted.
+ */
+export async function scanEpicInstalledGames(
+  manifestDir?: string,
+): Promise<EpicInstalledGamesScanResult> {
+  return await invoke<EpicInstalledGamesScanResult>("scan_epic_installed_games", {
+    manifestDir: manifestDir ?? null,
+  });
+}
+
+// ── Epic launch ──
+
+export type EpicLaunchResult = {
+  success: boolean;
+  method: string;
+  error?: string;
+};
+
+export async function launchEpicGame(
+  appName: string,
+  executablePath?: string,
+  launchArguments?: string,
+  directLaunchEnabled?: boolean,
+  namespace?: string,
+  catalogItemId?: string,
+): Promise<EpicLaunchResult> {
+  return await invoke<EpicLaunchResult>("launch_epic_game", {
+    appName,
+    executablePath: executablePath ?? null,
+    launchArguments: launchArguments ?? null,
+    directLaunchEnabled: directLaunchEnabled ?? false,
+    namespace: namespace ?? null,
+    catalogItemId: catalogItemId ?? null,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Library game fixes (src-tauri/commands/game_fix.rs)
+// ---------------------------------------------------------------------------
+
+export type GameFixInfo = {
+  appId: number;
+  name: string;
+  installed: boolean;
+  installPath: string | null;
+  hasLua: boolean;
+  luaCount: number;
+  lastRevision: string | null;
+  hasOnlineFix: boolean;
+  hasSteamApi64: boolean;
+  hasSteamApi32: boolean;
+  gameArch: string | null;
+  mainExe: string | null;
+  /** SteamStub DRM present on the main executable (Steamless applicability). */
+  hasSteamStubDrm: boolean;
+  /** Full path of the resolved main executable (what Steamless would target). */
+  exeName: string | null;
+};
+
+export type GameFixResult = {
+  ok: boolean;
+  tool: string;
+  message: string;
+  filesInstalled: string[];
+  errors: string[];
+  requiresManualSelection: boolean;
+  availableFiles: string[];
+};
+
+export type GameFixEntryInput = {
+  appId: number;
+  installDir: string | null;
+};
+
+export type FixInstallationStatus = {
+  smokeApiInstalled: boolean;
+  steamlessInstalled: boolean;
+  koaloaderInstalled: boolean;
+  goldbergInstalled: boolean;
+  smokeApiPath: string | null;
+  steamlessPath: string | null;
+  koaloaderPath: string | null;
+  goldbergPath: string | null;
+};
+
+export async function libraryGetGameFixInfo(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+  hasLua: boolean;
+  luaCount: number;
+}): Promise<GameFixInfo> {
+  return await invoke<GameFixInfo>("library_get_game_fix_info", params);
+}
+
+export async function libraryApplyOnlineFix(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+  manualFile?: string | null;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_online_fix", {
+    appId: params.appId,
+    name: params.name,
+    installDir: params.installDir,
+    manualFile: params.manualFile ?? null,
+  });
+}
+
+export async function libraryApplySmokeApi(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_smoke_api", params);
+}
+
+export async function libraryApplySteamless(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_steamless", params);
+}
+
+export async function libraryCheckFixInstallations(): Promise<FixInstallationStatus> {
+  return await invoke<FixInstallationStatus>("library_check_fix_installations");
+}
+
+export async function libraryInstallSmokeApi(): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_install_smoke_api");
+}
+
+export async function libraryInstallSteamless(): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_install_steamless");
+}
+
+export async function libraryInstallKoaloader(): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_install_koaloader");
+}
+
+export async function libraryUnfixSteamless(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_steamless", { appId, installDir });
+}
+
+export async function libraryUnfixSmokeApi(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_smoke_api", { appId, installDir });
+}
+
+export async function libraryHasOnlineFixFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_online_fix_fix", { appId, installDir });
+}
+
+export async function libraryHasSmokeApiFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_smoke_api_fix", { appId, installDir });
+}
+
+export async function libraryHasSteamlessFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_steamless_fix", { appId, installDir });
+}
+
+export async function libraryHasGoldbergFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_goldberg_fix", { appId, installDir });
+}
+
+export async function libraryApplyGoldberg(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+  steamWebApiKey?: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_goldberg", params);
+}
+
+export async function libraryUnfixGoldberg(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_goldberg", { appId, installDir });
+}
+
+export async function libraryGetAppliedFixIds(entries: GameFixEntryInput[]): Promise<number[]> {
+  return await invoke<number[]>("library_get_applied_fix_ids", { entries });
+}
+
+export async function libraryUnfixOnlineFix(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_online_fix", { appId, installDir });
+}
+
+export async function libraryOpenSteamLaunchOptions(appId: number): Promise<void> {
+  await invoke<void>("library_open_steam_launch_options", { appId });
+}
+
+export async function seedGseSavesFolder(appId: string): Promise<string> {
+  return await invoke<string>("seed_gse_saves_folder", { appId });
+}
+
+// ---------------------------------------------------------------------------
+// Catalog fixes (Rockstar, Voices38, etc.)
+// ---------------------------------------------------------------------------
+
+export async function libraryApplyCatalogFix(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+  downloadUrl: string;
+  fixType: string;
+  accountName?: string;
+  steamId?: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_catalog_fix", params);
+}
+
+export async function libraryHasCatalogFix(
+  appId: number,
+  installDir: string,
+  fixType: string,
+): Promise<boolean> {
+  return await invoke<boolean>("library_has_catalog_fix", { appId, installDir, fixType });
+}
+
+export async function libraryUnfixCatalogFix(params: {
+  appId: number;
+  installDir: string;
+  fixType: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_catalog_fix", params);
+}
+
+// ---------------------------------------------------------------------------
+// Third-party tools (src-tauri/commands/thirdparty.rs)
+// ---------------------------------------------------------------------------
+
+export type ThirdPartyToolInfo = {
+  id: string;
+  name: string;
+  description: string;
+  githubOwner: string;
+  githubRepo: string;
+  installed: boolean;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  installPath: string | null;
+  /** Only present for tools with `install_to_steam_root` (e.g. OpenSteamTool). */
+  enabled?: boolean;
+};
+
+export type ThirdPartyToolResult = {
+  ok: boolean;
+  tool: string;
+  message: string;
+  filesInstalled: string[];
+  errors: string[];
+};
+
+export async function listThirdPartyTools(): Promise<ThirdPartyToolInfo[]> {
+  return await invoke<ThirdPartyToolInfo[]>("list_thirdparty_tools");
+}
+
+export async function installThirdPartyTool(toolId: string, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("install_thirdparty_tool", { toolId, steamRoot });
+}
+
+export async function uninstallThirdPartyTool(toolId: string, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("uninstall_thirdparty_tool", { toolId, steamRoot });
+}
+
+export async function checkThirdPartyUpdates(): Promise<ThirdPartyToolInfo[]> {
+  return await invoke<ThirdPartyToolInfo[]>("check_thirdparty_updates");
+}
+
+export async function updateThirdPartyTool(toolId: string, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("update_thirdparty_tool", { toolId, steamRoot });
+}
+
+export async function setThirdPartyToolEnabled(toolId: string, enabled: boolean, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("set_thirdparty_tool_enabled", { toolId, enabled, steamRoot });
+}
+
+export async function openThirdPartyFolder(): Promise<void> {
+  await invoke<void>("open_thirdparty_folder");
+}
+
+export type GenerateSchemaResult = {
+  entries_count: number;
+  source: string;
+  icons_downloaded: number;
+  progress_available: boolean;
+  error?: string;
+};
+
+export async function generateAchievementSchema(params: {
+  appId: number;
+  steamPath?: string;
+  steamAccountId?: string;
+  steamWebApiKey?: string;
+  platform?: string;
+}): Promise<GenerateSchemaResult> {
+  return await invoke<GenerateSchemaResult>("generate_achievement_schema", {
+    appId: params.appId,
+    steamPath: params.steamPath ?? null,
+    steamAccountId: params.steamAccountId ?? null,
+    steamWebApiKey: params.steamWebApiKey ?? null,
+    platform: params.platform ?? null,
+  });
+}
+
+export async function downloadStoreImage(
+  url: string,
+  appId: string,
+  role: string,
+): Promise<string> {
+  return await invoke<string>("download_store_image", { url, appId, role });
+}
+
+// ── Startup config / autostart ───────────────────────────────────────────────
+
+export interface StartupConfigDto {
+  start_with_windows: boolean;
+  start_maximized: boolean;
+  start_in_tray: boolean;
+  close_to_tray: boolean;
+  launch_mode: string;
+  startup_window_mode: string;
+}
+
+export async function saveStartupConfig(cfg: {
+  startWithWindows: boolean;
+  startMaximized: boolean;
+  startInTray: boolean;
+  closeToTray: boolean;
+  launchMode: string;
+  startupWindowMode: string;
+}): Promise<void> {
+  return await invoke("save_startup_config", {
+    startWithWindows: cfg.startWithWindows,
+    startMaximized: cfg.startMaximized,
+    startInTray: cfg.startInTray,
+    closeToTray: cfg.closeToTray,
+    launchMode: cfg.launchMode,
+    startupWindowMode: cfg.startupWindowMode,
+  });
+}
+
+export async function readStartupConfig(): Promise<StartupConfigDto> {
+  return await invoke<StartupConfigDto>("read_startup_config_cmd");
+}
+
+export async function setAutostart(enabled: boolean): Promise<void> {
+  return await invoke("set_autostart", { enabled });
+}
+
+export interface RecentGame {
+  app_id: string;
+  title: string;
+}
+
+export async function getRecentPlayedGames(): Promise<RecentGame[]> {
+  return await invoke<RecentGame[]>("get_recent_played_games");
+}
+
+// ── Tray menu ─────────────────────────────────────────────────────────────
+// Tray menu is rebuilt automatically via Tauri event `lumaforge-mode-changed`.
+// Emit this event from TS when the app mode changes (console ↔ desktop).

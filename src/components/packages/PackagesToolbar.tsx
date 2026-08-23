@@ -50,8 +50,6 @@ const providerOptions: {
   { label: "All Providers", value: "all" },
   { label: "HubcapDB", value: "hubcapdb" },
   { label: "Ryuu", value: "ryuu" },
-  { label: "TwentyTwo Cloud", value: "twentytwo-cloud" },
-  { label: "Sushi", value: "sushi" },
   { label: "Custom API", value: "custom" },
 ];
 

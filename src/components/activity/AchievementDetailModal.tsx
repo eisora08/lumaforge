@@ -72,11 +72,11 @@ export default function AchievementDetailModal({ open, achievement, progress, on
       role="dialog"
       aria-modal="true"
       aria-label={`Achievement: ${achievement.title}`}
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-md lf-modal-overlay"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
     >
       <div
         ref={panelRef}
-        className="lf-modal-panel mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-(--color-border)/20 bg-(--color-surface) shadow-2xl"
+        className="lf-modal-panel mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-(--color-border)/20 lf-surface shadow-2xl"
       >
         {/* Rarity accent bar */}
         <div className={`relative h-1 ${RARITY_ACCENT_BAR[achievement.rarity]}`}>

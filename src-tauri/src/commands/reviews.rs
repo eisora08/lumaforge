@@ -3,14 +3,14 @@ use std::time::Duration;
 use crate::models::steam_review_summary::SteamReviewSummary;
 
 #[tauri::command]
-pub fn resolve_steam_review_summaries(
+pub async fn resolve_steam_review_summaries(
     app_ids: Vec<u32>,
 ) -> Result<Vec<SteamReviewSummary>, String> {
     if app_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(12))
         .connect_timeout(Duration::from_secs(8))
@@ -26,7 +26,7 @@ pub fn resolve_steam_review_summaries(
             app_id
         );
 
-        let response = match client.get(&url).send() {
+        let response = match client.get(&url).send().await {
             Ok(value) => value,
             Err(_) => {
                 output.push(fallback_review_summary(app_id));
@@ -39,7 +39,7 @@ pub fn resolve_steam_review_summaries(
             continue;
         }
 
-        let json: serde_json::Value = match response.json() {
+        let json: serde_json::Value = match response.json().await {
             Ok(value) => value,
             Err(_) => {
                 output.push(fallback_review_summary(app_id));

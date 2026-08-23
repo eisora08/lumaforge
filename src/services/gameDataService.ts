@@ -1,22 +1,15 @@
 import {
   loadGameAppInfoWithMediaFallback,
   localPathToUrl,
-  clearResolvedMediaSessionCache,
 } from "./gameCacheService";
 import type { GameMediaPaths } from "./gameCacheService";
-import {
-  getLibraryAppInfo,
-  clearAppInfoMemoryCache,
-} from "./libraryLocalCacheService";
 import {
   getStoreAppInfo,
   getStoreGameDetails,
   getStoreReviewSummary,
-  clearStoreAppInfoMemoryCache,
 } from "./storeLocalCacheService";
 import {
   resolveGameMetadata,
-  clearGameMetadataCache,
 } from "./gameMetadataResolver";
 import {
   resolveGameMediaImageSrc,
@@ -25,7 +18,8 @@ import { resolveGameMediaPaths, getMediaCacheSqlite, getMetadataCacheSqlite, che
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type {
   StoreAppInfoEntry,
-  StoreGameDetailsEntry,
+  GameStoreDetails,
+  StoreReviewEntry,
   SqliteMediaCacheEntry,
   SqliteMetadataCacheEntry,
 } from "./tauri";
@@ -79,8 +73,8 @@ export type NormalizedGameMetadata = {
 
 export type StoreDataResult = {
   appInfo: StoreAppInfoEntry | null;
-  details: StoreGameDetailsEntry | null;
-  reviews: StoreGameDetailsEntry | null;
+  details: GameStoreDetails | null;
+  reviews: StoreReviewEntry | null;
   metadata: SteamAppMetadata | null;
 };
 
@@ -200,17 +194,6 @@ export async function requestGameData(gameId: string, priority: LoadPriority): P
     if (!_backgroundTimer) {
       _backgroundTimer = setTimeout(processBackgroundQueue, BACKGROUND_BATCH_DELAY_MS);
     }
-  }
-}
-
-/** Reset priority state (e.g. on navigation or session clear) */
-export function clearPriorityState(): void {
-  _requestedIds.clear();
-  _backgroundQueue.length = 0;
-  _backgroundProcessing.clear();
-  if (_backgroundTimer) {
-    clearTimeout(_backgroundTimer);
-    _backgroundTimer = null;
   }
 }
 
@@ -400,36 +383,6 @@ async function resolveMetadataFromFallbacks(appId: string): Promise<NormalizedGa
         name: metadataResult.name || null,
         media,
         rawMetadata: metadataResult,
-      };
-    }
-  } catch {
-    // Fall through
-  }
-
-  try {
-    const libEntry = await getLibraryAppInfo(appId);
-    if (libEntry) {
-      const media: NormalizedGameMediaPaths = {
-        cover: libEntry.cover_path || null,
-        background: libEntry.hero_path || null,
-        landscape: libEntry.grid_path || libEntry.header_image || null,
-        logo: libEntry.logo_path || null,
-        icon: libEntry.icon_path || null,
-      };
-
-      if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
-        console.log(`[GameDataService] metadata resolved from library cache for ${appId}`);
-      }
-
-      return {
-        id: appId,
-        title: libEntry.name,
-        provider: "steam",
-        installed: null,
-        lastPlayed: null,
-        name: libEntry.name,
-        media,
-        rawMetadata: null,
       };
     }
   } catch {
@@ -637,7 +590,7 @@ export async function getStoreData(appId: string): Promise<StoreDataResult | nul
   }
 
   try {
-    result.reviews = await getStoreReviewSummary(numericAppId) as unknown as StoreGameDetailsEntry | null;
+    result.reviews = await getStoreReviewSummary(numericAppId) as unknown as StoreReviewEntry | null;
   } catch {
     // non-critical
   }
@@ -660,18 +613,4 @@ export async function getStoreData(appId: string): Promise<StoreDataResult | nul
  */
 export async function isSqliteAvailable(): Promise<boolean> {
   return ensureSqliteAvailable();
-}
-
-/**
- * Clear any in-memory caches used by this service.
- * Delegates to existing cache-clearing methods.
- */
-export function clearGameDataCaches(): void {
-  clearResolvedMediaSessionCache();
-  clearAppInfoMemoryCache();
-  clearStoreAppInfoMemoryCache();
-  clearGameMetadataCache();
-  _writtenMediaIds.clear();
-  _writtenMetadataIds.clear();
-  _requestedIds.clear();
 }

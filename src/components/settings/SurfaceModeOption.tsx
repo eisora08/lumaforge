@@ -27,7 +27,7 @@ export default function SurfaceModeOption({
         </span>
 
         {selected && (
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-(--color-accent) text-black">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-(--color-accent) text-(--color-accent-text)">
             <Check className="h-4 w-4" />
           </span>
         )}

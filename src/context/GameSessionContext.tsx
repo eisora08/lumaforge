@@ -1,21 +1,28 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { isProcessRunning, terminateProcess, terminateProcessTree, terminateProcessByName, launchSteamApp, launchExecutable, listProcesses } from "../services/tauri";
-import { findGameProcess, findGameProcesses, findCandidates, pickBestCandidate, resolveExecutablePath, getExeNamesFromSession, extractExeName } from "../utils/gameProcessDetection";
+import { isProcessRunning, terminateProcess, terminateProcessTree, launchSteamApp, launchExecutable, listProcesses } from "../services/tauri";
+import { findGameProcess, findGameProcesses, findCandidates, pickBestCandidate, resolveExecutablePath, extractExeName } from "../utils/gameProcessDetection";
 import { startPlaySession, endPlaySession, getCachedPlaytimeStore } from "../services/playtimeService";
 import { setActivePlayedSession, clearActivePlayedSession } from "../services/achievementAutoSyncService";
 import { createSessionRecord, addSession } from "../services/gameSessionHistory";
 import { pushActivityEvent } from "./GameActivityContext";
+import { dispatchProviderLaunch } from "../utils/providerLaunchAdapter";
+import { loadSettings } from "../context/SettingsContext";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
 import { setInstalledGameEntry, discoverAndRegister } from "../services/installedGamesRegistry";
+import { showError } from "../components/toast/GameToast";
 
 async function evaluateLauncherAchievements(): Promise<void> {
   try {
     const { evaluateAchievements } = await import("../features/activity/achievements/achievementEngine");
     const { buildEvalContext } = await import("../features/activity/stats/statsService");
     const { getReconciledGames } = await import("../services/gameStore");
-    const games = getReconciledGames();
+    const { getAllManualGames } = await import("../services/manualGameStore");
+    const { manualGameToLibraryGame } = await import("../services/manualGameLibraryMapper");
+    const steamGames = getReconciledGames();
+    const manualGames = getAllManualGames().map(manualGameToLibraryGame);
+    const games = [...steamGames, ...manualGames];
     if (games.length === 0) return;
     const ctx = buildEvalContext(games);
     const result = evaluateAchievements(ctx);
@@ -110,7 +117,12 @@ export type OverlayEvent = {
   type: "launch" | "end";
   gameTitle: string;
   provider: string;
+  /** Cover-first image for backward compat (same as heroUrl for most games). */
   imageUrl?: string;
+  /** Hero/background image for the summary overlay (background-first for manual). */
+  heroUrl?: string;
+  /** Icon for the HUD chip. */
+  iconUrl?: string;
   durationSeconds?: number;
 };
 
@@ -120,7 +132,7 @@ export type ActiveGameState = Exclude<GameSessionState, "idle" | "error">;
 
 export type TrackingConfidence = "high" | "medium" | "low" | "none";
 
-export type GameSessionSource = "steam" | "epic" | "local" | "unknown";
+export type GameSessionSource = "steam" | "epic" | "debrid" | "local" | "manual" | "unknown";
 
 export type RunningGameSession = {
   gameKey: string;
@@ -138,6 +150,7 @@ export type RunningGameSession = {
   softSession?: boolean;
   trackingConfidence?: TrackingConfidence;
   errorMessage?: string;
+  stopError?: string;
 };
 
 export function computeGameKey(game: {
@@ -180,6 +193,8 @@ type GameSessionContextValue = {
   overlayEvent: OverlayEvent | null;
   /** Dismiss the current overlay toast. */
   clearOverlay: () => void;
+  /** Get resolved media info (imageUrl, heroUrl, iconUrl) for a session key. Returns undefined if no media resolved yet. */
+  getSessionMedia: (gameKey: string) => { imageUrl?: string; heroUrl?: string; iconUrl?: string; title: string; provider: string } | undefined;
 };
 
 const STORAGE_KEY = "lumaforge-running-games-v1";
@@ -228,6 +243,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     const raw = loadSessions();
     const cleaned: Record<string, RunningGameSession> = {};
     let changed = false;
+    const expiredKeys: string[] = [];
 
     for (const [key, s] of Object.entries(raw)) {
       if (s.state === "launching") {
@@ -249,15 +265,17 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             cleaned[key] = s;
           } else {
             console.debug("[GameSession] hydrate: soft session expired", { gameKey: key, age });
+            expiredKeys.push(key);
             changed = true;
           }
-        } else if (s.source === "steam" || s.source === "epic") {
+        } else if (s.source === "steam" || s.source === "epic" || s.source === "debrid") {
           const age = Date.now() - s.updatedAt;
           if (age < STEAM_SOFT_TTL_MS) {
             console.debug("[GameSession] hydrate: soft session kept", { gameKey: key, age });
             cleaned[key] = { ...s, softSession: true };
           } else {
             console.debug("[GameSession] hydrate: soft session expired", { gameKey: key, age });
+            expiredKeys.push(key);
             changed = true;
           }
         } else {
@@ -266,6 +284,25 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       } else if (s.state === "stopping" || s.state === "error") {
         changed = true;
       }
+    }
+
+    // Force lastPlayedAt to last session end for expired sessions
+    // so the dashboard shows the correct time instead of "just now"
+    if (expiredKeys.length > 0) {
+      import("../services/playtimeService").then(({ getCachedPlaytimeStore }) => {
+        const cached = getCachedPlaytimeStore();
+        if (!cached) return;
+        for (const key of expiredKeys) {
+          const entry = cached.games[key];
+          if (entry) {
+            // Set lastPlayedAt to the session's updatedAt (last known activity)
+            const s = raw[key];
+            const lastActivity = s ? Math.floor(s.updatedAt / 1000) : Math.floor(Date.now() / 1000);
+            entry.lastPlayedAt = lastActivity;
+          }
+        }
+        window.dispatchEvent(new CustomEvent("lumaforge-data-changed", { detail: { key: "lumaforge-playtime-v1" } }));
+      });
     }
 
     if (changed || Object.keys(cleaned).length !== Object.keys(raw).length) {
@@ -417,10 +454,10 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     []
   );
 
-  const killPidWithRetry = useCallback(
-    async (gameKey: string, pid: number, killNames?: string[]): Promise<boolean> => {
+  /** Kill a single PID via terminateProcessTree with retries. No name-based fallback. */
+  const killPidSingleTarget = useCallback(
+    async (gameKey: string, pid: number): Promise<boolean> => {
       for (let attempt = 1; attempt <= STOP_RETRY_MAX; attempt++) {
-        // Check if process already dead
         try {
           const stillRunning = await isProcessRunning(pid);
           if (!stillRunning) {
@@ -431,49 +468,24 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           // If check fails, proceed with kill
         }
 
-        // Attempt A: Kill by PID tree
         try {
           await terminateProcessTree(pid);
-          console.debug("[GameSession] kill by PID attempt", { gameKey, pid, attempt });
+          console.debug("[GameSession] terminateProcessTree sent", { gameKey, pid, attempt });
         } catch (err) {
-          console.warn("[GameSession] kill by PID failed", { gameKey, pid, attempt, err });
+          console.warn("[GameSession] terminateProcessTree failed", { gameKey, pid, attempt, err });
         }
 
         await delay(STOP_RETRY_DELAY_MS);
 
-        // Check if PID is dead
         try {
           const alive = await isProcessRunning(pid);
           if (!alive) {
-            console.debug("[GameSession] process confirmed dead via PID", { gameKey, pid, attempt });
+            console.debug("[GameSession] process confirmed dead", { gameKey, pid, attempt });
             return true;
           }
         } catch {
-          // continue with name fallback
-        }
-
-        // Attempt B: Kill by name (fallback within same retry)
-        if (killNames && killNames.length > 0) {
-          for (const name of killNames) {
-            try {
-              console.debug("[GameSession] kill by name fallback", { gameKey, name, attempt });
-              await terminateProcessByName(name);
-            } catch {
-              // ignore
-            }
-            await delay(STOP_RETRY_DELAY_MS);
-          }
-
-          // Verify with original PID
-          try {
-            const aliveAfterNameKill = await isProcessRunning(pid);
-            if (!aliveAfterNameKill) {
-              console.debug("[GameSession] process confirmed dead via name fallback", { gameKey, pid, attempt });
-              return true;
-            }
-          } catch {
-            if (attempt === STOP_RETRY_MAX) return true;
-          }
+          // assume dead on check failure
+          return true;
         }
 
         console.warn("[GameSession] process still alive after attempt", { gameKey, pid, attempt });
@@ -500,48 +512,90 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       // Set stopping state immediately
       markStopping(gameKey);
 
-      // Build kill names upfront (from multiple sources + registry)
-      let registryExeName: string | undefined;
-      let registryExePath: string | undefined;
-      try {
-        const { getInstalledGameEntry } = await import("../services/installedGamesRegistry");
-        const registryEntry = await getInstalledGameEntry(gameKey);
-        if (registryEntry) {
-          registryExeName = registryEntry.exeName;
-          registryExePath = registryEntry.exePath;
-        }
-      } catch {}
-      const killNames = getExeNamesFromSession({
-        processName: session.processName || registryExeName,
-        executablePath: session.executablePath || registryExePath,
-        title: session.title,
-      });
-
       let terminated = false;
+      let lastError: string | null = null;
+      let killedPid: number | null = null; // Track the actual PID that was killed
 
-      // ---- LAYER 1: Kill by stored PID ----
-      const storedPid =
-        session.pid != null && session.pid > 0 ? session.pid : null;
+      // Ownership context: canonical paths for verifying PID identity before kill
+      const ownedExePath = session.executablePath
+        ? session.executablePath.replace(/\\/g, "/").toLowerCase()
+        : "";
+      const ownedInstallDir = session.installDir
+        ? session.installDir.replace(/\\/g, "/").toLowerCase()
+        : "";
 
-      if (storedPid != null) {
-        // Validate PID before using it
+      /**
+       * Verify that a PID belongs to this game by checking its exe path against
+       * known game exe/installDir. Returns true if the PID is owned by us.
+       *
+       * Relaxed mode (relaxed=true): when exe context exists but doesn't match,
+       * still accept if the process is NOT in the excluded list (launcher/helper).
+       * This handles Epic games where the manifest exe path may differ from the
+       * actual running process (game moved, wrapper exe, etc.).
+       */
+      async function verifyPidOwnership(pid: number, relaxed = false): Promise<boolean> {
+        if (!ownedExePath && !ownedInstallDir) return true; // no context → trust
         try {
-          const pidValid = await isProcessRunning(storedPid);
-          if (pidValid) {
-            terminated = await killPidWithRetry(gameKey, storedPid, killNames);
-          } else {
-            console.debug("[GameSession] stored PID not running, skipping layer 1", {
-              gameKey,
-              pid: storedPid,
-            });
+          const all = await listProcesses();
+          const proc = all.find((p) => p.pid === pid);
+          if (!proc?.exe) return false;
+          const pexe = proc.exe.replace(/\\/g, "/").toLowerCase();
+          if (ownedExePath && pexe === ownedExePath) return true;
+          if (ownedInstallDir && pexe.startsWith(ownedInstallDir)) return true;
+          // Relaxed: accept if not a known excluded process
+          if (relaxed) {
+            const { isExcluded } = await import("../utils/gameProcessDetection");
+            if (!isExcluded(proc.name)) return true;
           }
+          return false;
         } catch {
-          // If check fails, attempt kill anyway
-          terminated = await killPidWithRetry(gameKey, storedPid, killNames);
+          return true; // trust on check failure
         }
       }
 
-      // ---- LAYER 2: Scan ALL processes for any matching candidate ----
+      // ---- LAYER 1: Kill by stored PID (with ownership verification) ----
+      const storedPid =
+        session.pid != null && session.pid > 0 ? session.pid : null;
+      if (storedPid != null) {
+        try {
+          const pidRunning = await isProcessRunning(storedPid);
+          if (pidRunning) {
+            // Try strict ownership first, then relaxed (exe path may differ from stored path
+            // for Epic manifests, Steam games with wrapper exes, or moved installations)
+            let owned = await verifyPidOwnership(storedPid);
+            if (!owned) {
+              owned = await verifyPidOwnership(storedPid, true);
+              if (owned) {
+                console.debug("[GameSession] stored PID passed relaxed ownership check", { gameKey, pid: storedPid });
+              }
+            }
+            if (owned) {
+              terminated = await killPidSingleTarget(gameKey, storedPid);
+              if (terminated) killedPid = storedPid;
+            } else {
+              console.warn("[GameSession] stored PID failed ownership check", {
+                gameKey,
+                pid: storedPid,
+              });
+            }
+          } else {
+            console.debug("[GameSession] stored PID not running, session already dead", {
+              gameKey,
+              pid: storedPid,
+            });
+            terminated = true; // process already gone — clean up session
+            killedPid = storedPid;
+          }
+        } catch {
+          // If check fails, skip (do NOT kill blindly without ownership)
+          console.warn("[GameSession] ownership check failed for stored PID", {
+            gameKey,
+            pid: storedPid,
+          });
+        }
+      }
+
+      // ---- LAYER 2: Scan for candidates via process detection (ownership-validated) ----
       if (!terminated) {
         try {
           const input: FindProcessInput = {
@@ -555,15 +609,49 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           console.debug("[GameSession] process scan found candidates", {
             gameKey,
             count: allCandidates.length,
-            candidates: allCandidates.map((c) => ({ pid: c.pid, name: c.name, confidence: c.confidence })),
+            candidates: allCandidates.map((c) => ({
+              pid: c.pid,
+              name: c.name,
+              confidence: c.confidence,
+              reason: c.reason,
+            })),
           });
 
           for (const candidate of allCandidates) {
-            if (candidate.pid === storedPid) continue; // already tried
-            const killed = await killPidWithRetry(gameKey, candidate.pid, killNames);
+            if (candidate.pid === storedPid) continue; // already tried in layer 1
+            if (candidate.confidence === "low") {
+              console.debug("[GameSession] skipping low-confidence candidate", {
+                gameKey,
+                pid: candidate.pid,
+                name: candidate.name,
+                reason: candidate.reason,
+              });
+              continue; // never kill low-confidence without ownership proof
+            }
+            // Try strict ownership first, then relaxed (exe path may differ from stored path)
+            let owned = await verifyPidOwnership(candidate.pid);
+            if (!owned) {
+              owned = await verifyPidOwnership(candidate.pid, true);
+              if (owned) {
+                console.debug("[GameSession] candidate passed relaxed ownership check", {
+                  gameKey,
+                  pid: candidate.pid,
+                  name: candidate.name,
+                });
+              }
+            }
+            if (!owned) {
+              console.warn("[GameSession] candidate failed ownership check", {
+                gameKey,
+                pid: candidate.pid,
+                name: candidate.name,
+              });
+              continue;
+            }
+            const killed = await killPidSingleTarget(gameKey, candidate.pid);
             if (killed) {
               terminated = true;
-              // Update session with found process info
+              killedPid = candidate.pid;
               setSessions((prev) => {
                 const existing = prev[gameKey];
                 if (!existing) return prev;
@@ -583,80 +671,38 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           }
         } catch (err) {
           console.warn("[GameSession] process scan failed", { gameKey, err });
+          lastError = "Process scan failed";
         }
       }
 
-      // ---- LAYER 3: Kill by executable name (aggressive) ----
-      if (!terminated && killNames.length > 0) {
-        console.debug("[GameSession] layer 3: killing by name", { gameKey, names: killNames });
-
-        for (const name of [...new Set(killNames)]) {
-          if (terminated) break;
-          for (let attempt = 1; attempt <= STOP_RETRY_MAX; attempt++) {
-            try {
-              await terminateProcessByName(name);
-              await delay(STOP_RETRY_DELAY_MS);
-
-              // Verify by listing all processes
-              const alive = await listProcesses();
-              const nameLower = name.toLowerCase().replace(".exe", "");
-              const stillExists = alive.some(
-                (p) =>
-                  p.name.toLowerCase() === nameLower ||
-                  p.name.toLowerCase() === `${nameLower}.exe` ||
-                  p.name.toLowerCase() === name.toLowerCase() ||
-                  p.exe?.toLowerCase().endsWith(`/${name.toLowerCase()}`) ||
-                  p.exe?.toLowerCase().endsWith(`\\${name.toLowerCase()}`)
-              );
-              if (!stillExists) {
-                terminated = true;
-                break;
-              }
-            } catch (err) {
-              console.warn("[GameSession] kill by name failed", {
+      // ---- POST-KILL VERIFICATION ----
+      if (terminated) {
+        // Verify the actually-killed PID is dead, not the original storedPid
+        // (Layer 2 may have killed a different PID than what was stored)
+        const verifyPid = killedPid;
+        if (verifyPid != null && verifyPid > 0) {
+          await delay(300);
+          try {
+            const stillAlive = await isProcessRunning(verifyPid);
+            if (stillAlive) {
+              console.warn("[GameSession] post-kill verification failed — PID still alive", {
                 gameKey,
-                name,
-                attempt,
-                err,
+                pid: verifyPid,
               });
+              terminated = false;
+              lastError = `PID ${verifyPid} still running after termination attempt`;
             }
+          } catch {
+            // Check failure — assume dead
           }
         }
       }
 
-      // ---- LAYER 4: Brute force — scan process list and kill any exe matching game title ----
-      if (!terminated && session.title) {
-        try {
-          const titleWords = session.title
-            .toLowerCase()
-            .split(/[^a-z0-9]+/)
-            .filter((w) => w.length > 3);
-          const allProcs = await listProcesses();
-          for (const proc of allProcs) {
-            const procName = proc.name.toLowerCase().replace(".exe", "");
-            const match = titleWords.some(
-              (word) => procName.includes(word) || word.includes(procName)
-            );
-            if (match && !procName.includes("steam") && !procName.includes("epic")) {
-              try {
-                await terminateProcessTree(proc.pid);
-                await delay(200);
-                const stillRunning = await isProcessRunning(proc.pid);
-                if (!stillRunning) {
-                  terminated = true;
-                  break;
-                }
-              } catch {
-                // continue
-              }
-            }
-          }
-        } catch {
-          // best effort
-        }
-      }
-
-      console.debug("[GameSession] stopSession result", { gameKey, terminated });
+      console.debug("[GameSession] stopSession result", {
+        gameKey,
+        terminated,
+        error: lastError,
+      });
 
       if (terminated) {
         // Process confirmed dead — clean up session
@@ -666,9 +712,10 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           return next;
         });
       } else {
-        // Do NOT clear session — prevent desync. Mark as soft session so UI shows correct state.
-        console.warn("[GameSession] all stop attempts exhausted, marking as soft session", {
+        // Do NOT clear session — keep Running with error so user sees the state
+        console.warn("[GameSession] stop failed, keeping session running with error", {
           gameKey,
+          error: lastError,
         });
         setSessions((prev) => {
           const existing = prev[gameKey];
@@ -678,8 +725,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             [gameKey]: {
               ...existing,
               state: "running" as ActiveGameState,
-              softSession: true,
-              trackingConfidence: "none",
+              stopError: lastError ?? "Failed to terminate process",
               updatedAt: Date.now(),
             },
           };
@@ -688,7 +734,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
       return { terminated };
     },
-    [killPidWithRetry, markStopping]
+    [markStopping]
   );
 
   const findGameProcessForSession = useCallback(
@@ -741,6 +787,10 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     launchTimeout: ReturnType<typeof setTimeout> | null;
     snapshotBefore: ProcessInfo[];
     dispatched: boolean;
+    /** Synchronous single-flight guard — prevents concurrent launchGame calls
+     *  from passing the async state check before React batches the first setSessions.
+     *  Set true at call start, cleared in all exit paths (success, error, cancel). */
+    inFlight: boolean;
   }>({
     token: null,
     cancelled: false,
@@ -750,10 +800,11 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     launchTimeout: null,
     snapshotBefore: [],
     dispatched: false,
+    inFlight: false,
   });
 
   // Stores image URL and display info per session key for overlay events
-  const sessionMediaRef = useRef<Record<string, { imageUrl?: string; title: string; provider: string }>>({});
+  const sessionMediaRef = useRef<Record<string, { imageUrl?: string; heroUrl?: string; iconUrl?: string; title: string; provider: string }>>({});
 
   // Tracks active play session IDs for playtime recording
   const activePlaySessionsRef = useRef<Record<string, string>>({});
@@ -793,13 +844,39 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             appId: game.appId,
           }, launchStateRef.current.snapshotBefore);
           const best = pickBestCandidate(candidates);
+
+          // Epic detection diagnostics — always log for debugging
+          if (launchStateRef.current.token === token) {
+            const source = sessionsRef.current[computedKey]?.source;
+            if (source === "epic" || source === "debrid" || candidates.length > 0) {
+              console.debug("[Launch][EPIC_SCAN]", {
+                gameKey: computedKey,
+                processCount: processes.length,
+                candidateCount: candidates.length,
+                best: best ? { pid: best.pid, name: best.name, confidence: best.confidence, exe: best.exe } : null,
+                executablePath: game.executablePath ? game.executablePath.substring(0, 60) : "none",
+                title: game.title,
+                delayMs,
+              });
+            }
+          }
+
           if (best) {
             if (ENABLE_VERBOSE_LAUNCH_LOGS) {
-              console.debug("[Launch] candidate found, marking running", { gameKey: computedKey, pid: best.pid, confidence: best.confidence });
+              console.debug("[Launch] candidate found, marking running", { gameKey: computedKey, pid: best.pid, confidence: best.confidence, score: best.score });
             }
             setSessions((prev) => {
               const existing = prev[computedKey];
               if (!existing) return prev;
+              if (existing.state !== "launching") return prev;
+              // PID ownership protection: don't replace a verified high-confidence PID
+              // with a lower-scoring candidate (e.g. crash handler in install dir)
+              if (existing.pid != null && existing.trackingConfidence === "high" && best.confidence !== "high") {
+                if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+                  console.debug("[Launch] PID ownership protected — keeping existing", { gameKey: computedKey, existingPid: existing.pid, newCandidatePid: best.pid, newConfidence: best.confidence });
+                }
+                return prev;
+              }
               return {
                 ...prev,
                 [computedKey]: {
@@ -813,6 +890,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                 },
               };
             });
+            launchStateRef.current.inFlight = false;
             resolve();
             return;
           }
@@ -830,9 +908,18 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
   const launchGame = useCallback(async (game: LibraryGame) => {
     const ls = launchStateRef.current;
+
+    // Synchronous single-flight guard — prevents concurrent calls from passing
+    // the async state check before React batches the first setSessions.
+    if (ls.inFlight) {
+      console.debug("[Launch] blocked — launch already in flight", { source: game.source, title: game.title });
+      return;
+    }
+
     clearLaunchTimers();
     ls.cancelled = false;
     ls.dispatched = false;
+    ls.inFlight = true;
     const token = Symbol("launch");
     ls.token = token;
 
@@ -848,6 +935,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       if (ENABLE_VERBOSE_LAUNCH_LOGS) {
         console.debug("[Launch] ignored — already in state", { gameKey: computedKey, state: currentState });
       }
+      ls.inFlight = false;
       return;
     }
 
@@ -860,63 +948,264 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
     // Set launching state
     const now = Date.now();
-    setSessions((prev) => ({
-      ...prev,
-      [computedKey]: {
-        gameKey: computedKey,
-        gameId: game.id,
-        appId: game.appId,
-        title: game.title,
-        source: game.source === "steam" ? "steam" : game.source === "local" ? "local" : "unknown",
-        state: "launching",
-        executablePath: game.executablePath,
-        installDir: game.installDir,
-        launchedAt: now,
-        updatedAt: now,
-      },
-    }));
+    setSessions((prev) => {
+      const existing = prev[computedKey];
+      return {
+        ...prev,
+        [computedKey]: {
+          ...existing,
+          gameKey: computedKey,
+          gameId: game.id,
+          appId: game.appId,
+          title: game.title,
+          source: game.source === "steam" ? "steam" : game.source === "epic" ? "epic" : game.source === "debrid" ? "debrid" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : "unknown",
+          state: "launching",
+          executablePath: game.executablePath,
+          installDir: game.installDir,
+          launchedAt: now,
+          updatedAt: now,
+        },
+      };
+    });
 
-    // Store media info for overlay events
-    const bestImageUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
-    const providerLabel = game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Unknown";
-    sessionMediaRef.current[computedKey] = { imageUrl: bestImageUrl, title: game.title, provider: providerLabel };
+    // Store media info for overlay events + HUD
 
-    // 30-second timeout guard — prevents infinite launching
+    // Helper: resolve a raw path (relative/absolute) to a full URL.
+    // Uses resolveGameMediaUrl for relative "media/"/"img/" paths to resolve
+    // against <appData>/games/<provider>/<appId>/ — NOT against appData root.
+    const appIdStr = game.appId ? String(game.appId) : "";
+    const _resolveMediaModule = await import("../services/gameCacheService");
+    async function resolveUrl(raw?: string | null, provider?: string): Promise<string | undefined> {
+      if (!raw) return undefined;
+      if (raw.startsWith("http") || raw.startsWith("asset://") || raw.startsWith("data:") || raw.startsWith("file://")) return raw;
+      try {
+        if ((raw.startsWith("media/") || raw.startsWith("img/")) && appIdStr) {
+          return await _resolveMediaModule.resolveGameMediaUrl(appIdStr, raw, provider || game.source || "steam") ?? undefined;
+        }
+        return await _resolveMediaModule.resolveProviderMediaPreviewUrl(raw) ?? undefined;
+      } catch { return undefined; }
+    }
+
+    let imageUrl: string | undefined;   // landscape-first for overlay card (360×160, object-fit: cover)
+    let heroUrl: string | undefined;    // background-first (summary overlay hero)
+    let iconUrl: string | undefined;    // icon-first (HUD chip)
+
+    if (game.source === "manual" && game.providerGameId) {
+      // Manual games: resolve each role individually from ManualGameEntry
+      const { getManualGame } = await import("../services/manualGameStore");
+      const entry = getManualGame(game.providerGameId);
+
+      // Resolve all paths in parallel (4 roles, non-critical on failure)
+      const [resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
+        resolveUrl(entry?.coverPath, "steam"),
+        resolveUrl(entry?.landscapePath, "steam"),
+        resolveUrl(entry?.backgroundPath, "steam"),
+        resolveUrl(entry?.iconPath, "steam"),
+      ]);
+
+      // HUD chip: icon first (compact thumbnail)
+      iconUrl = resolvedIcon ?? resolvedLandscape ?? resolvedBackground;
+      // Overlay card (360×160): landscape first (least cropped), background second — NO cover
+      heroUrl = resolvedBackground ?? resolvedLandscape;
+      imageUrl = resolvedLandscape ?? resolvedBackground;
+
+      // Fallback: manual game with appId — local appinfo media (work offline)
+      if (game.appId && (!imageUrl || !heroUrl || !iconUrl)) {
+        try {
+          const { loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
+          const appInfo = await loadGameAppInfoWithMediaFallback(String(game.appId));
+          if (appInfo?.media) {
+            if (!imageUrl) imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
+            if (!heroUrl) heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
+            if (!iconUrl) iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
+          }
+        } catch { /* non-critical */ }
+      }
+
+      // Last resort: LibraryGame fields (may be HTTP URLs)
+      if (!imageUrl) imageUrl = await resolveUrl(game.imageUrl, "steam");
+      if (!heroUrl) heroUrl = await resolveUrl(game.backgroundPath || game.imageUrl, "steam");
+      if (!iconUrl) iconUrl = await resolveUrl(game.iconPath, "steam");
+    } else if (game.source === "epic" && game.providerGameId) {
+      // Epic games: resolve each role from override store
+      const { readEpicOverrides } = await import("../services/epicOverrideStore");
+      const overrides = readEpicOverrides(game.providerGameId);
+
+      const [resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
+        resolveUrl(overrides?.coverPath, "epic"),
+        resolveUrl(overrides?.landscapePath, "epic"),
+        resolveUrl(overrides?.backgroundPath, "epic"),
+        resolveUrl(overrides?.iconPath, "epic"),
+      ]);
+
+      iconUrl = resolvedIcon ?? resolvedLandscape ?? resolvedBackground;
+      heroUrl = resolvedBackground ?? resolvedLandscape;
+      imageUrl = resolvedLandscape ?? resolvedBackground;
+    } else if (game.source === "debrid") {
+      // Debrid games: prefer local media (work offline), fall back to Steam CDN.
+      const { buildSteamCdnUrl, loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
+      const cdnHero = appIdStr ? buildSteamCdnUrl(appIdStr, "hero") ?? undefined : undefined;
+      const cdnCapsule = appIdStr ? buildSteamCdnUrl(appIdStr, "capsule") ?? undefined : undefined;
+      const cdnLogo = appIdStr ? buildSteamCdnUrl(appIdStr, "logo") ?? undefined : undefined;
+
+      // Try local media files first (downloaded by artwork refresh)
+      if (appIdStr) {
+        try {
+          const appInfo = await loadGameAppInfoWithMediaFallback(appIdStr);
+          if (appInfo?.media) {
+            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
+            heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
+            iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
+          }
+        } catch { /* non-critical */ }
+      }
+      // Fallback to CDN URLs (require internet)
+      if (!imageUrl) {
+        const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || cdnCapsule || cdnHero || undefined;
+        imageUrl = (await resolveUrl(rawBestUrl, "steam")) ?? cdnCapsule ?? cdnHero;
+      }
+      if (!heroUrl) {
+        const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || cdnHero || cdnCapsule || undefined;
+        heroUrl = (await resolveUrl(rawBestUrl, "steam")) ?? cdnHero ?? cdnCapsule;
+      }
+      if (!iconUrl) iconUrl = (await resolveUrl(game.iconPath, "steam")) ?? cdnLogo ?? imageUrl;
+    } else {
+      // Steam / Local: prefer local media files (work offline), fall back to metadata HTTP URLs
+      const { loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
+      if (appIdStr) {
+        try {
+          const appInfo = await loadGameAppInfoWithMediaFallback(appIdStr);
+          if (appInfo?.media) {
+            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
+            heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
+            iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
+          }
+        } catch { /* non-critical */ }
+      }
+      // Fallback to metadata HTTP URLs (require internet)
+      if (!imageUrl) {
+        const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
+        imageUrl = await resolveUrl(rawBestUrl, "steam");
+      }
+      if (!heroUrl) heroUrl = imageUrl;
+      if (!iconUrl) iconUrl = await resolveUrl(game.iconPath, "steam");
+    }
+
+    const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "debrid" ? "Debrid" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : "Unknown";
+    sessionMediaRef.current[computedKey] = { imageUrl, heroUrl, iconUrl, title: game.title, provider: providerLabel };
+
+    // Timeout guard — prevents infinite launching
+    // Epic needs longer: extended scan runs up to ~55s; use 65s guard
+    // Steam/local: 30s is sufficient (faster launch)
+    const isEpicSource = game.source === "epic";
+    const guardTimeoutMs = isEpicSource ? 65000 : 30000;
     ls.guardTimer = setTimeout(() => {
       ls.guardTimer = null;
       if (ls.token === token && !ls.cancelled) {
         const s = sessionsRef.current[computedKey];
         if (s?.state === "launching") {
           if (ENABLE_VERBOSE_LAUNCH_LOGS) {
-            console.debug("[Launch] timeout — 30s guard, forcing error", { gameKey: computedKey });
+            console.debug("[Launch] timeout — guard, forcing", { gameKey: computedKey, isEpic: isEpicSource, timeoutMs: guardTimeoutMs });
           }
           setSessions((prev) => {
             const existing = prev[computedKey];
             if (!existing || existing.state !== "launching") return prev;
+            if (isEpicSource) {
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "error" as ActiveGameState,
+                  errorMessage: "Game did not start. The Epic Games Launcher may need authentication or a restart.",
+                  updatedAt: Date.now(),
+                },
+              };
+            }
             return {
               ...prev,
               [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
             };
           });
+          ls.inFlight = false;
         }
       }
-    }, 30000);
+    }, guardTimeoutMs);
 
     // Delayed dispatch so Cancel can abort
-    const dispatchDelayMs = game.source === "steam" ? 1500 : 800;
+    const dispatchDelayMs = game.source === "steam" ? 1500 : game.source === "epic" ? 1500 : game.source === "debrid" ? 800 : 800;
     ls.dispatchTimer = setTimeout(async () => {
       ls.dispatchTimer = null;
-      if (ls.cancelled || ls.token !== token) return;
-
-      ls.dispatched = true;
-      if (ENABLE_VERBOSE_LAUNCH_LOGS) {
-        console.debug("[Launch] backend response", { gameKey: computedKey });
-      }
-
-      try {
-        if (game.source === "steam" && game.appId) {
-          await launchSteamApp(Number(game.appId));
           if (ls.cancelled || ls.token !== token) return;
+
+          ls.dispatched = true;
+          if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+            console.debug("[Launch] backend response", { gameKey: computedKey });
+          }
+
+          try {
+            if (game.source === "steam" && game.isStandalone) {
+              // Standalone mode: launch exe directly (no Steam)
+              let effectiveExePath = game.executablePath?.trim().replace(/^["']|["']$/g, "");
+              if (!effectiveExePath && game.installDir) {
+                // Fallback: discover exe from install dir via Rust
+                try {
+                  const { libraryGetGameFixInfo } = await import("../services/tauri");
+                  const fixInfo = await libraryGetGameFixInfo({
+                    appId: Number(game.appId), name: game.title,
+                    installDir: game.installDir, hasLua: !!game.hasLua, luaCount: game.luaScripts?.length ?? 0,
+                  });
+                  if (fixInfo.exeName) {
+                    effectiveExePath = fixInfo.exeName;
+                    console.debug("[Launch] standalone exe discovered", { gameKey: computedKey, exePath: fixInfo.exeName });
+                  }
+                } catch (err) {
+                  console.warn("[Launch] standalone exe discovery failed", err);
+                }
+              }
+              if (!effectiveExePath) {
+                console.warn("[Launch] standalone mode but no executable found", { gameKey: computedKey });
+                showError("No se encontró el ejecutable. Abrí Configuración > Game Fixes para detectarlo.");
+                setSessions((prev) => { const next = { ...prev }; delete next[computedKey]; return next; });
+                ls.inFlight = false;
+                return;
+              }
+              const workingDir = game.installDir || effectiveExePath.substring(0, effectiveExePath.lastIndexOf("\\"));
+              const result = await launchExecutable(effectiveExePath, undefined, workingDir || undefined);
+              if (ls.cancelled || ls.token !== token) {
+                if (result.pid) { try { await terminateProcess(result.pid); } catch { /* ignore */ } }
+                return;
+              }
+              if (result.pid) {
+                console.debug("[Launch] standalone process spawned", { gameKey: computedKey, pid: result.pid });
+                setSessions((prev) => {
+                  const existing = prev[computedKey];
+                  if (!existing) return prev;
+                  return {
+                    ...prev,
+                    [computedKey]: { ...existing, state: "running", pid: result.pid, softSession: false, trackingConfidence: "high", processName: extractExeName(effectiveExePath), updatedAt: Date.now() },
+                  };
+                });
+                ls.inFlight = false;
+              } else {
+                await scanForProcessAfterLaunch(computedKey, game, token, 0);
+                if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+                  setSessions((prev) => {
+                    const existing = prev[computedKey];
+                    if (!existing || existing.state !== "launching") return prev;
+                    return {
+                      ...prev,
+                      [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                    };
+                  });
+                  ls.inFlight = false;
+                }
+              }
+            } else if (game.source === "steam" && game.appId) {
+              await launchSteamApp(Number(game.appId), loadSettings().steamRoot || undefined);
+              if (ls.cancelled || ls.token !== token) {
+                ls.inFlight = false;
+                return;
+              }
 
           if (ENABLE_VERBOSE_LAUNCH_LOGS) {
             console.debug("[Launch] running", { gameKey: computedKey });
@@ -946,6 +1235,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
                 };
               });
+              ls.inFlight = false;
             }
           }, 2000);
         } else if (game.source === "local") {
@@ -966,7 +1256,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   exeName: resolved.exeName,
                   provider: "local",
                   lastValidated: Date.now(),
-                }).catch(() => {});
+                }).catch((err) => console.warn(err));
               }
 
               // Update session with discovered executable info
@@ -1024,6 +1314,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                 },
               };
             });
+            ls.inFlight = false;
           } else {
             await scanForProcessAfterLaunch(computedKey, game, token, 0);
             if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
@@ -1035,7 +1326,223 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
                 };
               });
+              ls.inFlight = false;
             }
+          }
+        } else if (game.source === "manual" && game.executablePath) {
+          const exePath = game.executablePath.trim().replace(/^["']|["']$/g, "");
+          const workingDir = game.workingDirectory || game.libraryPath || exePath.substring(0, exePath.lastIndexOf("\\"));
+          const args = game.launchArguments
+            ? game.launchArguments.trim().split(/\s+/).filter(Boolean)
+            : undefined;
+
+          const result = await launchExecutable(exePath, args, workingDir || undefined);
+          if (ls.cancelled || ls.token !== token) {
+            if (result.pid) {
+              try { await terminateProcess(result.pid); } catch { /* ignore */ }
+            }
+            return;
+          }
+
+          if (result.pid) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] manual process spawned", { gameKey: computedKey, pid: result.pid });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "running",
+                  pid: result.pid,
+                  softSession: false,
+                  trackingConfidence: "high",
+                  processName: extractExeName(exePath),
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+            ls.inFlight = false;
+          } else {
+            await scanForProcessAfterLaunch(computedKey, game, token, 0);
+            if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing || existing.state !== "launching") return prev;
+                return {
+                  ...prev,
+                  [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                };
+              });
+              ls.inFlight = false;
+            }
+          }
+        } else if (game.source === "debrid") {
+          // Debrid games: direct executable launch (no protocol)
+          const result = await dispatchProviderLaunch(game);
+          if (ls.cancelled || ls.token !== token) {
+            if (result.pid) {
+              try { await terminateProcess(result.pid); } catch { /* ignore */ }
+            }
+            return;
+          }
+
+          if (result.dispatched) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] debrid dispatched", { gameKey: computedKey, method: result.method, pid: result.pid ?? null });
+            }
+
+            // Direct executable reported a PID — high-confidence running, no scan needed
+            if (result.pid) {
+              const processName = game.executablePath ? extractExeName(game.executablePath) : undefined;
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing) return prev;
+                return {
+                  ...prev,
+                  [computedKey]: {
+                    ...existing,
+                    state: "running",
+                    pid: result.pid,
+                    softSession: false,
+                    trackingConfidence: "high",
+                    processName,
+                    updatedAt: Date.now(),
+                  },
+                };
+              });
+              ls.inFlight = false;
+              return;
+            }
+
+            // No PID reported — scan for process with simple delays (direct executable, fast launch)
+            const DEBRID_SCAN_DELAYS = [2000, 3000, 5000];
+            ls.launchTimeout = setTimeout(async () => {
+              ls.launchTimeout = null;
+              if (ls.token !== token || ls.cancelled) return;
+
+              for (const delayMs of DEBRID_SCAN_DELAYS) {
+                if (ls.token !== token || ls.cancelled) return;
+                await scanForProcessAfterLaunch(computedKey, game, token, delayMs);
+                if (sessionsRef.current[computedKey]?.state === "running") {
+                  return; // process detected — done
+                }
+              }
+
+              // No process detected — fall back to soft session
+              if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+                if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+                  console.debug("[Launch] no debrid process detected, marking soft session", { gameKey: computedKey });
+                }
+                setSessions((prev) => {
+                  const existing = prev[computedKey];
+                  if (!existing || existing.state !== "launching") return prev;
+                  return {
+                    ...prev,
+                    [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                  };
+                });
+                ls.inFlight = false;
+              }
+            }, 2000);
+          } else {
+            // Launch failed — set error state so UI can display message
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] debrid failed", { gameKey: computedKey, error: result.error });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "error" as ActiveGameState,
+                  errorMessage: result.error ?? "Cannot launch this Debrid game.",
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+            ls.inFlight = false;
+          }
+        } else if (game.source === "epic") {
+          // Epic protocol or direct executable launch
+          // Extended scan window: Epic Launcher needs time to authenticate + start game
+          const EPIC_SCAN_DELAYS = [0, 3000, 5000, 10000, 15000, 20000];
+          const result = await dispatchProviderLaunch(game);
+          if (ls.cancelled || ls.token !== token) return;
+
+          if (result.dispatched) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] epic dispatched", { gameKey: computedKey, method: result.method });
+            }
+
+            // Cold-launch retry: if no process found after 10s, re-dispatch once
+            let retriedColdLaunch = false;
+
+            ls.launchTimeout = setTimeout(async () => {
+              ls.launchTimeout = null;
+              if (ls.token !== token || ls.cancelled) return;
+
+              for (const delayMs of EPIC_SCAN_DELAYS) {
+                if (ls.token !== token || ls.cancelled) return;
+                await scanForProcessAfterLaunch(computedKey, game, token, delayMs);
+                if (sessionsRef.current[computedKey]?.state === "running") {
+                  return;
+                }
+                if (!retriedColdLaunch && delayMs >= 10000 && sessionsRef.current[computedKey]?.state === "launching") {
+                  retriedColdLaunch = true;
+                  if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+                    console.debug("[Launch] epic cold-launch retry", { gameKey: computedKey });
+                  }
+                  try {
+                    await dispatchProviderLaunch(game);
+                  } catch {
+                    // Non-critical
+                  }
+                }
+              }
+
+              if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+                if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+                  console.debug("[Launch] no epic process detected after extended scan", { gameKey: computedKey });
+                }
+                setSessions((prev) => {
+                  const existing = prev[computedKey];
+                  if (!existing || existing.state !== "launching") return prev;
+                  return {
+                    ...prev,
+                    [computedKey]: {
+                      ...existing,
+                      state: "error" as ActiveGameState,
+                      errorMessage: "Game did not start. The Epic Games Launcher may need authentication or a restart.",
+                      updatedAt: Date.now(),
+                    },
+                  };
+                });
+                ls.inFlight = false;
+              }
+            }, 2000);
+          } else {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] epic failed", { gameKey: computedKey, error: result.error });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "error" as ActiveGameState,
+                  errorMessage: result.error ?? "Cannot launch this Epic game.",
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+            ls.inFlight = false;
           }
         } else {
           console.warn("[Launch] cannot determine launch method", { gameKey: computedKey });
@@ -1044,6 +1551,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             delete next[computedKey];
             return next;
           });
+          ls.inFlight = false;
         }
       } catch (err) {
         console.warn("[Launch] failed", err);
@@ -1054,6 +1562,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             return next;
           });
         }
+        ls.inFlight = false;
       }
     }, dispatchDelayMs);
   }, [clearLaunchTimers, scanForProcessAfterLaunch]);
@@ -1061,9 +1570,30 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
   const cancelLaunch = useCallback(async (gameKey: string) => {
     const ls = launchStateRef.current;
     const currentState = sessionsRef.current[gameKey]?.state;
-    if (currentState !== "launching") return;
+    if (currentState !== "launching") {
+      ls.inFlight = false;
+      return;
+    }
 
     if (ls.dispatched) {
+      // For Epic: protocol dispatched but game may not start — clean up, not soft running.
+      // Prevents false playtime/session history when game was never actually detected.
+      const sessionSource = sessionsRef.current[gameKey]?.source;
+      if (sessionSource === "epic") {
+        if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+          console.debug("[Launch] cancel requested after epic dispatch — cleaning up", { gameKey });
+        }
+        ls.cancelled = true;
+        ls.token = null;
+        clearLaunchTimers();
+        setSessions((prev) => {
+          const next = { ...prev };
+          delete next[gameKey];
+          return next;
+        });
+        ls.inFlight = false;
+        return;
+      }
       if (ENABLE_VERBOSE_LAUNCH_LOGS) {
         console.debug("[Launch] cancel requested but already dispatched — marking soft running", { gameKey });
       }
@@ -1075,6 +1605,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           [gameKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
         };
       });
+      ls.inFlight = false;
       return;
     }
 
@@ -1085,6 +1616,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     ls.cancelled = true;
     ls.token = null;
     clearLaunchTimers();
+    ls.inFlight = false;
 
     const currentSession = sessionsRef.current[gameKey];
     if (currentSession?.pid != null) {
@@ -1110,8 +1642,15 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const stopGameByAppId = useCallback(async (appId: string): Promise<{ terminated: boolean }> => {
+    // Match by appId (Steam), gameKey/id (Epic/manual), or gameId (provider game id)
     for (const [key, s] of Object.entries(sessionsRef.current)) {
-      if (s.appId === appId) {
+      if (s.appId === appId || s.gameId === appId || s.gameKey === appId || key === appId) {
+        return stopSession(key);
+      }
+    }
+    // For Epic: also try matching as providerGameId substring in the key
+    for (const [key, s] of Object.entries(sessionsRef.current)) {
+      if (s.source === "epic" && s.gameKey?.includes(appId)) {
         return stopSession(key);
       }
     }
@@ -1149,21 +1688,23 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
           // Discover and register executable for Steam games without exe info
           if (curSession.source === "steam" && !curSession.executablePath && curSession.installDir) {
-            discoverAndRegister(key, curSession.installDir, curSession.title, "steam").catch(() => {});
+            discoverAndRegister(key, curSession.installDir, curSession.title, "steam").catch((err) => console.warn(err));
           }
 
           const mediaInfo = sessionMediaRef.current[key];
-          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "local" ? "Local" : "Unknown";
+          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "epic" ? "Epic" : curSession.source === "debrid" ? "Debrid" : curSession.source === "local" ? "Local" : curSession.source === "manual" ? "Manual" : "Unknown";
           setOverlayEvent({
             id: `launch-${key}-${curSession.updatedAt}`,
             type: "launch",
             gameTitle: curSession.title || "Unknown Game",
             provider,
             imageUrl: mediaInfo?.imageUrl,
+            heroUrl: mediaInfo?.heroUrl,
+            iconUrl: mediaInfo?.iconUrl,
           });
 
           // Start playtime session
-          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "local" ? "local" : "unknown";
+          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "epic" ? "epic" : curSession.source === "debrid" ? "debrid" : curSession.source === "local" ? "local" : curSession.source === "manual" ? "manual" : "unknown";
           startPlaySession({
             gameKey: key,
             appId: curSession.appId,
@@ -1172,16 +1713,13 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             startedAt: Math.floor(Date.now() / 1000),
           }).then((activeSession) => {
             activePlaySessionsRef.current[key] = activeSession.sessionId;
-            // Phase 5: Update lastPlayedAt in cached store immediately so UI shows "just now"
+            // startPlaySession already patched app-{appId} atomically.
+            // Create canonical entry if it doesn't exist yet (first launch of a game with no prior import).
             const cached = getCachedPlaytimeStore();
             if (cached) {
               const now = Math.floor(Date.now() / 1000);
-              // Always update via canonical app-<appId> key for consistent lookup
               const canonicalKey = curSession.appId ? `app-${curSession.appId}` : key;
-              if (cached.games[canonicalKey]) {
-                cached.games[canonicalKey].lastPlayedAt = now;
-              } else {
-                // Create entry if it doesn't exist yet
+              if (!cached.games[canonicalKey] && curSession.appId) {
                 cached.games[canonicalKey] = {
                   gameKey: canonicalKey,
                   appId: curSession.appId ?? null,
@@ -1199,12 +1737,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                 };
               }
               // Also update legacy key if different
-              if (key !== canonicalKey) {
-                if (cached.games[key]) {
-                  cached.games[key].lastPlayedAt = now;
-                } else {
-                  cached.games[key] = { ...cached.games[canonicalKey], gameKey: key };
-                }
+              if (key !== canonicalKey && cached.games[key]) {
+                cached.games[key].lastPlayedAt = now;
               }
               cached.updatedAt = Date.now();
               console.log(`[ACTIVITY][LAUNCH_TRACKED] appid=${curSession.appId} lastPlayedAt=${now}`);
@@ -1224,13 +1758,15 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           ? Math.floor((Date.now() - prevSession.launchedAt) / 1000)
           : 0;
         const mediaInfo = sessionMediaRef.current[key];
-        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "local" ? "Local" : "Unknown";
+        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "epic" ? "Epic" : prevSession.source === "debrid" ? "Debrid" : prevSession.source === "local" ? "Local" : prevSession.source === "manual" ? "Manual" : "Unknown";
         setOverlayEvent({
           id: `end-${key}-${Date.now()}`,
           type: "end",
           gameTitle: prevSession.title || "Unknown Game",
           provider,
           imageUrl: mediaInfo?.imageUrl,
+          heroUrl: mediaInfo?.heroUrl,
+          iconUrl: mediaInfo?.iconUrl,
           durationSeconds: Math.max(1, durationSeconds),
         });
 
@@ -1250,9 +1786,14 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             });
 
             // Persist session record to local history
-            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "local" ? "local" : "system";
+            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "epic" ? "epic" : prevSession.source === "debrid" ? "debrid" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "manual" : "system";
+            // Store appId matching resolvePlaytimeKey format so stats can match:
+            // Steam: "app-{appId}", Manual/Debrid/Epic: gameKey (e.g. "manual:uuid", "debrid:rep-id")
+            const sessionAppId = (prevSession.source === "steam" && prevSession.appId)
+              ? `app-${prevSession.appId}`
+              : (prevSession.gameKey || key);
             const sessionRecord = createSessionRecord({
-              appId: prevSession.appId || "",
+              appId: sessionAppId,
               title: prevSession.title || "Unknown Game",
               source: activitySource,
               startedAt: prevSession.launchedAt,
@@ -1281,8 +1822,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   severity: "info",
                 });
               }
-            }
-          } else {
+          }
+        } else {
             console.debug("[Playtime] skipped end — duration below 15s", { gameKey: key, durationSeconds });
           }
         }
@@ -1322,7 +1863,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                 console.log(`[ACTIVITY][PLAYTIME_UPDATED] appid=${stoppedAppId} external=${ptEntry.externalPlaytimeSeconds} local=${ptEntry.localPlaytimeSeconds} total=${ptEntry.totalPlaytimeSeconds} source=${ptEntry.playtimeSource}`);
               }
               // Schedule snapshot for playtime change
-              notifyMediaUpdated(stoppedAppId, { source: "playtime-changed" }).catch(() => {});
+              notifyMediaUpdated(stoppedAppId, { source: "playtime-changed" }).catch((err) => console.warn(err));
               console.log(`[BootSnapshot][SCHEDULE] reason=playtime-changed appid=${stoppedAppId}`);
             } catch (snapErr) {
               console.warn("[PLAYTIME] snapshot schedule failed", String(snapErr));
@@ -1332,13 +1873,13 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           // Retry 2: after 5 seconds
           setTimeout(() => {
             console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=5000`);
-            attemptAchievementRefresh(stoppedAppId).catch(() => {});
+            attemptAchievementRefresh(stoppedAppId).catch((err) => console.warn(err));
           }, 5000);
 
           // Retry 3: after 20 seconds
           setTimeout(() => {
             console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=20000`);
-            attemptAchievementRefresh(stoppedAppId).catch(() => {});
+            attemptAchievementRefresh(stoppedAppId).catch((err) => console.warn(err));
           }, 20000);
         } else if (stoppedAppId && durationSeconds < 15) {
           console.log(`[PLAYTIME][SESSION_DURATION_SKIP] appid=${stoppedAppId} seconds=${durationSeconds} threshold=15 lastPlayedKept=true`);
@@ -1349,6 +1890,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
     prevSessionsRef.current = sessions;
   }, [sessions]);
+
+  // Stable getter for resolved session media (reads from ref — safe, no hooks inside)
+  const getSessionMedia = useCallback(
+    (gameKey: string) => sessionMediaRef.current[gameKey],
+    [],
+  );
 
   const value = useMemo(
     () => ({
@@ -1369,8 +1916,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       stopGameByAppId,
       overlayEvent,
       clearOverlay,
+      getSessionMedia,
     }),
-    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime, launchGame, cancelLaunch, findRunningSessionKey, stopGameByAppId, overlayEvent, clearOverlay]
+    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime, launchGame, cancelLaunch, findRunningSessionKey, stopGameByAppId, overlayEvent, clearOverlay, getSessionMedia]
   );
 
   return (

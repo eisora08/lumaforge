@@ -40,6 +40,37 @@ where
   }
 }
 
+/// Custom deserializer for bool that accepts both boolean (true/false) and integer (0/1).
+pub fn deserialize_bool_from_int<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+  D: Deserializer<'de>,
+{
+  use serde::de;
+  struct BoolOrIntVisitor;
+  impl<'de> de::Visitor<'de> for BoolOrIntVisitor {
+    type Value = Option<bool>;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+      f.write_str("a boolean or integer (0/1)")
+    }
+    fn visit_bool<E: de::Error>(self, v: bool) -> Result<Option<bool>, E> {
+      Ok(Some(v))
+    }
+    fn visit_u64<E: de::Error>(self, v: u64) -> Result<Option<bool>, E> {
+      Ok(Some(v != 0))
+    }
+    fn visit_i64<E: de::Error>(self, v: i64) -> Result<Option<bool>, E> {
+      Ok(Some(v != 0))
+    }
+    fn visit_none<E: de::Error>(self) -> Result<Option<bool>, E> {
+      Ok(None)
+    }
+    fn visit_unit<E: de::Error>(self) -> Result<Option<bool>, E> {
+      Ok(None)
+    }
+  }
+  deserializer.deserialize_any(BoolOrIntVisitor)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SteamAppcacheAchievement {
   pub api_name: String,
@@ -59,6 +90,12 @@ pub struct SteamAppcacheSchemaEntry {
   pub stat_id: Option<u32>,
   #[serde(default)]
   pub bit: Option<u32>,
+  #[serde(default)]
+  pub progress_stat_id: Option<u32>,
+  #[serde(default)]
+  pub progress_min: Option<f64>,
+  #[serde(default)]
+  pub progress_max: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +142,12 @@ pub struct AppAchievementCacheEntry {
   pub stat_id: Option<u32>,
   #[serde(default)]
   pub bit: Option<u32>,
+  #[serde(default)]
+  pub progress_stat_id: Option<u32>,
+  #[serde(default)]
+  pub progress_min: Option<f64>,
+  #[serde(default)]
+  pub progress_max: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,12 +213,19 @@ pub struct AchievementsAppSchemaEntry {
   pub icon: Option<String>,
   #[serde(default, alias = "icon_gray", alias = "iconGray", alias = "icongray", alias = "icon_gray_path", alias = "iconGrayUrl", alias = "icon_gray_url")]
   pub icon_gray: Option<String>,
-  #[serde(default)]
+  /// Hidden field — accepts both boolean (true/false) and integer (0/1)
+  #[serde(default, deserialize_with = "deserialize_bool_from_int")]
   pub hidden: Option<bool>,
   #[serde(default, alias = "stat_id")]
   pub stat_id: Option<u32>,
   #[serde(default)]
   pub bit: Option<u32>,
+  #[serde(default, alias = "progressStatId", alias = "progress_stat_id")]
+  pub progress_stat_id: Option<u32>,
+  #[serde(default, alias = "progressMin", alias = "progress_min")]
+  pub progress_min: Option<f64>,
+  #[serde(default, alias = "progressMax", alias = "progress_max")]
+  pub progress_max: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,6 +386,7 @@ pub struct UserGameStatsRawResult {
 pub struct StatPair {
   pub stat_id: u32,
   pub value: u32,
+  pub times: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

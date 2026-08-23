@@ -1,4 +1,4 @@
-import { readProviderStatus } from "./tauri";
+﻿import { readProviderStatus } from "./tauri";
 import type { ProviderStatusFile } from "./tauri";
 import { normalizeProviderId } from "./providerStatusService";
 
@@ -35,6 +35,30 @@ const _subscribers = new Set<() => void>();
 let _notificationHash: string | null = null;
 let _summary: ProviderStatusSummary = { updates: 0, upToDate: 0, unknown: 0, authRequired: 0, providerUnavailable: 0, totalScanned: 0 };
 
+/**
+ * Installed-appIds filter for update status reads. When set, getUpdateCount(),
+ * getUpdateEntries(), and getUpdateStatus() only return data for games that are
+ * actually installed (via Steam, local/manual with executable, or any provider).
+ * null = no filter (backward compat before wiring).
+ */
+let _installedAppIds: Set<string> | null = null;
+
+/** Set the installed-appIds filter. Call when library games change. */
+export function setInstalledAppIds(ids: Set<string>): void {
+  _installedAppIds = ids.size > 0 ? ids : null;
+  _notify();
+}
+
+/** Whether the installed-appIds filter has been populated yet (non-null). */
+export function isInstalledFilterReady(): boolean {
+  return _installedAppIds !== null;
+}
+
+/** Check if a specific appId is in the installed set. Returns true when no filter is active. */
+export function isAppIdInstalled(appId: string): boolean {
+  return _installedAppIds === null || _installedAppIds.has(appId);
+}
+
 // --- Subscription ---
 
 function _notify(): void {
@@ -61,17 +85,24 @@ function _entryKey(appId: string): string {
 // --- Read helpers ---
 
 export function getUpdateStatus(appId: string): UpdateStatus | undefined {
+  if (_installedAppIds !== null && !_installedAppIds.has(appId)) return undefined;
   return _updateEntries.get(appId)?.status;
 }
 
 export function getUpdateCount(): number {
-  return _summary.updates;
+  if (_installedAppIds === null) return _summary.updates;
+  let count = 0;
+  for (const entry of _updateEntries.values()) {
+    if (entry.status === "update-available" && _installedAppIds!.has(entry.appId)) count++;
+  }
+  return count;
 }
 
 export function getUpdateEntries(): UpdateEntry[] {
   const entries: UpdateEntry[] = [];
   for (const entry of _updateEntries.values()) {
     if (entry.status === "update-available") {
+      if (_installedAppIds !== null && !_installedAppIds.has(entry.appId)) continue;
       entries.push(entry);
     }
   }

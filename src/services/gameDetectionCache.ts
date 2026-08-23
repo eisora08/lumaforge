@@ -17,10 +17,25 @@ let loadPromise: Promise<DetectedGamesCache | null> | null = null;
 
 async function readFromSqlite(): Promise<DetectedGamesCache | null> {
   try {
-    const json = await invoke<string | null>("read_library_cache", { key: CACHE_KEY });
-    if (!json) return null;
-    const parsed: DetectedGamesCache = JSON.parse(json);
+    // Rust returns Option<LibraryCacheEntry> = { cache_key, cache_value, saved_at }
+    // We need the inner cache_value string which holds the JSON-serialized DetectedGamesCache.
+    const entry = await invoke<{ cache_key?: string; cache_value?: string; saved_at?: number } | null>(
+      "read_library_cache",
+      { key: CACHE_KEY },
+    );
+    if (!entry) return null;
+    // Handle both snake_case (Rust serde default) and camelCase (renamed)
+    const jsonStr = entry.cache_value ?? (entry as Record<string, unknown>)["cacheValue"] as string | undefined;
+    if (!jsonStr) return null;
+    const parsed: DetectedGamesCache = JSON.parse(jsonStr);
     if (!Array.isArray(parsed.games) || typeof parsed.savedAt !== "number") {
+      return null;
+    }
+    // An empty games list is a poisoned cache (e.g. a scan wrote [] over a real
+    // library). Treat it as a miss so boot falls back to reconciled/snapshot
+    // data and a fresh scan runs to repopulate the cache.
+    if (parsed.games.length === 0) {
+      console.log("[LIBRARY_CACHE][EMPTY_MISS] empty cache ignored — will rescan");
       return null;
     }
     return parsed;
@@ -48,6 +63,13 @@ export async function saveCachedGames(
   const deduped = dedupeLibraryGames(games);
   if (deduped.length !== games.length) {
     console.log(`[LIBRARY_CACHE][DEDUP] before=${games.length} after=${deduped.length}`);
+  }
+  // Never persist an empty library over a real one — an empty write poisons the
+  // cache (it is memoized as fresh and blocks future scans). Existing in-memory
+  // cache is preserved so reads keep returning real data.
+  if (deduped.length === 0) {
+    console.log("[LIBRARY_CACHE][EMPTY_SKIP] refusing to persist empty library");
+    return;
   }
   const cache: DetectedGamesCache = {
     savedAt: Date.now(),

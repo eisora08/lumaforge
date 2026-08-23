@@ -106,7 +106,7 @@ export function useConsoleAchievements(appIdStr: string | null) {
       progressAvailable: true,
     };
     log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
-    achievementStore.setSummary(appIdStr, patched);
+    achievementStore.setSummary(appIdStr, patched, "steam-official");
     update(appIdStr, patched);
   }, [appIdStr, state, update]);
 

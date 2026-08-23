@@ -34,12 +34,10 @@ function getDeveloper(game: PackageGame, metadata?: SteamAppMetadata) {
 }
 
 function getImage(game: PackageGame, metadata?: SteamAppMetadata) {
-  return (
-    metadata?.header_image ||
-    metadata?.capsule_image ||
-    metadata?.capsule_image_v5 ||
-    game.imageUrl
-  );
+  if (metadata?.header_image) return metadata.header_image;
+  const id = parseInt(game.appId, 10);
+  if (id > 0) return `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`;
+  return undefined;
 }
 
 function getReviewLabel(summary?: SteamReviewSummary) {
@@ -70,7 +68,11 @@ export default function StoreMoreLikeThisSection({
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
+  const _lastScrollUpdate = useRef(0);
   const updateScrollState = useCallback(() => {
+    const now = Date.now();
+    if (now - _lastScrollUpdate.current < 100) return;
+    _lastScrollUpdate.current = now;
     const el = scrollRef.current;
     if (!el) return;
     setCanScrollLeft(el.scrollLeft > 4);

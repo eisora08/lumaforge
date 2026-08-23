@@ -3,6 +3,8 @@ import { countRender } from "../services/perfCounters";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
   installSteamApp,
+  deleteLuaScript,
+  scanInstalledLuaScripts,
 } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
 import { openExternalUrl } from "../services/externalLinks";
@@ -16,7 +18,7 @@ import {
 } from "../services/libraryLocalCacheService";
 import { readMediaManifest, type GameMediaCacheEntry, type GameMediaPaths, type MediaManifest } from "../services/tauri";
 import type { GameAppInfo } from "../services/gameCacheService";
-import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle } from "../services/gameCacheService";
+import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle, resolveProviderMediaPreviewUrl } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
 import { resolveGameDetailsArtwork, refreshGameDetailsArtwork, materializeResolvedGameMedia } from "../services/gameCacheService";
 
@@ -24,8 +26,10 @@ import type { ResolvedGameMediaBundle } from "../types/gameMedia";
 import { enqueueMediaDownload, cancelMediaJobsForApp, subscribeToMediaQueue } from "../services/mediaDownloadQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
+import ToolsModal from "../components/tools/ToolsModal";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession, computeGameKey } from "../context/GameSessionContext";
+import { useDownloadQueueContext } from "../context/DownloadQueueContext";
 import { useGameLaunchState } from "../hooks/useGameLaunchState";
 import { useGameActivity } from "../context/GameActivityContext";
 import { useGamePlayStats } from "../services/gamePlayStats";
@@ -34,13 +38,24 @@ import { importExternalPlaytime } from "../services/playtimeService";
 import type { LibraryGame } from "../types/libraryGame";
 const DEBUG_MEDIA_CACHE = false;
 const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = DEBUG_MEDIA_CACHE;
+const DEBUG_ACTIVITY = false;
+const DEBUG_LUA_DELETE = false;
+const DEBUG_META_TRACE = false;
+if (DEBUG_META_TRACE) (window as any).__DEBUG_META_TRACE = false;
+import DebridSourceSelectorModal from "../components/debrid/DebridSourceSelectorModal";
+import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
+import type { RepackQueryResult } from "../services/tauri";
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import type { AppPage } from "../types/navigation";
 
 import {
   showError,
+  showSuccess,
   showWarning,
+  showInfo,
 } from "../components/toast/GameToast";
+import { useConfirm } from "../services/confirmService";
+import { resolveDebridInstallUri } from "../services/debridInstallChoice";
 
 
 type Props = {
@@ -50,9 +65,10 @@ type Props = {
 
 export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   countRender("LibraryGameDetailPage");
-  const { selectedGame, setSelectedGame, appInfoMap } = useLibraryGames();
+  const { selectedGame, setSelectedGame, appInfoMap, refresh } = useLibraryGames();
+  const downloadQueue = useDownloadQueueContext();
   const { settings } = useSettings();
-  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataLoading, setMetadataLoading] = useState(true);
   const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
   const [artwork, setArtwork] = useState<SgdbArtworkData | null>(null);
   const [mediaEntry, setMediaEntry] = useState<GameMediaCacheEntry | null>(null);
@@ -60,10 +76,37 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [canonicalDiskFallback, setCanonicalDiskFallback] = useState<string | null>(null);
   const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
   const [fallbackBundle, setFallbackBundle] = useState<ResolvedGameMediaBundle | null>(null);
+  const [canonicalLoaded, setCanonicalLoaded] = useState(false);
+  const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const currentRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
   const _prevAppIdRef = useRef<string | null>(null);
   const _refreshInitiatorRef = useRef<string | null>(null);
+  const _detailKeyRef = useRef<string | null>(null);
+  const [resetGeneration, setResetGeneration] = useState(0);
+  const _latestGameRef = useRef<LibraryGame | null>(null);
+  _latestGameRef.current = selectedGame;
+
+  // Reset stale per-game state at render time (React's "adjusting state when a prop
+  // changes" pattern) so the first render of a new game never receives the previous
+  // game's media/artwork props. Previously this only happened inside the effect
+  // (after paint), leaving one frame of "old render" — visible once the hero sharp
+  // layer no longer waits on canonicalLoaded. The ref guard keeps this idempotent.
+  const detailKey = selectedGame ? computeGameKey(selectedGame) : "";
+  if (_detailKeyRef.current !== detailKey) {
+    if (DEBUG_META_TRACE) console.log(`[META_TRACE][RESET] prevKey=${_detailKeyRef.current} newKey=${detailKey} appId=${selectedGame?.appId} source=${selectedGame?.source} hasResolvedMeta=${!!resolvedGame?.metadata} resetGen=${resetGeneration}`);
+    _detailKeyRef.current = detailKey;
+    setMetadataLoading(true);
+    setMediaEntry(null);
+    setCanonicalAppInfo(null);
+    setCanonicalDiskFallback(null);
+    setLocalDetailsData(null);
+    setFallbackBundle(null);
+    setArtwork(null);
+    setResolvedGame(null);
+    setCanonicalLoaded(false);
+    setResetGeneration((g) => g + 1);
+  }
 
   const gameKey = selectedGame ? computeGameKey(selectedGame) : "";
   const { launchInfo, launchGame, cancelLaunch } = useGameLaunchState(gameKey);
@@ -71,6 +114,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const { addActivity } = useGameActivity();
   const { recordSessionEnd } = useGamePlayStats(selectedGame?.id || "");
   const [showStopModal, setShowStopModal] = useState(false);
+  const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
+  const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
+  const { confirm } = useConfirm();
 
   // Playtime tracking: when session transitions from running to idle/cleared
   useEffect(() => {
@@ -98,8 +144,14 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
       await launchGame(game);
-    } else if (game.source === "local" && game.executablePath) {
+    } else if (game.source === "epic") {
       await launchGame(game);
+    } else if (game.source === "debrid" && game.isPlayable) {
+      await launchGame(game);
+    } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
+      await launchGame(game);
+    } else if (game.source === "manual") {
+      showWarning("This manual game has no executable configured. Edit game details to set one.", { title: "Not available" });
     } else {
       showWarning("This game cannot be launched yet.", { title: "Not available" });
     }
@@ -119,6 +171,40 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setShowStopModal(true);
   }
 
+  async function handleDeleteScript(game: LibraryGame) {
+    const script = game.luaScripts[0];
+    if (!script) {
+      showWarning("No Lua script to delete.", { title: "No script" });
+      return;
+    }
+    if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${settings.luaPath}"`);
+    const result = await confirm({
+      title: "Delete Lua script?",
+      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
+      confirmLabel: "Delete Lua",
+      variant: "danger",
+    });
+    if (!result.confirmed) return;
+    try {
+      await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
+      // Verify file is actually gone from disk
+      const remaining = await scanInstalledLuaScripts(settings.luaPath);
+      const stillPresent = remaining.some((s) => s.file_name === script.file_name);
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
+      if (stillPresent) {
+        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        return;
+      }
+      // Force refresh library state (bypass TTL) to reflect deletion
+      await refresh({ force: true });
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
+      showSuccess("Lua script deleted.", { title: "Deleted" });
+    } catch (err) {
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
+      showError(String(err), { title: "Error" });
+    }
+  }
+
   async function handleFindProcess() {
     const candidate = await session.findGameProcessForSession(gameKey);
     if (candidate) {
@@ -131,6 +217,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   // Load local cache (media cache + canonical appinfo + media manifest + details/{appid}.json) immediately
   // Clear ALL state on any appId change to prevent stale cross-appId data during async fetch.
   useEffect(() => {
+    if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_EFFECT] appId=${selectedGame?.appId} source=${selectedGame?.source} resetGen=${resetGeneration} metaHas=${!!selectedGame?.metadata} metaResolved=${selectedGame?.metadata?.resolved}`);
+    // Reset scroll to top on game entry/switch
+    document.querySelector('main')?.scrollTo(0, 0);
+
     // Cancel pending media downloads for any previously-active appId
     if (_prevAppIdRef.current) {
       cancelMediaJobsForApp(_prevAppIdRef.current);
@@ -142,14 +232,137 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setLocalDetailsData(null);
     setFallbackBundle(null);
     setArtwork(null);
+    setCanonicalLoaded(false);
     _refreshInitiatorRef.current = null;
 
-    if (!selectedGame?.appId) return;
+    // ── Manual games (no appId): load from manualGameStore ──
+    // Manual games WITH appId fall through to the Steam pipeline below
+    if (selectedGame?.source === "manual" && selectedGame.providerGameId && !selectedGame.appId) {
+      let cancelled = false;
+      import("../services/manualGameStore").then(({ getManualGame }) => {
+        if (cancelled) return;
+        const entry = getManualGame(selectedGame.providerGameId!);
+        if (!entry) return;
+
+        // Resolve all manual media paths to asset:// URLs via resolveProviderMediaPreviewUrl
+        const manualId = entry.id;
+        Promise.all([
+          resolveProviderMediaPreviewUrl(entry.backgroundPath),
+          resolveProviderMediaPreviewUrl(entry.landscapePath),
+          resolveProviderMediaPreviewUrl(entry.coverPath),
+          resolveProviderMediaPreviewUrl(entry.logoPath),
+          resolveProviderMediaPreviewUrl(entry.iconPath),
+        ]).then(([bgUrl, lsUrl, cvUrl, lgUrl, icUrl]) => {
+          if (cancelled) return;
+
+          // canonicalAppInfo.media: resolved asset:// URLs (not raw relative paths)
+          setCanonicalAppInfo({
+            appId: null as any,
+            name: entry.name,
+            media: {
+              coverPath: cvUrl,
+              landscapePath: lsUrl,
+              backgroundPath: bgUrl,
+              logoPath: lgUrl,
+              iconPath: icUrl,
+            },
+          } as any);
+          setCanonicalLoaded(true);
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_MANUAL] appId=${selectedGame?.appId} canonicalLoaded=true localDetailsSet=true`);
+
+          // localDetailsData: all manual fields including linkedSteamAppId
+          setLocalDetailsData({
+            developer: entry.developers?.join(", "),
+            publisher: entry.publishers?.join(", "),
+            description: entry.description,
+            shortDescription: entry.shortDescription,
+            genres: entry.genres ?? [],
+            categories: entry.categories ?? [],
+            releaseDate: entry.releaseDate,
+            linkedSteamAppId: entry.linkedSteamAppId ?? null,
+            executablePath: entry.executablePath ?? null,
+            installDir: entry.installDir ?? null,
+            workingDirectory: entry.workingDirectory ?? null,
+          });
+
+          // fallbackBundle with resolved asset:// URLs
+          setFallbackBundle({
+            appId: manualId,
+            background: bgUrl ? { url: bgUrl, source: "local", appId: manualId, kind: "background" } : undefined,
+            landscape: lsUrl ? { url: lsUrl, source: "local", appId: manualId, kind: "landscape" } : undefined,
+            cover: cvUrl ? { url: cvUrl, source: "local", appId: manualId, kind: "cover" } : undefined,
+            logo: lgUrl ? { url: lgUrl, source: "local", appId: manualId, kind: "logo" } : undefined,
+          });
+        }).catch(() => {});
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }
+
+    // ── Epic games: resolve provider media paths + build canonicalAppInfo ──
+    if (selectedGame?.source === "epic" && selectedGame.providerGameId) {
+      let cancelled = false;
+
+      const bgPath = selectedGame.backgroundPath ?? null;
+      const lsPath = selectedGame.landscapePath ?? null;
+      const cvPath = selectedGame.coverPath ?? null;
+      const lgPath = selectedGame.logoPath ?? null;
+      const icPath = selectedGame.iconPath ?? null;
+
+      Promise.all([
+        resolveProviderMediaPreviewUrl(bgPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(lsPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(cvPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(lgPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(icPath).catch(() => null),
+      ]).then(([bgUrl, lsUrl, cvUrl, lgUrl, icUrl]) => {
+        if (cancelled) return;
+
+        // canonicalAppInfo.media: resolved asset:// URLs (not raw relative paths)
+        setCanonicalAppInfo({
+          appId: null as any,
+          name: selectedGame.title ?? "Epic Game",
+          media: {
+            coverPath: cvUrl,
+            landscapePath: lsUrl,
+            backgroundPath: bgUrl,
+            logoPath: lgUrl,
+            iconPath: icUrl,
+          },
+        } as any);
+        setCanonicalLoaded(true);
+
+        // localDetailsData from metadata (synthetic SteamAppMetadata built by mergeEpicOverrides)
+        const meta = selectedGame.metadata;
+        setLocalDetailsData({
+          developer: meta?.developer ?? (meta as any)?.developers?.join?.(", ") ?? null,
+          publisher: (meta as any)?.publishers?.join?.(", ") ?? null,
+          description: meta?.short_description ?? meta?.about_the_game ?? null,
+          shortDescription: meta?.short_description ?? null,
+          genres: meta?.genres ?? [],
+          categories: meta?.categories ?? [],
+          releaseDate: meta?.release_date ?? null,
+        });
+
+        // fallbackBundle with resolved asset:// URLs
+        setFallbackBundle({
+          appId: selectedGame.providerGameId ?? "",
+          background: bgUrl ? { url: bgUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "background" } : undefined,
+          landscape: lsUrl ? { url: lsUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "landscape" } : undefined,
+          cover: cvUrl ? { url: cvUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "cover" } : undefined,
+          logo: lgUrl ? { url: lgUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "logo" } : undefined,
+        });
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }
+
+    if (!selectedGame?.appId) { setCanonicalLoaded(true); return; }
 
     let cancelled = false;
     const appId = selectedGame.appId;
 
-    getMediaCacheForAppId(appId).then(setMediaEntry).catch(() => setMediaEntry(null));
+    getMediaCacheForAppId(appId)
+      .then((entry) => { if (!cancelled) setMediaEntry(entry); })
+      .catch(() => { if (!cancelled) setMediaEntry(null); });
 
     // Load canonicalAppInfo AND media manifest simultaneously.
     // Manifest paths (where exists=true) override canonicalAppInfo.media.* fields
@@ -209,7 +422,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             const key = `${role}Path` as keyof GameMediaPaths;
             const resolvedPath = resolvedManifestPaths[key] ?? null;
             const manifestPath = (manifest as any)?.files?.[role]?.path ?? "(no-manifest)";
-            console.log(`[MEDIA][MANIFEST_RESOLVE] appid=${appId} role=${role} manifestPath=${manifestPath} resolvedPath=${resolvedPath ?? "(null)"} exists=${!!resolvedPath}`);
+            if (DEBUG_ACTIVITY) console.log(`[MEDIA][MANIFEST_RESOLVE] appid=${appId} role=${role} manifestPath=${manifestPath} resolvedPath=${resolvedPath ?? "(null)"} exists=${!!resolvedPath}`);
           });
         }
       }
@@ -225,7 +438,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           const existsKey = `${roleKey.replace("Path", "Exists")}` as keyof typeof diskState;
           const fileActuallyExists = diskState?.[existsKey] as boolean | undefined;
           if (fileActuallyExists === false && merged[roleKey]) {
-            console.log(`[MEDIA_STALE][DETECTED] appid=${appId} role=${roleKey} path=${merged[roleKey]} reason=file-missing`);
+            if (DEBUG_ACTIVITY) console.log(`[MEDIA_STALE][DETECTED] appid=${appId} role=${roleKey} path=${merged[roleKey]} reason=file-missing`);
             (merged as any)[roleKey] = null;
             changed = true;
           }
@@ -239,12 +452,14 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const logDisplay = (role: string) => {
           const key = `${role}Path` as keyof GameMediaPaths;
           const path = mergedInfo.media?.[key] ?? null;
-          console.log(`[MEDIA][DISPLAY_PATH] appid=${appId} role=${role} finalPath=${path ?? "(null)"}`);
+          if (DEBUG_ACTIVITY) console.log(`[MEDIA][DISPLAY_PATH] appid=${appId} role=${role} finalPath=${path ?? "(null)"}`);
         };
         logDisplay("background");
         logDisplay("logo");
       }
       setCanonicalAppInfo(mergedInfo);
+      setCanonicalLoaded(true);
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_CANONICAL] appId=${appId} canonicalLoaded=true hasInfo=${!!mergedInfo} hasName=${!!mergedInfo?.name} hasMedia=${!!mergedInfo?.media}`);
       if (!mergedInfo?.media?.landscapePath && !mergedInfo?.media?.coverPath) {
         resolveGameMediaImageSrc(appId).then((src) => {
           if (!cancelled && src) setCanonicalDiskFallback(src);
@@ -298,17 +513,22 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           }
         }).catch(() => {});
       }
-    }).catch(() => { if (!cancelled) setCanonicalAppInfo(null); });
+    }).catch(() => { if (!cancelled) { setCanonicalAppInfo(null); setCanonicalLoaded(true); if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_ERROR] appId=${appId} canonicalLoaded=true (error path)`); } });
 
     getLibraryGameDetails(appId).then((entry) => {
+      if (cancelled) return;
       if (entry?.data) setLocalDetailsData(entry.data);
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_DETAILS] appId=${appId} hasData=${!!entry?.data} keys=${entry?.data ? Object.keys(entry.data as any).join(",") : "none"}`);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [selectedGame?.appId]);
+  }, [selectedGame?.appId, resetGeneration]);
 
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
   useEffect(() => {
+    const appIdLog = selectedGame?.appId ?? "?";
+    const srcLog = selectedGame?.source ?? "?";
     if (!selectedGame) {
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → no selectedGame, clearing`);
       setResolvedGame(null);
       setMetadataLoading(false);
       return;
@@ -316,14 +536,17 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
     const appIdNum = selectedGame.appId ? Number(selectedGame.appId) : null;
     if (!appIdNum) {
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → no appIdNum, setting raw game (no metadata needed)`);
       setResolvedGame(selectedGame);
       setMetadataLoading(false);
       return;
     }
 
     const meta = selectedGame.metadata;
-    const hasResolvedMetadata = meta && meta.resolved === true && !!meta.name && meta.name !== `Steam App ${appIdNum}`;
+    const hasDescription = !!meta?.about_the_game || !!meta?.detailed_description;
+    const hasResolvedMetadata = meta && meta.resolved === true && !!meta.name && meta.name !== `Steam App ${appIdNum}` && hasDescription;
     if (hasResolvedMetadata) {
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → hasResolvedMetadata=true, using selectedGame directly`);
       setResolvedGame(selectedGame);
       setMetadataLoading(false);
       return;
@@ -332,29 +555,47 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const requestId = Date.now();
     currentRequest.current = requestId;
 
+    const alreadyResolved = resolvedGame?.metadata?.resolved === true && resolvedGame?.appId === selectedGame.appId;
+    if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → resolving from network/cache. alreadyResolved=${alreadyResolved} resetGen=${resetGeneration} requestId=${requestId}`);
+
     setMetadataLoading(true);
-    setResolvedGame(selectedGame);
+    // Do NOT set resolvedGame to raw selectedGame here — CTX_SYNC keeps replacing
+    // selectedGame with new references, and setResolvedGame(selectedGame) overwrites
+    // the enriched metadata from a previous .then() that hasn't been committed yet.
+    // Only the .then() handler sets resolvedGame with enriched metadata.
     resolveGameMetadata([appIdNum])
       .then((result) => {
-        if (currentRequest.current !== requestId) return;
+        if (currentRequest.current !== requestId) {
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_THEN] appId=${appIdLog} → CANCELLED (requestId=${requestId} current=${currentRequest.current})`);
+          return;
+        }
         const resolvedMeta = result[appIdNum];
+        if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_THEN] appId=${appIdLog} → resolvedMeta exists=${!!resolvedMeta} resolved=${resolvedMeta?.resolved} hasShortDesc=${!!resolvedMeta?.short_description} hasAbout=${!!resolvedMeta?.about_the_game} hasName=${!!resolvedMeta?.name} name="${resolvedMeta?.name ?? ""}"`);
         if (resolvedMeta) {
+          // Use _latestGameRef to always reference the current selectedGame, not the stale closure
+          const currentGame = _latestGameRef.current ?? selectedGame;
+          if ((window as any).__DEBUG_MANUAL_META) {
+            console.log(`[MANUAL][META_RESOLVED] appId=${appIdNum} source=${currentGame?.source} resolved=${resolvedMeta.resolved} name=${resolvedMeta.name} hasDescription=${!!resolvedMeta.short_description} hasAbout=${!!resolvedMeta.about_the_game}`);
+          }
           setResolvedGame({
-            ...selectedGame,
+            ...currentGame,
             metadata: resolvedMeta,
-            imageUrl: selectedGame.imageUrl || resolvedMeta.header_image || resolvedMeta.capsule_image || resolvedMeta.capsule_image_v5 || undefined,
+            imageUrl: currentGame.imageUrl || resolvedMeta.header_image || resolvedMeta.capsule_image || resolvedMeta.capsule_image_v5 || undefined,
           });
+        } else {
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_THEN] appId=${appIdLog} → resolvedMeta is UNDEFINED! result keys=${Object.keys(result).join(",")}`);
         }
       })
-      .catch(() => {
-        // keep original game if resolution fails
+      .catch((err) => {
+        if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_CATCH] appId=${appIdLog} → error: ${String(err)}`);
       })
       .finally(() => {
         if (currentRequest.current === requestId) {
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_FINALLY] appId=${appIdLog} → setting metadataLoading=false`);
           setMetadataLoading(false);
         }
       });
-  }, [selectedGame]);
+  }, [selectedGame, resetGeneration]);
 
   // ── Re-run fallback resolver when enriched metadata becomes available ──
   // The main effect runs with selectedGame?.metadata (may not be enriched yet).
@@ -455,7 +696,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       const { detectAndQueueMissingMedia } = await import("../services/gameCacheService");
       const queued = await detectAndQueueMissingMedia(appIdStr);
       if (queued.length > 0) {
-        console.log(`[MEDIA][DETAILS_REPAIR] appid=${appIdStr} missing=${queued.join(",")} queued=true`);
+        if (DEBUG_ACTIVITY) console.log(`[MEDIA][DETAILS_REPAIR] appid=${appIdStr} missing=${queued.join(",")} queued=true`);
       }
     };
     checkMedia();
@@ -470,9 +711,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   useEffect(() => {
     const appId = selectedGame?.appId;
     if (!appId) return;
+    if (selectedGame?.source === "manual" && !selectedGame.appId) return;
     if (!fallbackBundle) return;
     if (fallbackBundle.appId && fallbackBundle.appId !== appId) {
-      console.log(`[MEDIA][MATERIALIZE_GUARD] skip appId=${appId} bundleAppId=${fallbackBundle.appId} reason=cross-app-contamination`);
+      if (DEBUG_ACTIVITY) console.log(`[MEDIA][MATERIALIZE_GUARD] skip appId=${appId} bundleAppId=${fallbackBundle.appId} reason=cross-app-contamination`);
       setFallbackBundle(null);
       return;
     }
@@ -489,6 +731,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   useEffect(() => {
     const appId = selectedGame?.appId;
     if (!appId) return;
+    if (selectedGame?.source === "manual" && !selectedGame.appId) return;
 
     const unsub = subscribeToMediaQueue((event) => {
       if (event.type !== "success" && event.type !== "partial") return;
@@ -497,7 +740,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       // Re-materialize to pick up newly-downloaded files on disk (use ref for latest bundle)
       const bundle = _fallbackBundleRef.current;
       if (bundle && bundle.appId && bundle.appId !== appId) {
-        console.log(`[MEDIA][MATERIALIZE_GUARD] skip-subscription appId=${appId} bundleAppId=${bundle.appId} reason=cross-app-contamination`);
+        if (DEBUG_ACTIVITY) console.log(`[MEDIA][MATERIALIZE_GUARD] skip-subscription appId=${appId} bundleAppId=${bundle.appId} reason=cross-app-contamination`);
         return;
       }
       if (bundle) {
@@ -551,12 +794,22 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }, [resolvedGame?.appId, settings.steamRoot]);
 
   const handleRefreshArtwork = useCallback(async () => {
-    if (!selectedGame?.appId) {
+    const isManual = selectedGame?.source === "manual";
+    const isEpic = selectedGame?.source === "epic";
+    if (!selectedGame?.appId && !isManual && !isEpic) {
       showWarning("No App ID available for this game.", { title: "Artwork" });
       return;
     }
+    if (isManual && !selectedGame?.appId) {
+      showInfo("Artwork refresh for manual games is managed through Edit Game Details.", { title: "Manual Game" });
+      return;
+    }
+    if (isEpic && selectedGame?.providerGameId) {
+      showInfo("Artwork for Epic games is managed through Edit Game Details.", { title: "Epic Game" });
+      return;
+    }
 
-    const appIdStr = selectedGame.appId;
+    const appIdStr = selectedGame!.appId!;
     _refreshInitiatorRef.current = appIdStr;
 
     // Cancel any existing jobs for this app
@@ -611,7 +864,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
     // ── Set bundle so materialize effect can apply localPath on download ──
     if (_refreshInitiatorRef.current !== appIdStr) {
-      console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-refresh`);
+      if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-refresh`);
       return;
     }
     setFallbackBundle(bundle);
@@ -681,7 +934,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       if (asset?.url) {
         hasAnyUrl = true;
         const logLabel = asset.source ? `source=${asset.source}` : "";
-        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} role=${role} url=${asset.url} ${logLabel}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} role=${role} url=${asset.url} ${logLabel}`);
       }
     }
 
@@ -695,10 +948,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       if (!asset?.url) {
         const candidates = getRoleCandidates(role);
         if (candidates.length > 0) {
-          console.log(`[ARTWORK_REFRESH][FALLBACK_DIRECT] appid=${appIdStr} role=${role} reason=resolver-no-url candidates=${candidates.length} firstUrl=${candidates[0]}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][FALLBACK_DIRECT] appid=${appIdStr} role=${role} reason=resolver-no-url candidates=${candidates.length} firstUrl=${candidates[0]}`);
           // Skip the resolver's "no-url" — fallback candidates will be tried below
         } else {
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=no-url`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=no-url`);
           continue;
         }
       }
@@ -715,10 +968,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const roleMatches = rolePattern.test(filename);
 
         if (!fileExists || !roleMatches) {
-          console.log(`[ARTWORK_REFRESH][LOCAL_STALE] appid=${appIdStr} role=${role} path=${asset.url} reason=${!fileExists ? "file-missing" : "wrong-role"} fileExists=${!!fileExists} roleMatches=${roleMatches}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][LOCAL_STALE] appid=${appIdStr} role=${role} path=${asset.url} reason=${!fileExists ? "file-missing" : "wrong-role"} fileExists=${!!fileExists} roleMatches=${roleMatches}`);
           // Fall through to try remote candidates below
         } else {
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=local-source-valid path=${asset.url}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=local-source-valid path=${asset.url}`);
           continue;
         }
       }
@@ -765,9 +1018,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             candidates.push(deferredStorePageBg);
             seen.add(deferredStorePageBg);
           }
-          console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} role=background storepagebackground=last-resort`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} role=background storepagebackground=last-resort`);
         } else {
-          console.log(`[ARTWORK_BACKGROUND_SKIP] appid=${appIdStr} source=storepagebackground reason=better-header-or-screenshot-exists`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_SKIP] appid=${appIdStr} source=storepagebackground reason=better-header-or-screenshot-exists`);
         }
       }
       // For non-background roles, append any remaining storepagebackground
@@ -779,16 +1032,16 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
       if (candidates.length === 0) {
         if (role === "background") {
-          console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} reason=no-candidates`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} reason=no-candidates`);
         }
         continue;
       }
 
       if (role === "background") {
-        console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} candidates=${candidates.length}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} candidates=${candidates.length}`);
         candidates.forEach((c, ci) => {
           const label = isStorePageBackground(c) ? " ambient=true" : "";
-          console.log(`  candidate=${ci} url=${c}${label}`);
+          if (DEBUG_ACTIVITY) console.log(`  candidate=${ci} url=${c}${label}`);
         });
       }
 
@@ -802,10 +1055,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const attemptLabel = isFirst ? "" : ` fallback=${ci}`;
 
         if (!isFirst) {
-          console.log(`[ARTWORK_REFRESH][FALLBACK_NEXT] appid=${appIdStr} role=${role} candidate=${ci} url=${url}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][FALLBACK_NEXT] appid=${appIdStr} role=${role} candidate=${ci} url=${url}`);
         }
 
-        console.log(`[ARTWORK_REFRESH][ENQUEUE_START] appid=${appIdStr} role=${role} url=${url} target=media/${role}.jpg${attemptLabel}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_START] appid=${appIdStr} role=${role} url=${url} target=media/${role}.jpg${attemptLabel}`);
         const enqResult = await enqueueMediaDownload({
           id: `refresh-${appIdStr}-${role}-${isFirst ? "0" : String(ci)}-${Date.now()}`,
           appId: appIdStr,
@@ -817,24 +1070,24 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           forceRefresh: true,
         }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=false reason=error elapsedMs=${Date.now() - enqueueStart} error=${msg}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=false reason=error elapsedMs=${Date.now() - enqueueStart} error=${msg}`);
           return null;
         });
         if (enqResult) {
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=${enqResult.success} elapsedMs=${Date.now() - enqueueStart} localPath=${enqResult.localPath ?? "(none)"}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=${enqResult.success} elapsedMs=${Date.now() - enqueueStart} localPath=${enqResult.localPath ?? "(none)"}`);
           if (enqResult.success) {
             downloadSucceeded = true;
             if (role === "background") {
-              console.log(`[ARTWORK_BACKGROUND_SELECTED] appid=${appIdStr} source=${asset?.source ?? "fallback"} url=${url}`);
+              if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_SELECTED] appid=${appIdStr} source=${asset?.source ?? "fallback"} url=${url}`);
             }
             break;
           }
-          console.log(`[ARTWORK_REFRESH][DOWNLOAD_FAIL] appid=${appIdStr} role=${role} candidate=${ci} url=${url} reason=failed`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][DOWNLOAD_FAIL] appid=${appIdStr} role=${role} candidate=${ci} url=${url} reason=failed`);
         }
       }
 
       if (!downloadSucceeded) {
-        console.log(`[ARTWORK_REFRESH][ALL_CANDIDATES_FAILED] appid=${appIdStr} role=${role} candidates=${candidates.length}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ALL_CANDIDATES_FAILED] appid=${appIdStr} role=${role} candidates=${candidates.length}`);
       }
     }
 
@@ -842,9 +1095,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       showWarning(`Artwork refresh queued (${hasQueued} roles).`, { title: "Artwork" });
     } else {
       if (!hasAnyUrl) {
-        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=no-urls meta=${meta ? "resolved" : "null"} metaResolved=${meta?.resolved ?? "n/a"}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=no-urls meta=${meta ? "resolved" : "null"} metaResolved=${meta?.resolved ?? "n/a"}`);
       } else {
-        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=all-urls-skipped after-queued-check`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=all-urls-skipped after-queued-check`);
       }
       showWarning("No artwork available for this game.", { title: "Artwork" });
     }
@@ -857,7 +1110,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       await clearGameMediaCacheForGame({ appId: appIdStr }).catch(() => {});
       const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
       if (_refreshInitiatorRef.current !== appIdStr) {
-        console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-sgdb`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-sgdb`);
         return;
       }
       if (result[appIdStr]) {
@@ -896,6 +1149,65 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   ]);
 
   async function handleInstall(game: LibraryGame) {
+    if (game.source === "debrid" && DEBRID_INSTALL_ENABLED && DEBRID_LIBRARY_ENABLED) {
+      if (game.appId) {
+        const { getRepacksForAppId } = await import("../services/repackCatalogService");
+        const repacks = await getRepacksForAppId(Number(game.appId));
+        if (repacks.length > 1) {
+          if (DEBUG_DEBRID_INSTALL) console.log(`[DEBRID][INSTALL_SELECTOR] appId=${game.appId} title="${game.title}" repacks=${repacks.length}`);
+          setDebridRepacks(repacks);
+          setDebridInstallGame(game);
+          return;
+        }
+        if (repacks.length === 1) {
+          const rawEntry = repacks[0];
+          const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
+          if (!resolved.ok) {
+            if (resolved.reason === "no-uri") {
+              showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+            }
+            return;
+          }
+          downloadQueue.addDebridInstallJob(
+            rawEntry.id,
+            game.title,
+            resolved.uri,
+            rawEntry.installerType || "zip",
+            game.appId ?? "",
+            undefined,
+            rawEntry.repacker,
+            resolved.method,
+          );
+          return;
+        }
+      }
+      const { getDebridRepackEntry } = await import("../services/debridGameStore");
+      const providerGameId = game.providerGameId ?? game.id;
+      const rawEntry = getDebridRepackEntry(providerGameId);
+      if (!rawEntry) {
+        showWarning("Debrid game entry not found.", { title: "Not available" });
+        return;
+      }
+      const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
+      if (!resolved.ok) {
+        if (resolved.reason === "no-uri") {
+          showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+        }
+        return;
+      }
+      downloadQueue.addDebridInstallJob(
+        providerGameId,
+        game.title,
+        resolved.uri,
+        rawEntry.installerType || "zip",
+        game.appId ?? "",
+        undefined,
+        game.repacker,
+        resolved.method,
+      );
+      return;
+    }
+
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
@@ -936,6 +1248,20 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   const displayGame = resolvedGame || selectedGame;
+  if (DEBUG_META_TRACE) {
+    const _src = displayGame.source;
+    const _id = displayGame.appId || displayGame.id;
+    const _hasMeta = !!displayGame.metadata;
+    const _resolved = displayGame.metadata?.resolved;
+    const _hasShortDesc = !!displayGame.metadata?.short_description;
+    const _hasAbout = !!displayGame.metadata?.about_the_game;
+    const _hasLocalDetails = !!localDetailsData;
+    const _canonLoaded = canonicalLoaded;
+    const _metaLoading = metadataLoading;
+    const _hasCanonInfo = !!canonicalAppInfo;
+    const _useResolved = !!resolvedGame;
+    console.log(`[META_TRACE][RENDER] appId=${_id} src=${_src} useResolved=${_useResolved} hasMeta=${_hasMeta} resolved=${_resolved} hasShortDesc=${_hasShortDesc} hasAbout=${_hasAbout} localDetails=${_hasLocalDetails} canonLoaded=${_canonLoaded} metaLoading=${_metaLoading} hasCanonInfo=${_hasCanonInfo}`);
+  }
   const currentSession = session.getSession(gameKey);
   const appInfoEntry = displayGame.appId ? (appInfoMap[displayGame.appId] ?? null) : null;
   const detailTitle = resolveCanonicalDisplayTitle(
@@ -951,9 +1277,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   return (
-    <>
+    <div className="lf-page-in h-full">
       <LibraryGameDetails
-        key={"library:game-details:steam:" + displayGame.appId}
+        key={`library:game-details:${selectedGame.source ?? "unknown"}:${selectedGame.appId || selectedGame.id}`}
         game={displayGame}
         artwork={artwork}
         appInfoEntry={appInfoEntry}
@@ -963,16 +1289,54 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         localDetailsData={localDetailsData}
         fallbackBundle={fallbackBundle}
         loading={metadataLoading}
+        canonicalLoaded={canonicalLoaded}
         onPlay={handlePlay}
         onInstall={handleInstall}
         onOpenSteam={handleOpenSteamStore}
         onOpenSteamDb={handleOpenSteamDb}
         onBack={handleBack}
         onRefreshArtwork={handleRefreshArtwork}
+        onOpenTools={() => setToolsModalOpen(true)}
+        onDeleteScript={handleDeleteScript}
         onNavigate={onNavigate}
         launchInfo={launchInfo}
         onCancelLaunch={cancelLaunch}
         onOpenStopModal={handleOpenStopModal}
+      />
+      <ToolsModal
+        open={toolsModalOpen}
+        game={displayGame}
+        onClose={() => setToolsModalOpen(false)}
+      />
+      <DebridSourceSelectorModal
+        open={debridRepacks.length > 0 && Boolean(debridInstallGame)}
+        repacks={debridRepacks}
+        gameTitle={debridInstallGame?.title ?? ""}
+        appId={debridInstallGame?.appId}
+        onInstallSource={async (repack: RepackQueryResult) => {
+          if (!debridInstallGame) return;
+          const resolved = await resolveDebridInstallUri(repack.downloadUris, confirm, debridInstallGame.title);
+          if (!resolved.ok) {
+            if (resolved.reason === "no-uri") {
+              showWarning("No download URI available for this Debrid source.", { title: "Not available" });
+            }
+            return;
+          }
+          downloadQueue.addDebridInstallJob(
+            repack.id,
+            debridInstallGame.title,
+            resolved.uri,
+            repack.installerType || "zip",
+            debridInstallGame.appId ?? "",
+            undefined,
+            debridInstallGame.repacker,
+            resolved.method,
+          );
+        }}
+        onClose={() => {
+          setDebridRepacks([]);
+          setDebridInstallGame(null);
+        }}
       />
       <StopGameModal
         open={showStopModal}
@@ -985,6 +1349,6 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         onMarkStopped={handleMarkAsStopped}
         onFindProcess={handleFindProcess}
       />
-    </>
+    </div>
   );
 }

@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
-use std::fs::File;
-use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::AppHandle;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 
 use crate::utils::progress_utils::emit_installer_progress;
 
@@ -15,14 +14,14 @@ pub struct DownloadedFile {
     pub total_bytes: u64,
 }
 
-pub fn download_file_to_temp(
+pub async fn download_file_to_temp(
     download_url: &str,
     headers: Option<HashMap<String, String>>,
     temp_folder: Option<String>,
     app_handle: &AppHandle,
     job_id: &str,
 ) -> Result<DownloadedFile, String> {
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(10))
@@ -40,6 +39,7 @@ pub fn download_file_to_temp(
 
     let mut response = request
         .send()
+        .await
         .map_err(|error| format!("Error descargando archivo: {}", error))?;
 
     if !response.status().is_success() {
@@ -64,15 +64,16 @@ pub fn download_file_to_temp(
 
     let target_dir = resolve_temp_folder(temp_folder)?;
 
-    fs::create_dir_all(&target_dir)
+    tokio::fs::create_dir_all(&target_dir)
+        .await
         .map_err(|error| format!("Error creando carpeta temporal configurada: {}", error))?;
 
     let package_path = target_dir.join(create_unique_zip_name());
 
     let mut file = File::create(&package_path)
+        .await
         .map_err(|error| format!("Error creando archivo temporal: {}", error))?;
 
-    let mut buffer = [0u8; 8192];
     let mut bytes_read: u64 = 0;
 
     emit_installer_progress(
@@ -86,18 +87,20 @@ pub fn download_file_to_temp(
     );
 
     loop {
-        let read = response
-            .read(&mut buffer)
+        let chunk = response
+            .chunk()
+            .await
             .map_err(|error| format!("Error leyendo descarga: {}", error))?;
 
-        if read == 0 {
+        let Some(chunk) = chunk else {
             break;
-        }
+        };
 
-        file.write_all(&buffer[..read])
+        file.write_all(&chunk)
+            .await
             .map_err(|error| format!("Error escribiendo archivo: {}", error))?;
 
-        bytes_read += read as u64;
+        bytes_read += chunk.len() as u64;
 
         let progress = if total_bytes > 0 {
             let percent = ((bytes_read as f64 / total_bytes as f64) * 55.0) as u8;
@@ -117,7 +120,7 @@ pub fn download_file_to_temp(
         );
     }
 
-    validate_zip_magic(&package_path)?;
+    validate_zip_magic(&package_path).await?;
 
     Ok(DownloadedFile {
         path: package_path,
@@ -150,8 +153,9 @@ fn create_unique_zip_name() -> String {
     format!("lumaforge-package-{}.zip", millis)
 }
 
-fn validate_zip_magic(path: &PathBuf) -> Result<(), String> {
-    let bytes = std::fs::read(path)
+async fn validate_zip_magic(path: &PathBuf) -> Result<(), String> {
+    let bytes = tokio::fs::read(path)
+        .await
         .map_err(|error| format!("Error validando ZIP: {}", error))?;
 
     let is_zip = bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04])

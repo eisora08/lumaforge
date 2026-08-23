@@ -12,7 +12,11 @@ export default function DashboardHorizontalRail({ children, gap }: DashboardHori
   const [canScrollRight, setCanScrollRight] = useState(false);
   const [overflow, setOverflow] = useState(false);
 
+  const _lastScrollUpdate = useRef(0);
   const updateScrollState = useCallback(() => {
+    const now = Date.now();
+    if (now - _lastScrollUpdate.current < 100) return;
+    _lastScrollUpdate.current = now;
     const el = scrollRef.current;
     if (!el) return;
     const threshold = 4;
@@ -26,7 +30,7 @@ export default function DashboardHorizontalRail({ children, gap }: DashboardHori
     const el = scrollRef.current;
     if (!el) return;
     updateScrollState();
-    el.addEventListener("scroll", updateScrollState);
+    el.addEventListener("scroll", updateScrollState, { passive: true });
     window.addEventListener("resize", updateScrollState);
     const ro = new ResizeObserver(updateScrollState);
     ro.observe(el);

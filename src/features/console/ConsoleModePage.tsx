@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
+import type { SteamAppMetadata } from "../../types/gameMetadata";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useConsoleLibraryMedia } from "./consoleLibraryAdapter";
 import { isSidebarInstalledGame } from "../../services/gameCacheService";
 import { useConsoleSettings } from "./consoleSettings";
 import type { ConsoleLayoutMode } from "./consoleSettings";
+import { resolveGameMetadata } from "../../services/gameMetadataResolver";
 import ConsoleSwitchSpotlightLayout from "./ConsoleSwitchSpotlightLayout";
 import ConsoleGridLayout from "./ConsoleGridLayout";
 import ConsoleGameDetails from "./ConsoleGameDetails";
@@ -19,7 +21,7 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setOnGamepadAction } fro
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showSuccess, showError, showWarning } from "../../components/toast/GameToast";
-import { getPlaytimeEntryByAppId } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { useControllerDetection } from "./useControllerDetection";
 
 function getBlockedReason(action: string): string {
@@ -40,6 +42,16 @@ const DEBUG_CONSOLE_PLAY = false;
 const DEBUG_CONSOLE_GRID_NAV = false;
 const DEBUG_CONSOLE_ENTRY = false;
 
+function measureGridColumns(gridColumnsRef: React.MutableRefObject<number>): number {
+  const el = document.querySelector<HTMLElement>("[data-console-grid]");
+  if (el) {
+    const computed = getComputedStyle(el).gridTemplateColumns;
+    const count = computed.split(/\s+/).filter(Boolean).length;
+    if (count > 0) gridColumnsRef.current = count;
+  }
+  return Math.max(1, gridColumnsRef.current || 8);
+}
+
 type Props = {
   onNavigate?: (page: AppPage) => void;
 };
@@ -50,6 +62,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const { favoriteIds } = useFavorites();
   const [consoleSettings, patchConsoleSettings] = useConsoleSettings();
   const [detailGame, setDetailGame] = useState<LibraryGame | null>(null);
+  const [railContext, setRailContext] = useState<{ games: LibraryGame[]; currentIndex: number } | null>(null);
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -58,6 +71,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const [settledFocusedIndex, setSettledFocusedIndex] = useState(-1);
   const settledFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const focusedRailRef = useRef(-1);
 
   useEffect(() => {
     return () => { mountedRef.current = false; };
@@ -84,7 +98,10 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   }, [enrichedGames]);
 
   const favorites = useMemo(() => {
-    return enrichedGames.filter((g) => g.appId && favoriteIds.has(g.appId));
+    return enrichedGames.filter((g) => {
+      const stableId = g.appId || g.id;
+      return favoriteIds.has(stableId);
+    });
   }, [enrichedGames, favoriteIds]);
 
   const allGames = useMemo(() => {
@@ -96,22 +113,24 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   const continuePlaying = useMemo(() => {
     const activeAppIds = new Set<string>();
+    const activeGameKeys = new Set<string>();
     for (const key of Object.keys(session.sessions)) {
       const state = session.getState(key);
       if (state === "running" || state === "launching") {
+        activeGameKeys.add(key);
         const m = key.match(/^app-(.+)$/);
         if (m) activeAppIds.add(m[1]);
       }
     }
     const scored = enrichedGames
-      .filter((g) => isSidebarInstalledGame(g) && g.appId)
+      .filter((g) => isSidebarInstalledGame(g))
       .map((g) => {
-        const appId = g.appId!;
-        const isActive = activeAppIds.has(appId);
-        const ptEntry = getPlaytimeEntryByAppId(appId);
+        const gKey = resolvePlaytimeKey(g);
+        const isActive = (g.appId ? activeAppIds.has(g.appId) : false) || (gKey ? activeGameKeys.has(gKey) : false);
+        const ptEntry = getPlaytimeEntryByAppId(g.appId) ?? getPlaytimeEntryByGameKey(gKey);
         const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? 0;
         const lpa = ptEntry?.lastPlayedAt ?? g.steamLastPlayedAt ?? 0;
-        return { game: g, score: isActive ? Number.MAX_SAFE_INTEGER : lpa, totalSeconds, isActive };
+        return { game: g, score: isActive ? Number.MAX_SAFE_INTEGER : lpa || (g.steamLastPlayedAt ?? 0), totalSeconds, isActive };
       })
       .filter((s) => s.totalSeconds > 0 || s.score > 0 || s.isActive)
       .sort((a, b) => {
@@ -136,14 +155,43 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     onNavigate?.("home");
   }, [onNavigate]);
 
+  const findRailContext = useCallback((game: LibraryGame): { games: LibraryGame[]; currentIndex: number } | null => {
+    const id = game.appId || game.id;
+    // Prefer the currently active category rail (user selected from Installed → use Installed's full list)
+    const fr = focusedRailRef.current;
+    const activeRail = fr >= 0 && fr < rails.length ? rails[fr] : null;
+    if (activeRail) {
+      const idx = activeRail.findIndex((g) => (g.appId || g.id) === id);
+      if (idx >= 0) return { games: activeRail, currentIndex: idx };
+    }
+    // Fallback: first rail containing the game
+    for (const rail of rails) {
+      const idx = rail.findIndex((g) => (g.appId || g.id) === id);
+      if (idx >= 0) return { games: rail, currentIndex: idx };
+    }
+    return null;
+  }, [rails]);
+
+  const handleNavigateRail = useCallback((direction: "next" | "prev") => {
+    setRailContext((prev) => {
+      if (!prev) return prev;
+      const idx = direction === "next" ? prev.currentIndex + 1 : prev.currentIndex - 1;
+      if (idx < 0 || idx >= prev.games.length) return prev;
+      const nextGame = prev.games[idx];
+      setDetailGame(nextGame);
+      return { ...prev, currentIndex: idx };
+    });
+  }, []);
+
   const handleSelectGame = useCallback((game: LibraryGame) => {
-    if (game?.appId) {
+    if (game) {
       if (DEBUG_CONSOLE_MODE) {
-        console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId} title=${game.title}`);
+        console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId ?? "manual"} title=${game.title}`);
       }
+      setRailContext(findRailContext(game));
       setDetailGame(game);
     }
-  }, []);
+  }, [findRailContext]);
 
   const handleOptionsGame = useCallback((game: LibraryGame) => {
     if (DEBUG_CONSOLE_MODE) {
@@ -157,60 +205,60 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (DEBUG_CONSOLE_MODE) {
         console.log(`[CONSOLE][OPTIONS_VIEW_DETAILS] appid=${optionsGame.appId}`);
       }
+      setRailContext(findRailContext(optionsGame));
       setDetailGame(optionsGame);
       setOptionsGame(null);
     }
-  }, [optionsGame]);
+  }, [optionsGame, findRailContext]);
 
   const handleSearchGame = useCallback((game: LibraryGame) => {
     if (DEBUG_CONSOLE_MODE) {
       console.log(`[CONSOLE][SEARCH_SELECT] appid=${game.appId} title=${game.title}`);
     }
+    setRailContext(findRailContext(game));
     setDetailGame(game);
     setSearchOpen(false);
-  }, []);
+  }, [findRailContext]);
 
   const closeDetails = useCallback(() => {
     if (DEBUG_CONSOLE_MODE) {
       console.log(`[CONSOLE][DETAILS_CLOSE]`);
     }
     setDetailGame(null);
+    setRailContext(null);
   }, []);
 
   const handleConsolePlay = useCallback(async (game: LibraryGame) => {
-    if (!game?.appId) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=null reason=no-appId`);
-      return;
-    }
+    if (!game) return;
     const gameKey = computeGameKey(game);
     const currentState = session.getState(gameKey);
     if (currentState === "launching" || currentState === "running" || currentState === "stopping") {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} reason=session-state=${currentState}`);
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId ?? "manual"} reason=session-state=${currentState}`);
       return;
     }
     const primaryAction = getLauncherGamePrimaryAction(game);
     if (primaryAction !== "play") {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} primaryAction=${primaryAction}`);
-      showWarning(getBlockedReason(primaryAction), { id: `console-blocked-${game.appId}`, duration: 3000 });
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId ?? "manual"} primaryAction=${primaryAction}`);
+      showWarning(getBlockedReason(primaryAction), { id: `console-blocked-${game.appId ?? game.id}`, duration: 3000 });
       return;
     }
     if (!game.isPlayable) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} reason=not-playable`);
-      showWarning("This game is not playable yet", { id: `console-blocked-${game.appId}`, duration: 3000 });
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId ?? "manual"} reason=not-playable`);
+      showWarning("This game is not playable yet", { id: `console-blocked-${game.appId ?? game.id}`, duration: 3000 });
       return;
     }
-    if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][REQUEST] appid=${game.appId} title=${game.title} primaryAction=${primaryAction}`);
+    if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][REQUEST] appid=${game.appId ?? "manual"} title=${game.title} primaryAction=${primaryAction}`);
 
-    const toastId = `console-launch-${game.appId}`;
-    pendingLaunchToastRef.current.set(game.appId, toastId);
+    const toastId = `console-launch-${game.appId ?? game.id}`;
+    pendingLaunchToastRef.current.set(gameKey, toastId);
     toast.loading(`Launching ${game.title}…`, { id: toastId, duration: 30000 });
 
     try {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_START] appid=${game.appId}`);
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_START] appid=${game.appId ?? "manual"}`);
       await session.launchGame(game);
     } catch (err) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAIL] appid=${game.appId} error=${err}`);
-      pendingLaunchToastRef.current.delete(game.appId);
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAIL] appid=${game.appId ?? "manual"} error=${err}`);
+      pendingLaunchToastRef.current.delete(gameKey);
       toast.dismiss(toastId);
       showError(`Could not launch ${game.title}`, { title: "Launch failed" });
     }
@@ -220,20 +268,19 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   useEffect(() => {
     const pending = pendingLaunchToastRef.current;
     if (pending.size === 0) return;
-    for (const [appId, toastId] of pending) {
-      const gameKey = `app-${appId}`;
+    for (const [gameKey, toastId] of pending) {
       const state = session.getState(gameKey);
       if (state === "running") {
-        if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][RUNNING_DETECTED] appid=${appId}`);
+        if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][RUNNING_DETECTED] gameKey=${gameKey}`);
         const game = currentFocusedGameRef.current;
-        pending.delete(appId);
+        pending.delete(gameKey);
         toast.dismiss(toastId);
         showSuccess(`${game?.title ?? "Game"} is running`, { title: "Game launched", duration: 3500 });
       } else if (state === "idle") {
         const existingSession = session.getSession(gameKey);
-        if (!existingSession && pending.has(appId)) {
-          if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAILED] appid=${appId} reason=session-cleared`);
-          pending.delete(appId);
+        if (!existingSession && pending.has(gameKey)) {
+          if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAILED] gameKey=${gameKey} reason=session-cleared`);
+          pending.delete(gameKey);
           toast.dismiss(toastId);
           showError(`Could not launch the game`, { title: "Launch failed" });
         }
@@ -247,6 +294,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (DEBUG_CONSOLE_MODE) {
         console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId} title=${game.title}`);
       }
+      setRailContext({ games: rails[railIndex], currentIndex: cardIndex });
       setDetailGame(game);
     }
   }, [rails]);
@@ -280,7 +328,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
         // Quick Menu (ConsoleSettingsPanelV2) owns ALL input while open.
         // Its window handler will preventDefault + stopImmediatePropagation for
         // every key it consumes. If we block here, the panel never receives events.
-        if (DEBUG_CONSOLE_GAMEPAD) {
+        if (DEBUG_CONSOLE_MODE) {
           console.log(`[CONSOLE_INPUT][IGNORED_BECAUSE_QUICK_MENU] key=${e.key}`);
         }
         return;
@@ -337,7 +385,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
             const r = railsRef.current;
             const rail = fr >= 0 && fr < r.length ? r[fr] : null;
             if (rail && rail.length > 0) {
-              const cols = Math.max(1, gridColumnsRef.current || consoleSettings.gridColumns || 8);
+              const cols = measureGridColumns(gridColumnsRef);
               const next = fi - cols;
               if (next >= 0) {
                 if (DEBUG_CONSOLE_GRID_NAV) console.log(`[CONSOLE_GRID_NAV][MOVE] direction=up from=${fi} to=${next} appid=${rail[next]?.appId}`);
@@ -356,7 +404,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
             const r = railsRef.current;
             const rail = fr >= 0 && fr < r.length ? r[fr] : null;
             if (rail && rail.length > 0) {
-              const cols = Math.max(1, gridColumnsRef.current || consoleSettings.gridColumns || 8);
+              const cols = measureGridColumns(gridColumnsRef);
               const next = fi + cols;
               const clamped = Math.min(next, rail.length - 1);
               if (clamped !== fi) {
@@ -481,7 +529,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   currentFocusedGameRef.current = currentFocusedGame;
 
   /* ── Refs for grid nav (avoid re-registering keyboard listener on every index change) ── */
-  const focusedRailRef = useRef(focusedRail);
   focusedRailRef.current = focusedRail;
   const focusedIndexRef = useRef(focusedIndex);
   focusedIndexRef.current = focusedIndex;
@@ -492,6 +539,58 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const gridColumnsRef = useRef(consoleSettings.gridColumns);
   const layoutModeRef = useRef(consoleSettings.layoutMode);
   layoutModeRef.current = consoleSettings.layoutMode;
+
+  /* ── Metadata resolution for non-Steam games with appId ── */
+  const [metadataCache, setMetadataCache] = useState<Map<string, SteamAppMetadata>>(new Map());
+
+  // Resolve metadata for the settled focused game (grid panel + spotlight)
+  useEffect(() => {
+    const game = currentSettledFocusedGame;
+    if (!game?.appId) return;
+    if (game.metadata?.resolved) return;
+    if (metadataCache.has(game.appId)) return;
+    const appIdNum = Number(game.appId);
+    if (isNaN(appIdNum) || appIdNum <= 0) return;
+    resolveGameMetadata([appIdNum]).then((metaMap) => {
+      const meta = metaMap[appIdNum];
+      if (meta) {
+        setMetadataCache((prev) => {
+          const next = new Map(prev);
+          next.set(game.appId!, meta);
+          return next;
+        });
+      }
+    }).catch(() => {});
+  }, [currentSettledFocusedGame?.appId, currentSettledFocusedGame?.metadata]);
+
+  // Resolve metadata for the detail overlay game
+  useEffect(() => {
+    const game = detailGame;
+    if (!game?.appId) return;
+    if (game.metadata?.resolved) return;
+    if (metadataCache.has(game.appId)) return;
+    const appIdNum = Number(game.appId);
+    if (isNaN(appIdNum) || appIdNum <= 0) return;
+    resolveGameMetadata([appIdNum]).then((metaMap) => {
+      const meta = metaMap[appIdNum];
+      if (meta) {
+        setMetadataCache((prev) => {
+          const next = new Map(prev);
+          next.set(game.appId!, meta);
+          return next;
+        });
+      }
+    }).catch(() => {});
+  }, [detailGame?.appId, detailGame?.metadata]);
+
+  // Merge cached metadata into game object
+  const enrichWithMetadata = useCallback((game: LibraryGame | null): LibraryGame | null => {
+    if (!game?.appId) return game;
+    if (game.metadata?.resolved) return game;
+    const cached = metadataCache.get(game.appId);
+    if (!cached) return game;
+    return { ...game, metadata: cached };
+  }, [metadataCache]);
 
   /* ── Debounce settled focus for preview (avoids heavy work during held navigation) ── */
   useEffect(() => {
@@ -619,9 +718,13 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
   }, [rails, focusedRail, focusedIndex, focusRail]);
 
+  const enrichedFocusedGame = useMemo(() => enrichWithMetadata(currentFocusedGame), [currentFocusedGame, enrichWithMetadata]);
+  const enrichedSettledGame = useMemo(() => enrichWithMetadata(currentSettledFocusedGame), [currentSettledFocusedGame, enrichWithMetadata]);
+  const enrichedDetailGame = useMemo(() => enrichWithMetadata(detailGame), [detailGame, enrichWithMetadata]);
+
   const sharedProps = useMemo(() => ({
-    focusedGame: currentFocusedGame,
-    settledFocusedGame: currentSettledFocusedGame,
+    focusedGame: enrichedFocusedGame,
+    settledFocusedGame: enrichedSettledGame,
     rails,
     focusedRail,
     focusedIndex,
@@ -637,9 +740,8 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     settings: consoleSettings,
     onSettingsPatch: patchConsoleSettings,
     allGames: enrichedGames,
-    gridColumnsRef,
     dockFocusedIndex,
-  }), [currentFocusedGame, currentSettledFocusedGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, gridColumnsRef, dockFocusedIndex]);
+  }), [enrichedFocusedGame, enrichedSettledGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, dockFocusedIndex]);
 
   const layout = consoleSettings.layoutMode === "spotlight"
     ? <ConsoleSwitchSpotlightLayout {...sharedProps} />
@@ -653,9 +755,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       </div>
 
       {/* Details panel overlays on top of the layout */}
-      {detailGame && (
+      {enrichedDetailGame && (
         <ConsoleGameDetails
-          game={detailGame}
+          game={enrichedDetailGame}
           onClose={closeDetails}
           settings={consoleSettings}
           onSearchOpen={() => { setSearchOpen(true); }}
@@ -663,6 +765,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onProfileOpen={() => { setProfileOpen(true); }}
           gamepadDisabled={searchOpen}
           quickMenuOpen={profileOpen}
+          railGames={railContext?.games}
+          railIndex={railContext?.currentIndex}
+          onNavigateRail={handleNavigateRail}
         />
       )}
 
@@ -675,6 +780,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onOpenDetails={handleOverlayOpenDetails}
           onOpenSearch={() => { setOptionsGame(null); setSearchOpen(true); }}
           onPlayGame={(g) => { setOptionsGame(null); handleConsolePlay(g); }}
+          onRemoveManual={() => { setOptionsGame(null); if (detailGame) setDetailGame(null); }}
           inDetails={false}
           inputHints={consoleSettings.inputHints}
         />

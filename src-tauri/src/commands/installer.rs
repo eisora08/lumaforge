@@ -7,7 +7,7 @@ use crate::utils::progress_utils::emit_installer_progress;
 use crate::utils::{archive_utils, download_utils, install_utils};
 
 #[tauri::command]
-pub fn download_and_install_package(
+pub async fn download_and_install_package(
     app_handle: AppHandle,
     job_id: String,
     download_url: String,
@@ -49,7 +49,8 @@ pub fn download_and_install_package(
         temp_folder,
         &app_handle,
         &job_id,
-    )?;
+    )
+    .await?;
 
     emit_installer_progress(
         &app_handle,

@@ -10,6 +10,7 @@ import type { LibraryLoadSource, LibraryLoadPhase } from "./libraryProgressServi
 import { scanSteamInstalledGames, scanLocalGameFolders, scanInstalledLuaScripts, fetchSteamOwnedGames } from "./tauri";
 import { resolveGameMetadata } from "./gameMetadataResolver";
 import { readSyncIndex } from "./tauri";
+import { isStandalone as isStandaloneById } from "./standaloneStore";
 
 function stableIdFromString(prefix: string, value: string): string {
   let hash = 0;
@@ -41,6 +42,7 @@ function buildFromSteam(
     isPlayable: steam.isInstalled,
     isInstallable: !steam.isInstalled,
     steamInstalled: steam.isInstalled,
+    isStandalone: isStandaloneById(String(steam.appId)),
     sizeOnDisk: steam.sizeOnDisk || undefined,
     lastUpdated: steam.lastUpdated || undefined,
     luaScripts: [],
@@ -184,11 +186,9 @@ export async function resolveLibraryGames(
     const hash = typeof window !== "undefined" ? window.location.hash : "";
     if (hash.startsWith("#/store")) {
       console.log("[steam-scan][SKIP] reason=store-active");
-      warnings.push("Skipped: store active");
     } else {
       const now = Date.now();
       console.log(`[steam-scan][SKIP] reason=ttl-valid elapsedMs=${now - _lastSteamScanAt}`);
-      warnings.push("Skipped: TTL valid");
     }
     return { games: [], warnings };
   }

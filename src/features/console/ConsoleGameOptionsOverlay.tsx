@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import {
-  Play, Square, Heart, Eye, Search, Edit, RefreshCw, ExternalLink, Copy, ArrowLeft,
+  Play, Square, Heart, Eye, Search, Edit, RefreshCw, ExternalLink, Copy, ArrowLeft, Trash2,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
@@ -9,14 +9,18 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamep
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { focusGameWindow } from "../../services/tauri";
-import { showError } from "../../components/toast/GameToast";
+import { showError, showSuccess } from "../../components/toast/GameToast";
 import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
+import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { getFavoriteKey } from "../../services/gameCacheService";
 import {
   getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel,
 } from "./consoleGameActions";
 
 const FADE_DURATION = 180;
+const DEBUG_MANUAL_REMOVE = false;
 
 type Props = {
   game: LibraryGame;
@@ -26,12 +30,13 @@ type Props = {
   onOpenSearch?: () => void;
   onPlayGame?: (game: LibraryGame) => void;
   onAction?: (action: ConsolePrimaryAction) => void;
+  onRemoveManual?: (game: LibraryGame) => void;
   inDetails: boolean;
   inputHints: ConsoleInputHintStyle;
 };
 
 export default function ConsoleGameOptionsOverlay({
-  game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, onAction, inDetails, inputHints,
+  game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, onAction, onRemoveManual, inDetails, inputHints,
 }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const sessionCtx = useGameSession();
@@ -42,12 +47,13 @@ export default function ConsoleGameOptionsOverlay({
   const isLaunching = sessionState === "launching";
   const isRunning = sessionState === "running";
   const isStopping = sessionState === "stopping";
-  const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
+  const isFav = game ? favoriteIds.has(getFavoriteKey(game) ?? game.id) : false;
   const hints = useMemo(() => getConsoleInputHints(inputHints), [inputHints]);
   const [focusIndex, setFocusIndex] = useState(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── Enter animation ── */
@@ -65,7 +71,8 @@ export default function ConsoleGameOptionsOverlay({
   useEffect(() => {
     setFocusIndex(0);
     setToastMsg(null);
-  }, [game?.appId]);
+    setConfirmDelete(false);
+  }, [game?.appId || game?.id]);
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -78,12 +85,12 @@ export default function ConsoleGameOptionsOverlay({
   }, []);
 
   const handleFavToggle = useCallback(() => {
-    if (game?.appId) toggleFavorite(game.appId);
+    if (game) toggleFavorite(getFavoriteKey(game) ?? game.id);
   }, [game, toggleFavorite]);
 
   /* ── Shared action model — single source of truth ── */
   const actionModel = useMemo<ConsoleGameActionModel | null>(
-    () => (game?.appId ? getConsoleGameActionModel(game) : null),
+    () => (game ? getConsoleGameActionModel(game) : null),
     [game],
   );
 
@@ -250,20 +257,74 @@ export default function ConsoleGameOptionsOverlay({
 
     list.push({
       id: "open-steam",
-      label: "Open Steam Page",
+      label: game.appId ? "Open Steam Page" : "Open Game Folder",
       icon: ExternalLink,
-      action: () => { window.open(`steam://store/${game.appId}`, "_blank"); onClose(); },
+      action: () => {
+        if (game.appId) {
+          window.open(`steam://store/${game.appId}`, "_blank");
+        } else if (game.executablePath) {
+          const path = game.executablePath.replace(/[\\\/][^\\\/]+$/, "");
+          import("@tauri-apps/plugin-opener").then(({ openPath }) => openPath(path));
+        }
+        onClose();
+      },
     });
 
     list.push({
       id: "copy-appid",
-      label: "Copy App ID",
+      label: game.appId ? "Copy App ID" : "Copy Game ID",
       icon: Copy,
       action: () => {
-        navigator.clipboard.writeText(game?.appId ?? "").catch(() => {});
-        showToast("App ID copied!");
+        navigator.clipboard.writeText(game?.appId || game?.id || "").catch(() => {});
+        showToast(game.appId ? "App ID copied!" : "Game ID copied!");
       },
     });
+
+    if (game.source === "debrid") {
+      list.push({
+        id: "debrid-remove",
+        label: "Remove from Library",
+        icon: Trash2,
+        action: () => {
+          const providerGameId = game.providerGameId;
+          if (providerGameId) {
+            removeDebridGameFromLibrary(providerGameId);
+            showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+          } else {
+            showError("Could not remove this game from the library.");
+          }
+          onClose();
+        },
+      });
+    }
+
+    if (game.source === "manual" && !isRunning) {
+      if (confirmDelete) {
+        list.push({
+          id: "confirm-remove",
+          label: "Confirm Remove",
+          icon: Trash2,
+          action: () => {
+            const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+            if (rawId) {
+              if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][CONSOLE] rawId=${rawId} title="${game.title}"`);
+              removeManualGame(rawId);
+              showSuccess(`"${game.title ?? rawId}" removed from library`);
+            }
+            onRemoveManual?.(game);
+            onClose();
+          },
+          highlight: true,
+        });
+      } else {
+        list.push({
+          id: "remove-manual",
+          label: "Remove from Library",
+          icon: Trash2,
+          action: () => { setConfirmDelete(true); },
+        });
+      }
+    }
 
     list.push({
       id: "back",
@@ -273,7 +334,7 @@ export default function ConsoleGameOptionsOverlay({
     });
 
     return list;
-  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame, onAction, isLaunching, isRunning, isStopping, gameSession, sessionCtx, actionModel]);
+  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame, onAction, onRemoveManual, isLaunching, isRunning, isStopping, gameSession, sessionCtx, actionModel, confirmDelete]);
 
   /* ── Clamp focus index after rows change ── */
   useEffect(() => {
@@ -368,7 +429,7 @@ export default function ConsoleGameOptionsOverlay({
 
       {/* Panel */}
       <div
-        className="relative mt-[clamp(60px,8vh,120px)] w-[clamp(320px,28vw,420px)] rounded-2xl border border-(--color-border)/30 bg-(--color-surface)/90 shadow-2xl shadow-black/50 backdrop-blur-2xl outline-none"
+        className="lf-surface relative mt-[clamp(60px,8vh,120px)] w-[clamp(320px,28vw,420px)] rounded-2xl border border-(--color-border)/30 shadow-2xl shadow-black/50 outline-none"
         onClick={(e) => e.stopPropagation()}
         style={{
           transition: `transform ${FADE_DURATION}ms ease, opacity ${FADE_DURATION}ms ease`,
@@ -430,9 +491,12 @@ export default function ConsoleGameOptionsOverlay({
         </div>
       </div>
 
-      {game.appId && (
+      {(game.appId || game.id) && (
         <GameEditDialog
-          appId={game.appId}
+          appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
+          manualGameId={game.source === "manual" ? game.providerGameId : undefined}
+          epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
+          debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab="media"
@@ -459,7 +523,7 @@ function HintPill({ label, primary }: { label: string; primary?: boolean }) {
     <span className="inline-flex items-center gap-1.5 text-xs text-(--color-muted)/70">
       <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold leading-none ${
         primary
-          ? "bg-(--color-accent) text-white"
+          ? "bg-(--color-accent) text-(--color-accent-text)"
           : "bg-white/[0.09] text-white/60"
       }`}>
         {m[1]}

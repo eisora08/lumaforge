@@ -8,10 +8,17 @@ import {
   Heart,
   Loader2,
   Play,
+  Plus,
   Search,
   Settings,
   X,
   XCircle,
+  Pencil,
+  Image,
+  Trash2,
+  Wrench,
+  ChevronDown,
+  Scan,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -22,12 +29,14 @@ import {
   dedupeLibraryGames,
   getSidebarLabel,
   hasActiveInstalledLuaScript,
+  resolveProviderMediaPreviewUrl,
 } from "../../services/gameCacheService";
 
 import { invoke } from "@tauri-apps/api/core";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import { useSettings } from "../../context/SettingsContext";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
@@ -35,23 +44,33 @@ import { SkeletonBox } from "../common/Skeleton";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
+import GameEditDialog from "../games/GameEditDialog";
+import GameScannerModal from "../games/GameScannerModal";
+import type { ScannedProgram } from "../games/GameScannerModal";
+import ToolsModal from "../tools/ToolsModal";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
-import { showSuccess, showError, showInfo } from "../toast/GameToast";
+import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
 import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
-import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
-import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
+import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts } from "../../services/tauri";
+import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey, detectAndQueueMissingMedia } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
+import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
+import type { ManualGameEntry } from "../../services/manualGameStore";
+import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { useConfirm } from "../../services/confirmService";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
+const DEBUG_MANUAL_REMOVE = false;
+const DEBUG_LUA_DELETE = false;
 
 type Props = {
   onOpenGame?: () => void;
   activePage?: AppPage;
   compact?: boolean;
   collapsed?: boolean;
-  variant?: "full" | "header" | "list";
+  variant?: "full" | "header" | "list" | "add-button";
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
 };
@@ -98,8 +117,11 @@ function pickSidebarFallbackPath(resolved: ResolvedSidebarMedia | null): string 
 }
 
 function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry | null): string {
-  if (appInfoEntry?.name) return appInfoEntry.name;
+  // Prefer the live context title (enriched/enriched canonical names) so the
+  // sidebar matches the grid. The legacy appinfo index can hold stale names
+  // (e.g. a verbose Debrid bundle title) and is only a fallback here.
   if (game.title && !game.title.startsWith("Steam App ")) return game.title;
+  if (appInfoEntry?.name) return appInfoEntry.name;
   if (game.appId) {
     logSidebarMedia(game.appId, `placeholderReason=no-name-fallback title="Steam App ${game.appId}"`);
     return `Steam App ${game.appId}`;
@@ -126,7 +148,7 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
 
 export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange }: Props) {
   countRender("SidebarLibraryList");
-  const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
+  const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap, refresh } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
   const [localQuery, setLocalQuery] = useState("");
   const searchQuery = externalSearchQuery ?? localQuery;
@@ -136,12 +158,21 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [menuGame, setMenuGame] = useState<LibraryGame | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDialogInitialTab, setEditDialogInitialTab] = useState<"details" | "media">("details");
+  const [editDialogGame, setEditDialogGame] = useState<LibraryGame | null>(null);
+  const [toolsGame, setToolsGame] = useState<LibraryGame | null>(null);
+  const [toolsModalOpen, setToolsModalOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
   const { jobs } = useDownloadQueueContext();
+  const { confirm } = useConfirm();
 
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
@@ -175,7 +206,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     const steamInstalledCount = deduped.filter((g) => g.steamInstalled === true).length;
     const luaActiveCount = deduped.filter(hasActiveInstalledLuaScript).length;
     const localInstalledCount = deduped.filter(
-      (g) => g.source === "local" && typeof g.executablePath === "string" && g.executablePath.length > 0
+      (g) => (g.source === "local" || g.source === "manual") && typeof g.executablePath === "string" && g.executablePath.length > 0
     ).length;
     const explicitInstalledCount = deduped.filter((g) =>
       (g as any).installedStatus === "active" ||
@@ -291,6 +322,21 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     loadBatch();
   }, [filtered, canonicalInfoMap, sidebarRetryKey]);
 
+  // Auto-download missing media for sidebar games not yet covered by Library grid
+  useEffect(() => {
+    const gamesWithoutMedia = filtered
+      .filter((g) => {
+        if (!g.appId) return false;
+        const resolved = sidebarMediaMap[g.appId];
+        if (resolved && (resolved.cover.exists || resolved.landscape.exists)) return false;
+        return true;
+      })
+      .slice(0, 10);
+    for (const game of gamesWithoutMedia) {
+      detectAndQueueMissingMedia(game.appId!, "library-visible").catch(() => {});
+    }
+  }, [filtered, sidebarMediaMap]);
+
   // Trigger retry when canonicalInfoMap gains entries for IDs with incomplete media
   useEffect(() => {
     const ids = Object.keys(canonicalInfoMap);
@@ -301,7 +347,104 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     if (needsRetry) setSidebarRetryKey((k) => k + 1);
   }, [canonicalInfoMap]);
 
-  // High-priority media repair for visible games with missing thumbnails
+  // Resolve sidebar media for manual games (no appId — use game.iconPath/game.imageUrl via provider resolver)
+  const manualMediaLoading = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const manualGames = filtered.filter((g) => !g.appId && g.source === "manual");
+    if (manualGames.length === 0) return;
+    const unloaded = manualGames.filter((g) => {
+      if (manualMediaLoading.current.has(g.id)) return false;
+      return sidebarMediaMap[g.id] === undefined;
+    });
+    if (unloaded.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        unloaded.map(async (g) => {
+          manualMediaLoading.current.add(g.id);
+
+          // Sidebar priority: iconPath first (compact thumbnail), then cover
+          const iconLocal = g.iconPath ?? undefined;
+          const coverLocal = g.imageUrl ?? undefined;
+
+          const [resolvedIcon, resolvedCover] = await Promise.all([
+            iconLocal ? resolveProviderMediaPreviewUrl(iconLocal).catch(() => null) : Promise.resolve(null),
+            coverLocal ? resolveProviderMediaPreviewUrl(coverLocal).catch(() => null) : Promise.resolve(null),
+          ]);
+
+          const media: ResolvedSidebarMedia = {
+            icon: resolvedIcon ? { src: resolvedIcon, localPath: iconLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            cover: resolvedCover ? { src: resolvedCover, localPath: coverLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            landscape: { src: null, localPath: null, exists: false },
+            background: { src: null, localPath: null, exists: false },
+            logo: { src: null, localPath: null, exists: false },
+          };
+          return [g.id, media] as const;
+        })
+      );
+      if (cancelled) return;
+      setSidebarMediaMap((prev) => {
+        const next = { ...prev };
+        for (const [id, media] of results) next[id] = media;
+        return next;
+      });
+      for (const g of unloaded) manualMediaLoading.current.delete(g.id);
+    })();
+    return () => { cancelled = true; };
+  }, [filtered]);
+
+  // Resolve sidebar media for Epic games (no appId — use coverPath/landscapePath from overrides)
+  const epicMediaLoading = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const epicGames = filtered.filter((g) => !g.appId && g.source === "epic");
+    if (epicGames.length === 0) return;
+    const unloaded = epicGames.filter((g) => {
+      if (epicMediaLoading.current.has(g.id)) return false;
+      return sidebarMediaMap[g.id] === undefined;
+    });
+    if (unloaded.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        unloaded.map(async (g) => {
+          epicMediaLoading.current.add(g.id);
+
+          const iconLocal = g.iconPath ?? undefined;
+          const coverLocal = g.coverPath ?? g.imageUrl ?? undefined;
+          const landscapeLocal = g.landscapePath ?? undefined;
+          const backgroundLocal = g.backgroundPath ?? undefined;
+
+          const [resolvedIcon, resolvedCover, resolvedLandscape, resolvedBackground] = await Promise.all([
+            iconLocal ? resolveProviderMediaPreviewUrl(iconLocal).catch(() => null) : Promise.resolve(null),
+            coverLocal ? resolveProviderMediaPreviewUrl(coverLocal).catch(() => null) : Promise.resolve(null),
+            landscapeLocal ? resolveProviderMediaPreviewUrl(landscapeLocal).catch(() => null) : Promise.resolve(null),
+            backgroundLocal ? resolveProviderMediaPreviewUrl(backgroundLocal).catch(() => null) : Promise.resolve(null),
+          ]);
+
+          const media: ResolvedSidebarMedia = {
+            icon: resolvedIcon ? { src: resolvedIcon, localPath: iconLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            cover: resolvedCover ? { src: resolvedCover, localPath: coverLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            landscape: resolvedLandscape ? { src: resolvedLandscape, localPath: landscapeLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            background: resolvedBackground ? { src: resolvedBackground, localPath: backgroundLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            logo: { src: null, localPath: null, exists: false },
+          };
+          return [g.id, media] as const;
+        })
+      );
+      if (cancelled) return;
+      setSidebarMediaMap((prev) => {
+        const next = { ...prev };
+        for (const [id, media] of results) next[id] = media;
+        return next;
+      });
+      for (const g of unloaded) epicMediaLoading.current.delete(g.id);
+    })();
+    return () => { cancelled = true; };
+  }, [filtered]);
+
+  // High-priority media resolution for visible games with missing thumbnails
   // useEffect(() => {
   //   const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
   //   const uniqueIds = [...new Set(ids)];
@@ -332,6 +475,40 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     setContextMenuPos({ x: e.clientX, y: e.clientY });
     setMenuGame(game);
     setMenuOpen(true);
+  }
+
+  async function handleDeleteScript(game: LibraryGame) {
+    const script = game.luaScripts[0];
+    if (!script) {
+      showWarning("No Lua script to delete.", { title: "No script" });
+      return;
+    }
+    if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${appSettings.luaPath}"`);
+    const result = await confirm({
+      title: "Delete Lua script?",
+      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
+      confirmLabel: "Delete Lua",
+      variant: "danger",
+    });
+    if (!result.confirmed) return;
+    try {
+      await deleteLuaScript({ luaPath: appSettings.luaPath, fileName: script.file_name });
+      // Verify file is actually gone from disk
+      const remaining = await scanInstalledLuaScripts(appSettings.luaPath);
+      const stillPresent = remaining.some((s) => s.file_name === script.file_name);
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
+      if (stillPresent) {
+        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        return;
+      }
+      // Force refresh library state (bypass TTL) to reflect deletion
+      await refresh({ force: true });
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
+      showSuccess("Lua script deleted.", { title: "Deleted" });
+    } catch (err) {
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
+      showError(String(err), { title: "Error" });
+    }
   }
 
   function handleMenuClose() {
@@ -416,7 +593,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         filtered.map((game) => {
           const isSelected = activePage === "library-game-detail" && selectedGame?.id === game.id;
           const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
-          const resolved = game.appId ? (sidebarMediaMap[game.appId] ?? null) : null;
+          const mediaKey = game.appId || game.id;
+          const resolved = sidebarMediaMap[mediaKey] ?? null;
           const resolvedThumb = pickSidebarSrc(resolved, game.appId ?? undefined);
           const sidebarFallbackPath = pickSidebarFallbackPath(resolved);
           const displayTitle = getSidebarTitle(game, appInfoEntry);
@@ -552,7 +730,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const mHasLua = menuGame.luaScripts.length > 0;
           const mPendingUninstall = menuGame.appId ? isPendingUninstall(menuGame.appId) : false;
           if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) console.log(`[SIDEBAR_ACTION_RENDER] appid=${menuGame.appId} uninstallPending=${mPendingUninstall} action=${mPendingUninstall ? "uninstalling" : mAction}`);
-          const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
+          const _sfk = getFavoriteKey(menuGame);
+          const fav = _sfk ? isFavorite(_sfk) : false;
 
           return (
             <>
@@ -604,11 +783,12 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 label={fav ? "Remove from favorites" : "Add to favorites"}
                 icon={<Heart className={`h-3.5 w-3.5 ${fav ? "fill-current" : ""}`} />}
                 onClick={() => {
-                  if (menuGame.appId) toggleFavorite(menuGame.appId);
+                  const fk = getFavoriteKey(menuGame);
+                  if (fk) toggleFavorite(fk);
                   handleMenuClose();
                 }}
               />
-              {menuGame.appId && (
+              {menuGame.appId && menuGame.source !== "epic" && menuGame.source !== "debrid" && (
                 <MenuItem
                   label="Open in Steam"
                   icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -620,11 +800,23 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 icon={<FolderOpen className="h-3.5 w-3.5" />}
                 onClick={() => {
                   handleMenuClose();
-                  if (menuGame.installDir) {
-                    invoke("open_folder", { path: menuGame.installDir }).catch((err) => {
+                  const exe = menuGame.executablePath || "";
+                  const sep = Math.max(exe.lastIndexOf("\\"), exe.lastIndexOf("/"));
+                  const folder = (sep > 0 ? exe.substring(0, sep) : null) || menuGame.installDir || "";
+                  if (folder) {
+                    invoke("open_folder", { path: folder }).catch((err) => {
                       showError(`Could not open folder: ${err}`);
                     });
                   }
+                }}
+              />
+              <MenuItem
+                label="Game Fixes"
+                icon={<Wrench className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  handleMenuClose();
+                  setToolsGame(menuGame);
+                  setToolsModalOpen(true);
                 }}
               />
               <MenuItem
@@ -673,8 +865,56 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 label="Manage"
                 icon={<Settings className="h-3.5 w-3.5" />}
                 children={[
-                  mPendingUninstall
-                    ? {
+                  ...(menuGame.source === "manual"
+                    ? [
+                        {
+                          label: "Edit Game Details",
+                          icon: <Pencil className="h-3.5 w-3.5" />,
+                          onClick: () => {
+                            setMenuOpen(false);
+                            setEditDialogGame(menuGame);
+                            setEditDialogInitialTab("details");
+                            setEditDialogOpen(true);
+                          },
+                        },
+                        {
+                          label: "Manage Artwork",
+                          icon: <Image className="h-3.5 w-3.5" />,
+                          onClick: () => {
+                            setMenuOpen(false);
+                            setEditDialogGame(menuGame);
+                            setEditDialogInitialTab("media");
+                            setEditDialogOpen(true);
+                          },
+                        },
+                        {
+                          label: "Delete Manual Game",
+                          icon: <Trash2 className="h-3.5 w-3.5" />,
+                          destructive: true,
+                          disabled: isRunning,
+                          onClick: () => {
+                            if (isRunning) {
+                              showWarning("Stop the game before removing it from Library.", { title: "Game is running" });
+                              return;
+                            }
+                            handleMenuClose();
+                            const rawId = normalizeManualGameId(menuGame.providerGameId || menuGame.id || "");
+                            if (rawId) {
+                              try {
+                                if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][SIDEBAR] rawId=${rawId} title="${menuGame.title}"`);
+                                removeManualGame(rawId);
+                                showSuccess(`"${menuGame.title ?? "Manual game"}" deleted`);
+                                refresh();
+                              } catch (e) {
+                                showError(`Failed to delete: ${e}`);
+                              }
+                            }
+                          },
+                        },
+                      ]
+                    : []),
+                   ...(mPendingUninstall
+                    ? [{
                       label: "Cancel tracking",
                       icon: <XCircle className="h-3.5 w-3.5" />,
                       onClick: () => {
@@ -684,39 +924,57 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                         showInfo(`"${menuGame.title ?? menuGame.appId}" uninstall tracking cancelled.`);
                         console.log(`[UNINSTALL_PENDING] appid=${menuGame.appId} phase=manual-cancel after=${isPendingUninstall(String(menuGame.appId))}`);
                       },
-                    }
-                    : {
-                    label: "Uninstall in Steam",
-                    icon: <ExternalLink className="h-3.5 w-3.5" />,
-                    disabled: !menuGame.steamInstalled,
-                    subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
-                    onClick: menuGame.steamInstalled ? async () => {
-                      handleMenuClose();
-                      const appId = Number(menuGame.appId);
-                      markPendingUninstall(String(appId));
-                      showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
-                      try {
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
-                        await uninstallSteamApp(appId);
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
-                      } catch (e1) {
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
-                        try {
-                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
-                          await openSteamStoreApp(appId);
-                        } catch (e2) {
-                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
-                          await openExternalUrl(getSteamStoreUrl(appId));
-                        }
-                      }
-                    } : undefined,
-                  },
+                    }]
+                    : menuGame.source === "debrid"
+                      ? [{
+                        label: "Remove from Library",
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        onClick: () => {
+                          handleMenuClose();
+                          const providerGameId = menuGame.providerGameId;
+                          if (providerGameId) {
+                            removeDebridGameFromLibrary(providerGameId);
+                            showSuccess(`"${menuGame.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                          } else {
+                            showError("Could not remove this game from the library.");
+                          }
+                        },
+                      }]
+                    : menuGame.source !== "manual" && menuGame.source !== "epic"
+                      ? [{
+                        label: "Uninstall in Steam",
+                        icon: <ExternalLink className="h-3.5 w-3.5" />,
+                        disabled: !menuGame.steamInstalled,
+                        subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
+                        onClick: menuGame.steamInstalled ? async () => {
+                          handleMenuClose();
+                          const appId = Number(menuGame.appId);
+                          markPendingUninstall(String(appId));
+                          showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                          try {
+                            console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
+                            await uninstallSteamApp(appId);
+                            console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
+                          } catch (e1) {
+                            console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                            try {
+                              console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
+                              await openSteamStoreApp(appId);
+                            } catch (e2) {
+                              console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
+                              await openExternalUrl(getSteamStoreUrl(appId));
+                            }
+                          }
+                        } : undefined,
+                      }]
+                      : []),
                   ...(mHasLua
                     ? [{
                       label: "Delete Lua",
                       icon: <X className="h-3.5 w-3.5" />,
                       destructive: true as const,
-                      disabled: true,
+                      onClick: () => { handleMenuClose(); handleDeleteScript(menuGame); },
                     }]
                     : []),
                 ]}
@@ -728,12 +986,113 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     )
   );
 
+  // Add Manual Game — pinned button, rendered OUTSIDE the scrollable list
+  // (mounted in Sidebar.tsx below the scroll container, so scrolling never moves it).
+  if (variant === "add-button") {
+    if (isCompactMode || isCollapsedMode) return null;
+    const handleScanAdd = (programs: ScannedProgram[]) => {
+      for (const p of programs) {
+        const entry: ManualGameEntry = {
+          id: `manual:${crypto.randomUUID()}`,
+          name: p.name,
+          executablePath: p.exePath || undefined,
+          installDir: p.installPath || undefined,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        saveManualGame(entry);
+      }
+      setScannerOpen(false);
+    };
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="flex">
+          <button
+            type="button"
+            onClick={() => {
+              setEditDialogGame(null);
+              setEditDialogInitialTab("details");
+              setEditDialogOpen(true);
+            }}
+            className="flex flex-1 items-center gap-2 rounded-l-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
+          >
+            <Plus className="h-3 w-3" />
+            Add Game
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddMenuOpen((v) => !v)}
+            className="flex items-center rounded-r-lg border border-l-0 border-dashed border-(--surface-active-border) px-1.5 py-1.5 text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
+          >
+            <ChevronDown className={`h-3 w-3 transition-transform ${addMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+        {addMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setAddMenuOpen(false)} />
+            <div className="relative z-50 -mt-0.5 overflow-hidden rounded-lg border border-(--color-border) bg-(--color-surface) shadow-xl shadow-black/40">
+              <button
+                onClick={() => { setScannerOpen(true); setAddMenuOpen(false); }}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
+              >
+                <Scan className="h-3 w-3" />
+                Scan Installed
+              </button>
+            </div>
+          </>
+        )}
+        {editDialogOpen && (
+          <GameEditDialog
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
+        )}
+        <GameScannerModal
+          open={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onAdd={handleScanAdd}
+          games={games}
+        />
+      </div>
+    );
+  }
+
   // Collapsed mode: render everything inline (icons only)
   if (isCollapsedMode) {
     return (
       <div className="flex flex-col">
         {renderGameList()}
         {renderMenu()}
+        {toolsModalOpen && (
+          <ToolsModal open={toolsModalOpen} game={toolsGame} onClose={() => setToolsModalOpen(false)} />
+        )}
+        {editDialogOpen && (
+          <GameEditDialog
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
+            manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
+            debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame.providerGameId : undefined}
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            game={editDialogGame ?? undefined}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -752,6 +1111,28 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       <div className="flex flex-col">
         {renderGameList()}
         {renderMenu()}
+        {toolsModalOpen && (
+          <ToolsModal open={toolsModalOpen} game={toolsGame} onClose={() => setToolsModalOpen(false)} />
+        )}
+        {editDialogOpen && (
+          <GameEditDialog
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
+            manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
+            debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame.providerGameId : undefined}
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            game={editDialogGame ?? undefined}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -762,6 +1143,28 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       {renderHeader()}
       {renderGameList()}
       {renderMenu()}
+      {toolsModalOpen && (
+        <ToolsModal open={toolsModalOpen} game={toolsGame} onClose={() => setToolsModalOpen(false)} />
+      )}
+      {editDialogOpen && (
+          <GameEditDialog
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
+            manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
+            debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame.providerGameId : undefined}
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            game={editDialogGame ?? undefined}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
+      )}
     </div>
   );
 }

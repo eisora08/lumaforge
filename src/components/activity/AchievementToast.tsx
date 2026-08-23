@@ -1,72 +1,32 @@
-import toast, { Toaster, Toast } from "react-hot-toast";
 import type { AchievementDef } from "../../features/activity/types";
-import { RARITY_COLORS, RARITY_ACCENT_BAR } from "../../features/activity/types";
+import { playAchievementSound } from "../../features/activity/achievements/achievementSound";
+import { fireCompletionConfetti } from "../../features/activity/achievements/completionConfetti";
+import { getPlayerProfile } from "../../features/activity/achievements/achievementStore";
+import { pulseAmbientRarity } from "../../services/ambientBackgroundStore";
+import { queueAchievementOverlay } from "../../services/achievementNotificationService";
 
-const TOAST_Z = 2147483646;
+const SETTINGS_KEY = "lumaforge-settings";
 
-type Props = {
-  t: Toast;
-  achievement: AchievementDef;
-  duration: number;
-};
-
-function AchievementToastInner({ t, achievement, duration }: Props) {
-  const rarity = RARITY_COLORS[achievement.rarity];
-  const AchIcon = achievement.icon;
-
-  return (
-    <div
-      className={`pointer-events-auto relative min-w-80 max-w-100 overflow-hidden rounded-2xl border bg-[#0d1117]/95 backdrop-blur-xl px-5 py-4 text-white ${
-        t.visible ? "lf-toast-entry" : "lf-toast-exit"
-      }`}
-      style={{ borderColor: `var(--toast-border, rgba(255,255,255,0.1))` }}
-    >
-      <div className={`pointer-events-none absolute inset-x-0 top-0 h-0.75 ${RARITY_ACCENT_BAR[achievement.rarity]}`} />
-
-      <div className="relative z-10 flex items-start gap-3.5">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5">
-          <AchIcon className="h-5 w-5 text-white/80" />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] uppercase tracking-widest text-amber-400/80 font-semibold">
-            Achievement Unlocked
-          </p>
-          <p className="mt-0.5 text-sm font-bold text-white leading-5">
-            {achievement.title}
-          </p>
-          <div className="mt-1 flex items-center gap-2">
-            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${rarity.bg} ${rarity.text}`}>
-              {achievement.rarity}
-            </span>
-            <span className="text-[10px] font-bold text-amber-400">
-              +{achievement.xp} XP
-            </span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            toast.dismiss(t.id);
-          }}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/10 hover:text-white/60"
-        >
-          ×
-        </button>
-      </div>
-
-      <div className="pointer-events-none absolute bottom-0 left-0 h-0.75 w-full bg-white/5">
-        <div
-          className="h-full origin-left bg-linear-to-r from-amber-400 to-amber-500"
-          style={{ animation: `lf-toast-progress ${duration}ms linear forwards` }}
-        />
-      </div>
-    </div>
-  );
+function isOverlayEnabled(): boolean {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.launcherAchievementOverlayEnabled === "boolean") {
+        return parsed.launcherAchievementOverlayEnabled;
+      }
+    }
+  } catch { /* ignore */ }
+  return true; // default enabled
 }
+
+const RARITY_TO_NUMBER: Record<string, number> = {
+  common: 0,
+  uncommon: 1,
+  rare: 5,
+  epic: 15,
+  legendary: 31,
+};
 
 let _shownThisSession = new Set<string>();
 
@@ -74,35 +34,69 @@ export function showAchievementToast(achievement: AchievementDef, duration = 400
   if (_shownThisSession.has(achievement.id)) return;
   _shownThisSession.add(achievement.id);
 
-  toast.custom(
-    (t) => (
-      <AchievementToastInner t={t} achievement={achievement} duration={duration} />
-    ),
-    { duration, style: { zIndex: TOAST_Z } }
-  );
+  // Always play sound + ambient pulse
+  playAchievementSound(achievement.rarity);
+  pulseAmbientRarity(achievement.rarity);
+
+  // Route to Tauri overlay window when enabled
+  if (isOverlayEnabled()) {
+    queueAchievementOverlay({
+      name: achievement.title,
+      description: `${achievement.description} — +${achievement.xp} XP`,
+      iconUrl: null,
+      appId: null,
+      rarity: RARITY_TO_NUMBER[achievement.rarity] ?? 0,
+      gameTitle: null,
+      duration,
+    });
+  }
+  // When overlay disabled → silent (sound + pulse already fired)
 }
 
 export function showAchievementToasts(achievements: AchievementDef[], delay = 600): void {
   achievements.forEach((ach, i) => {
     setTimeout(() => showAchievementToast(ach), i * delay);
   });
+
+  // Check for 100% completion after all toasts fire
+  if (achievements.length > 0) {
+    const lastDelay = achievements.length * delay + 500;
+    setTimeout(() => {
+      const profile = getPlayerProfile();
+      if (profile.unlockedCount >= profile.totalCount && profile.totalCount > 0) {
+        fireCompletionConfetti();
+      }
+    }, lastDelay);
+  }
 }
 
 export function resetAchievementToastDedup(): void {
   _shownThisSession.clear();
 }
 
+/**
+ * Kept for backward compatibility — returns null since launcher achievements
+ * now use the Tauri overlay window instead of react-hot-toast.
+ */
 export function AchievementToastViewport() {
-  return (
-    <Toaster
-      position="bottom-right"
-      gutter={10}
-      containerStyle={{
-        zIndex: TOAST_Z,
-        bottom: 18,
-        right: 18,
-        pointerEvents: "none",
-      }}
-    />
-  );
+  return null;
+}
+
+// Dev console helper — cycles through launcher achievements for overlay testing
+if (typeof window !== "undefined") {
+  let _testCounter = 0;
+  (window as any).__testLauncherAchievement = () => {
+    const defs = [
+      { id: "test-launcher", title: "First Launch", description: "Launch any game for the first time", category: "play" as const, rarity: "common" as const, xp: 10, icon: null as any },
+      { id: "test-launcher-2", title: "Collector", description: "Add 50 games to your library", category: "library" as const, rarity: "uncommon" as const, xp: 50, icon: null as any },
+      { id: "test-launcher-3", title: "Backlog Slayer", description: "Complete 10 games", category: "completion" as const, rarity: "rare" as const, xp: 200, icon: null as any },
+      { id: "test-launcher-4", title: "Quarterly Commitment", description: "Maintain a 90-day play streak", category: "streak" as const, rarity: "epic" as const, xp: 300, icon: null as any },
+      { id: "test-launcher-5", title: "Year of Gaming", description: "Maintain a 365-day play streak", category: "streak" as const, rarity: "legendary" as const, xp: 1000, icon: null as any },
+    ];
+    const def = defs[_testCounter % defs.length];
+    _testCounter++;
+    _shownThisSession.delete(def.id);
+    showAchievementToast(def, 5000);
+  };
+  (window as any).__testCompletionConfetti = () => fireCompletionConfetti();
 }

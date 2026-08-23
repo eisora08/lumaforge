@@ -6,11 +6,14 @@ import { useDownloadQueue } from "../hooks/useDownloadQueue";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { useGameOwnershipLookup } from "../features/search/useGameOwnershipLookup";
-import { getSourceAvailability, loadSourceAvailabilityIndex } from "../services/sourceAvailabilityCacheService";
+import { getSourceAvailability, loadSourceAvailabilityIndex, buildSourceAvailabilityFromProviders, updateSourceAvailability } from "../services/sourceAvailabilityCacheService";
 import { getStoreDetailsState } from "../services/storeDetailsSourceState";
+import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
 import { downloadFromSource, type DownloadFromSourceDeps } from "../features/download/downloadFromSource";
 import { scanInstalledLuaScripts } from "../services/tauri";
 import { getSourceKey } from "../utils/sourceHelpers";
+import { setPendingLibraryFocus } from "../services/libraryNavigationService";
+import { useSearch } from "../context/SearchContext";
 
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
 import { SkeletonHero, SkeletonBox } from "../components/common/Skeleton";
@@ -19,16 +22,13 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
+import type { AppPage } from "../types/navigation";
 
-function DetailsShell({ onBack }: { onBack: () => void }) {
+const DEBUG_GAME_DETAILS = false;
+
+function DetailsShell({ onBack: _onBack }: { onBack?: () => void }) {
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7">
-      <button
-        onClick={onBack}
-        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-      >
-        ← Back
-      </button>
+    <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7 lf-page-in">
       <SkeletonHero />
       <div className="space-y-3">
         <SkeletonBox className="h-5 w-64" />
@@ -44,10 +44,11 @@ function DetailsShell({ onBack }: { onBack: () => void }) {
   );
 }
 
-export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
+export default function GameDetailsPage({ onBack: _onBack, onNavigate }: { onBack?: () => void; onNavigate?: (page: AppPage) => void }) {
   const { selectedGame, selectGame, clearSelection } = useGameDetails();
   const { refresh: libraryRefresh } = useLibraryGames();
   const { settings } = useSettings();
+  const { setQuery } = useSearch();
   const { addJob, updateJob } = useDownloadQueue();
   const ownershipLookup = useGameOwnershipLookup();
   const _mountedRef = useRef(true);
@@ -58,7 +59,9 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
 
   // Hydrated source state — restored from source availability cache
   const [hydratedSources, setHydratedSources] = useState<PackageSource[]>([]);
-  const [hydratedStatus, setHydratedStatus] = useState<SourceCheckStatus | undefined>();
+  // Start as "checking" so hasParentSourceControl is true from the first render,
+  // preventing internal checkSources() from firing before hydrate resolves
+  const [hydratedStatus, setHydratedStatus] = useState<SourceCheckStatus>("checking");
   // Source key selection (persists across renders for current game)
   const [selectedSourceKey, setSelectedSourceKey] = useState<string | undefined>();
 
@@ -85,7 +88,7 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     : "not-installed";
 
   const lookupLua = ownershipLookup.isLuaActive(currentAppId);
-  console.log(
+  if (DEBUG_GAME_DETAILS) console.log(
     `[GAME_DETAILS][DETAIL_PROPS] appid=${currentAppId} localLuaInstalled=${localLuaInstalled} lookupLua=${lookupLua} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} installStatus=${installStatus}`,
   );
 
@@ -120,16 +123,17 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     const appIdNum = Number(appId);
     if (!Number.isFinite(appIdNum)) return;
     const title = sg.title;
+    const imageUrl = sg.imageUrl;
 
     let cancelled = false;
 
     async function hydrate() {
-      console.log(`[GLOBAL_SEARCH][OPEN_STORE_DETAILS] appid=${appId} title=${title}`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][OPEN_STORE_DETAILS] appid=${appId} title=${title}`);
 
       // Step 1: Restore saved provider/source from store details state (module-level, instant)
       const detailsState = getStoreDetailsState(appId);
       if (detailsState) {
-        console.log(
+        if (DEBUG_GAME_DETAILS) console.log(
           `[STORE][DETAILS_STATE_RESTORE] appid=${appId} selectedProvider=${detailsState.selectedProvider} status=${detailsState.status}`,
         );
       }
@@ -150,19 +154,71 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
         if (!cancelled) {
           setHydratedSources(sources);
           setHydratedStatus("ready");
-          console.log(`[STORE][SOURCE_RESTORE_FROM_CACHE] appid=${appId} found=${sources.length}`);
+          if (DEBUG_GAME_DETAILS) console.log(`[STORE][SOURCE_RESTORE_FROM_CACHE] appid=${appId} found=${sources.length}`);
         }
       } else {
-        // Cache miss or incomplete — let StoreGameDetailsPage internal check handle source discovery
+        // Cache miss or stale — run parent-controlled source resolution
+        // (mirrors Store.tsx's scheduleSourceResolve pattern)
+
+        // Owned or non-installed Lua games should not trigger provider resolution.
+        if (steamOwned || (!isSteamInstalled && luaInstalled)) {
+          if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
+          setHydratedSources([]);
+          setHydratedStatus("idle");
+          return;
+        }
+
         const reason = !cached
           ? "no-cache-entry"
           : cached.availableSources.length === 0
             ? "no-sources"
             : `status=${cached.status}`;
-        console.log(`[STORE][SOURCE_EMPTY_GUARD] appid=${appId} reason=${reason} — not overwriting existing with empty`);
-        if (!cancelled) {
+        if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RESOLUTION] appid=${appId} reason=${reason} — starting provider discovery`);
+
+        try {
+          const overlayMap = await resolveProviderOverlaysForStoreGames(
+            [{ appId, title, imageUrl, platforms: [], sources: [] }],
+            settings,
+          );
+          if (cancelled) return;
+
+          const overlayGame = overlayMap[appId];
+          const resolvedSources = overlayGame?.sources ?? [];
+          const totalProviders = resolvedSources.length;
+          const successes = resolvedSources.filter((s) => s.available).length;
+          const entry = buildSourceAvailabilityFromProviders(
+            appId,
+            title,
+            resolvedSources,
+            totalProviders,
+          );
+
+          if (DEBUG_GAME_DETAILS) console.log(
+            `[GLOBAL_SEARCH][SOURCE_RESOLUTION_DONE] appid=${appId} total=${totalProviders} successes=${successes} status=${entry.status}`,
+          );
+
+          setHydratedSources(resolvedSources);
+          setHydratedStatus(entry.status === "ready" ? "ready" : "error");
+          await updateSourceAvailability(appId, entry).catch(() => {});
+        } catch (err: unknown) {
+          if (cancelled) return;
+          const message = err instanceof Error ? err.message : String(err);
+          const isTimeout = message.toLowerCase().includes("timeout");
+          if (DEBUG_GAME_DETAILS) console.log(
+            `[GLOBAL_SEARCH][SOURCE_RESOLUTION_FAIL] appid=${appId} timeout=${isTimeout} error=${message}`,
+          );
           setHydratedSources([]);
-          setHydratedStatus(undefined);
+          setHydratedStatus(isTimeout ? "timeout" : "error");
+          await updateSourceAvailability(appId, {
+            appId,
+            title,
+            status: isTimeout ? "timeout" : "error",
+            luaReady: false,
+            availableSources: [],
+            sourceCount: 0,
+            totalProviderCount: 0,
+            updatedAt: Math.floor(Date.now() / 1000),
+          }).catch(() => {});
         }
       }
     }
@@ -221,7 +277,7 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     const appId = selectedGame?.appId;
     if (!appId) return;
     const inLib = steamOwned ? !isSteamInstalled : luaInstalled;
-    console.log(
+    if (DEBUG_GAME_DETAILS) console.log(
       `[STORE][OWNERSHIP_STATE] appid=${appId} owned=${steamOwned} installed=${isSteamInstalled} luaInstalled=${luaInstalled} inLibrary=${inLib}`,
     );
   }, [selectedGame?.appId, steamOwned, isSteamInstalled, luaInstalled]);
@@ -232,14 +288,14 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     if (!currentAppId || !settings.luaPath) return;
     let cancelled = false;
     (async () => {
-      console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId}`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId}`);
       try {
         const scripts = await scanInstalledLuaScripts(settings.luaPath!);
         if (cancelled) return;
         const numAppId = Number(currentAppId);
         const match = scripts.find((s) => s.app_id === numAppId);
         const active = !!match && !match.is_disabled;
-        console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
+        if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
         setLocalLuaInstalled(active);
       } catch {
         if (!cancelled) setLocalLuaInstalled(false);
@@ -257,20 +313,58 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     return packageGame;
   }, [packageGame, hydratedSources, hydratedStatus]);
 
-  // Only pass sourceStatus to StoreGameDetailsPage when we have real cached data
-  // Otherwise let the internal check handle discovery
-  const effectiveSourceStatus: SourceCheckStatus | undefined =
-    hydratedStatus === "ready" ? "ready" : undefined;
+  // Pass hydrated status to StoreGameDetailsPage — always defined (starts as "checking")
+  // so hasParentSourceControl is always true, preventing internal duplicate resolution
+  const effectiveSourceStatus: SourceCheckStatus = hydratedStatus;
 
   const handleBack = () => {
     clearSelection();
-    onBack();
   };
 
+  // Retry handler — re-runs source resolution, mirrors Store.tsx's onRefreshSources
+  const handleRefreshSources = useCallback(async () => {
+    const sg = selectedGame;
+    if (!sg) return;
+    const appId = sg.appId;
+
+    // Owned or non-installed Lua games should not trigger provider resolution.
+    if (steamOwned || (!isSteamInstalled && luaInstalled)) {
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
+      return;
+    }
+
+    const title = sg.title;
+    const imageUrl = sg.imageUrl;
+    if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY] appid=${appId}`);
+    setHydratedStatus("checking");
+    try {
+      const overlayMap = await resolveProviderOverlaysForStoreGames(
+        [{ appId, title, imageUrl, platforms: [], sources: [] }],
+        settings,
+      );
+      const overlayGame = overlayMap[appId];
+      const resolvedSources = overlayGame?.sources ?? [];
+      const totalProviders = resolvedSources.length;
+      const entry = buildSourceAvailabilityFromProviders(
+        appId, title, resolvedSources, totalProviders,
+      );
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_DONE] appid=${appId} status=${entry.status} total=${totalProviders}`);
+      setHydratedSources(resolvedSources);
+      setHydratedStatus(entry.status === "ready" ? "ready" : "error");
+      await updateSourceAvailability(appId, entry).catch(() => {});
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isTimeout = message.toLowerCase().includes("timeout");
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_FAIL] appid=${appId} timeout=${isTimeout}`);
+      setHydratedSources([]);
+      setHydratedStatus(isTimeout ? "timeout" : "error");
+    }
+  }, [selectedGame, settings, isSteamInstalled, luaInstalled, steamOwned]);
+
   // Download handler — delegates to shared Store-canonical downloadFromSource helper
-  const handleDownloadSource = useCallback(async (source: PackageSource) => {
+  const handleDownloadSource = useCallback(async (source: PackageSource): Promise<{ success: boolean; jobId?: string }> => {
     const game = gameWithSources ?? displayGame;
-    if (!game) return;
+    if (!game) return { success: false };
 
     const deps: DownloadFromSourceDeps = {
       settings,
@@ -281,18 +375,19 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     };
     const result = await downloadFromSource(game, source, deps);
     if (result.success && currentAppId && settings.luaPath) {
-      console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId} reason=post-download`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId} reason=post-download`);
       try {
         const scripts = await scanInstalledLuaScripts(settings.luaPath);
         const numAppId = Number(currentAppId);
         const match = scripts.find((s) => s.app_id === numAppId);
         const active = !!match && !match.is_disabled;
-        console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
+        if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
         setLocalLuaInstalled(active);
       } catch {
         // localLuaInstalled stays as-is
       }
     }
+    return result;
   }, [gameWithSources, displayGame, settings, addJob, updateJob, libraryRefresh, currentAppId]);
 
   // Open another game from "More Like This" section
@@ -303,9 +398,17 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
   // Source key selection handler
   const handleSelectSourceKey = useCallback((sourceKey: string) => {
     const appId = displayGame?.appId;
-    console.log(`[STORE][SOURCE_CHANGE] appid=${appId} from=${selectedSourceKey ?? "null"} to=${sourceKey}`);
+    if (DEBUG_GAME_DETAILS) console.log(`[STORE][SOURCE_CHANGE] appid=${appId} from=${selectedSourceKey ?? "null"} to=${sourceKey}`);
     setSelectedSourceKey(sourceKey);
   }, [displayGame?.appId, selectedSourceKey]);
+
+  // View in Library handler — called from install success modal
+  const handleViewInLibrary = useCallback((appId: string, title: string) => {
+    if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][VIEW_IN_LIBRARY] appid=${appId} title="${title}"`);
+    setQuery("");
+    setPendingLibraryFocus(appId, title);
+    onNavigate?.("library");
+  }, [onNavigate, setQuery]);
 
   // Find the selected source by key for the effectiveSelectedSource prop
   const effectiveSelectedSource: PackageSource | undefined = useMemo(() => {
@@ -315,7 +418,7 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
 
   if (!displayGame) {
     return (
-      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
+      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7 lf-page-in">
         <p className="text-(--color-muted)">No game selected.</p>
       </div>
     );
@@ -326,7 +429,7 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
+    <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7 lf-page-in">
       <StoreGameDetailsPage
         game={displayGame}
         metadata={metadata}
@@ -340,8 +443,10 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
         moreLikeThisGames={[]}
         onBack={handleBack}
         onDownloadSource={handleDownloadSource}
+        onRefreshSources={handleRefreshSources}
         onOpenGame={handleOpenGame}
         onSelectSourceKey={handleSelectSourceKey}
+        onViewInLibrary={handleViewInLibrary}
       />
     </div>
   );

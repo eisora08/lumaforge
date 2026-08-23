@@ -1,11 +1,15 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::models::steam_app_metadata::SteamAppMetadata;
+use tokio::sync::Semaphore;
 
 const DEBUG_STEAM_MEDIA: bool = false;
 
+const FETCH_CONCURRENCY: usize = 8;
+
 #[tauri::command]
-pub fn resolve_steam_app_metadata(
+pub async fn resolve_steam_app_metadata(
     app_ids: Vec<u32>,
     language: Option<String>,
     country: Option<String>,
@@ -14,7 +18,7 @@ pub fn resolve_steam_app_metadata(
         return Ok(Vec::new());
     }
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(15))
         .connect_timeout(Duration::from_secs(8))
@@ -22,52 +26,93 @@ pub fn resolve_steam_app_metadata(
         .build()
         .map_err(|error| format!("[HTTP][TIMEOUT] Error creando cliente HTTP: {}", error))?;
 
-    let mut output = Vec::new();
+    let semaphore = Arc::new(Semaphore::new(FETCH_CONCURRENCY.min(app_ids.len())));
+    let mut handles = Vec::with_capacity(app_ids.len());
 
-    for app_id in app_ids {
-        let mut url = format!(
-            "https://store.steampowered.com/api/appdetails?appids={}",
-            app_id
-        );
-        if let Some(ref lang) = language {
-            url.push_str(&format!("&l={}", lang));
-        }
-        if let Some(ref cc) = country {
-            url.push_str(&format!("&cc={}", cc));
-        }
+    for &app_id in &app_ids {
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        let client = client.clone();
+        let lang = language.clone();
+        let ctry = country.clone();
+        handles.push(tokio::spawn(async move {
+            let result = fetch_app_metadata_async(&client, app_id, lang.as_deref(), ctry.as_deref()).await;
+            drop(permit);
+            (app_id, result)
+        }));
+    }
 
-        if DEBUG_STEAM_MEDIA && (language.is_some() || country.is_some()) {
-            println!("[STORE][STEAM_MEDIA_FETCH] appid={} language={:?} country={:?} url={}", app_id, language, country, url);
-        }
+    let mut results: Vec<Option<SteamAppMetadata>> = Vec::with_capacity(app_ids.len());
+    results.resize_with(app_ids.len(), || None);
 
-        let response = match client.get(&url).send() {
-            Ok(value) => value,
-            Err(_) => {
-                output.push(fallback_metadata(app_id));
-                continue;
+    for handle in handles {
+        match handle.await {
+            Ok((app_id, meta)) => {
+                if let Some(idx) = app_ids.iter().position(|&id| id == app_id) {
+                    results[idx] = Some(meta);
+                }
             }
-        };
-
-        if !response.status().is_success() {
-            output.push(fallback_metadata(app_id));
-            continue;
+            Err(e) => {
+                eprintln!("[STORE][STEAM_MEDIA_FETCH] spawn task failed: {}", e);
+            }
         }
+    }
 
-        let json: serde_json::Value = match response.json() {
-            Ok(value) => value,
-            Err(_) => {
-                output.push(fallback_metadata(app_id));
-                continue;
-            }
-        };
+    let mut output = app_ids
+        .iter()
+        .zip(results.into_iter())
+        .map(|(&app_id, opt)| opt.unwrap_or_else(|| fallback_metadata(app_id)))
+        .collect::<Vec<SteamAppMetadata>>();
 
-        let entry = match json.get(app_id.to_string()) {
-            Some(value) => value,
-            None => {
-                output.push(fallback_metadata(app_id));
-                continue;
-            }
-        };
+    output.sort_by_key(|item| item.app_id);
+
+    Ok(output)
+}
+
+async fn fetch_app_metadata_async(
+    client: &reqwest::Client,
+    app_id: u32,
+    language: Option<&str>,
+    country: Option<&str>,
+) -> SteamAppMetadata {
+    let mut url = format!(
+        "https://store.steampowered.com/api/appdetails?appids={}",
+        app_id
+    );
+    if let Some(lang) = language {
+        url.push_str(&format!("&l={}", lang));
+    }
+    if let Some(cc) = country {
+        url.push_str(&format!("&cc={}", cc));
+    }
+
+    if DEBUG_STEAM_MEDIA && (language.is_some() || country.is_some()) {
+        println!("[STORE][STEAM_MEDIA_FETCH] appid={} language={:?} country={:?} url={}", app_id, language, country, url);
+    }
+
+    let response = match client.get(&url).send().await {
+        Ok(value) => value,
+        Err(_) => {
+            return fallback_metadata(app_id);
+        }
+    };
+
+    if !response.status().is_success() {
+        return fallback_metadata(app_id);
+    }
+
+    let json: serde_json::Value = match response.json().await {
+        Ok(value) => value,
+        Err(_) => {
+            return fallback_metadata(app_id);
+        }
+    };
+
+    let entry = match json.get(app_id.to_string()) {
+        Some(value) => value,
+        None => {
+            return fallback_metadata(app_id);
+        }
+    };
 
         let success = entry
             .get("success")
@@ -75,15 +120,13 @@ pub fn resolve_steam_app_metadata(
             .unwrap_or(false);
 
         if !success {
-            output.push(fallback_metadata(app_id));
-            continue;
+            return fallback_metadata(app_id);
         }
 
         let data = match entry.get("data") {
             Some(value) => value,
             None => {
-                output.push(fallback_metadata(app_id));
-                continue;
+                return fallback_metadata(app_id);
             }
         };
 
@@ -128,8 +171,7 @@ pub fn resolve_steam_app_metadata(
             .to_string();
 
         if name.is_empty() {
-            output.push(fallback_metadata(app_id));
-            continue;
+            return fallback_metadata(app_id);
         }
 
         let developer = data
@@ -318,50 +360,45 @@ pub fn resolve_steam_app_metadata(
             .unwrap_or_default();
 
         let parsed_movies = movies.len();
-        if parsed_movies > 0 {
+        if parsed_movies > 0 && DEBUG_STEAM_MEDIA {
             let names: Vec<String> = movies.iter().map(|m| format!("\"{}\"", m.name.clone())).collect();
             println!("[STORE][MOVIES_PARSED] appid={} count={} names={}", app_id, parsed_movies, names.join(", "));
         }
 
-        output.push(SteamAppMetadata {
-            app_id,
-            name,
-            developer,
-            header_image,
-            capsule_image,
-            capsule_image_v5,
-            library_hero_image: None,
-            background_image,
-            hero_image: None,
-            library_header_image: None,
-            wide_cover_image: None,
-            logo_image: None,
-            library_logo_image: None,
-            platforms,
-            languages,
-            dlc_count,
-            short_description,
-            detailed_description,
-            about_the_game,
-            legal_notice,
-            store_drm_notice: None,
-            genres,
-            publishers,
-            release_date,
-            categories,
-            dlc_app_ids,
-            pc_requirements,
-            mac_requirements,
-            linux_requirements,
-            screenshots,
-            movies,
-            resolved: true,
-        });
+    SteamAppMetadata {
+        app_id,
+        name,
+        developer,
+        header_image,
+        capsule_image,
+        capsule_image_v5,
+        library_hero_image: None,
+        background_image,
+        hero_image: None,
+        library_header_image: None,
+        wide_cover_image: None,
+        logo_image: None,
+        library_logo_image: None,
+        platforms,
+        languages,
+        dlc_count,
+        short_description,
+        detailed_description,
+        about_the_game,
+        legal_notice,
+        store_drm_notice: None,
+        genres,
+        publishers,
+        release_date,
+        categories,
+        dlc_app_ids,
+        pc_requirements,
+        mac_requirements,
+        linux_requirements,
+        screenshots,
+        movies,
+        resolved: true,
     }
-
-    output.sort_by_key(|item| item.app_id);
-
-    Ok(output)
 }
 
 fn parse_genres(data: &serde_json::Value) -> Vec<String> {
@@ -443,7 +480,7 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
 }
 
 #[tauri::command]
-pub fn fetch_steam_store_drm_notice(
+pub async fn fetch_steam_store_drm_notice(
     app_id: u32,
 ) -> Result<Option<String>, String> {
     let url = format!(
@@ -451,7 +488,7 @@ pub fn fetch_steam_store_drm_notice(
         app_id
     );
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
@@ -459,7 +496,7 @@ pub fn fetch_steam_store_drm_notice(
         .build()
         .map_err(|e| format!("[HTTP][CLIENT] Failed to build client: {}", e))?;
 
-    let response = match client.get(&url).send() {
+    let response = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
             println!("[STORE][DRM_HTML_FETCH] appid={} ok=false error=fetch-failed msg=\"{}\"", app_id, e);
@@ -472,7 +509,7 @@ pub fn fetch_steam_store_drm_notice(
         return Ok(None);
     }
 
-    let html = match response.text() {
+    let html = match response.text().await {
         Ok(t) => t,
         Err(e) => {
             println!("[STORE][DRM_HTML_FETCH] appid={} ok=false error=read-failed msg=\"{}\"", app_id, e);
@@ -609,4 +646,31 @@ fn strip_html(input: &str) -> String {
     }
 
     output
+}
+
+/// Generic URL fetch via reqwest (bypasses CORS in Tauri WebView).
+/// Used by services that need to call APIs without CORS headers (e.g. SteamSpy).
+#[tauri::command]
+pub async fn fetch_json_from_url(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("LumaForge/0.1.0")
+        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    response
+        .text()
+        .await
+        .map_err(|e| format!("HTTP read error: {}", e))
 }

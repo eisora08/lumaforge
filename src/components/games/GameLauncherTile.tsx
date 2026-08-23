@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender } from "../../services/perfCounters";
 import {
   Download,
   ExternalLink,
+  FileSearch,
   FileText,
   FolderOpen,
   Gamepad2,
@@ -16,6 +17,8 @@ import {
   XCircle,
   Edit,
   Image,
+  Trash2,
+  Wrench,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -39,11 +42,13 @@ import {
   resolveGameMediaUrl,
   resolveCanonicalDisplayTitle,
   resolveCanonicalName,
+  resolveProviderMediaPreviewUrl,
   isPendingUninstall,
   markPendingUninstall,
   clearPendingUninstall,
   subscribePendingUninstall,
   getPendingUninstallVersion,
+  getFavoriteKey,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -61,6 +66,10 @@ import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import GameEditDialog from "./GameEditDialog";
+import ToolsModal from "../tools/ToolsModal";
+import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { open } from "@tauri-apps/plugin-dialog";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -76,52 +85,99 @@ type GameLauncherTileProps = {
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
   onDeleteScript?: (game: LibraryGame) => void;
+  onHoverStart?: (game: LibraryGame, rect: DOMRect) => void;
+  onHoverEnd?: () => void;
+  onOverlayToggle?: (open: boolean) => void;
 };
 
 function getCardImage(
   mode: "landscape" | "poster",
   canonicalAppInfo: GameAppInfo | null,
 ): string | undefined {
+  const media = canonicalAppInfo?.media;
+  if (!media) return undefined;
+
   if (mode === "poster") {
     return (
-      canonicalAppInfo?.media?.coverPath ||
-      canonicalAppInfo?.media?.landscapePath ||
-      canonicalAppInfo?.media?.backgroundPath ||
+      [media.coverPath, media.landscapePath, media.backgroundPath]
+        .find((p): p is string => !!p && isLocalPath(p)) ||
+      media.coverPath ||
+      media.landscapePath ||
+      media.backgroundPath ||
       undefined
     );
   }
 
   return (
-    canonicalAppInfo?.media?.landscapePath ||
-    canonicalAppInfo?.media?.backgroundPath ||
-    canonicalAppInfo?.media?.coverPath ||
+    [media.landscapePath, media.backgroundPath, media.coverPath]
+      .find((p): p is string => !!p && isLocalPath(p)) ||
+    media.landscapePath ||
+    media.backgroundPath ||
+    media.coverPath ||
     undefined
   );
 }
 
-export default function GameLauncherTile({
+const DEBUG_MANUAL_REMOVE = false;
+
+function areGameLauncherTilePropsEqual(prev: GameLauncherTileProps, next: GameLauncherTileProps): boolean {
+  return (
+    prev.game === next.game &&
+    prev.appInfoEntry === next.appInfoEntry &&
+    prev.onSelect === next.onSelect &&
+    prev.onPlay === next.onPlay &&
+    prev.onInstall === next.onInstall &&
+    prev.onDeleteScript === next.onDeleteScript &&
+    prev.onHoverStart === next.onHoverStart &&
+    prev.onHoverEnd === next.onHoverEnd &&
+    prev.onOverlayToggle === next.onOverlayToggle
+  );
+}
+
+const MemoizedGameLauncherTile = React.memo(GameLauncherTileInner, areGameLauncherTilePropsEqual);
+
+export default MemoizedGameLauncherTile;
+
+function GameLauncherTileInner({
   game,
   appInfoEntry,
   onSelect,
   onPlay,
   onInstall,
   onDeleteScript,
+  onHoverStart,
+  onHoverEnd,
+  onOverlayToggle,
 }: GameLauncherTileProps) {
   countRender("GameLauncherTile");
   const { settings } = useSettings();
   const { ref, isVisible } = useInViewport();
-  const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
+  const { onMouseEnter: prefetchEnter, onMouseLeave: prefetchLeave } = useHoverPrefetch(game.appId);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const handleHoverEnter = useCallback(() => {
+    prefetchEnter();
+    if (onHoverStart && rootRef.current) {
+      onHoverStart(game, rootRef.current.getBoundingClientRect());
+    }
+  }, [prefetchEnter, onHoverStart, game]);
+
+  const handleHoverLeave = useCallback(() => {
+    prefetchLeave();
+    onHoverEnd?.();
+  }, [prefetchLeave, onHoverEnd]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editInitialTab, setEditInitialTab] = useState<"general" | "media">("general");
+  const [editInitialTab, setEditInitialTab] = useState<"details" | "media">("details");
+  const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
-  const favorite = game.appId ? isFavorite(game.appId) : false;
+  const _favKey = getFavoriteKey(game);
+  const favorite = _favKey ? isFavorite(_favKey) : false;
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
   const hasRequestedData = useRef(false);
-  const hasMountedData = useRef(false);
   // Request game data via priority system when card enters viewport
   useEffect(() => {
     if (!game.appId || !isVisible || hasRequestedData.current) return;
@@ -129,21 +185,17 @@ export default function GameLauncherTile({
     requestGameData(game.appId, LoadPriority.VIEWPORT);
   }, [game.appId, isVisible]);
 
-  // Load canonical appinfo for this game — deferred until visible
+  // Load canonical appinfo for this game — re-runs when media paths change
   useEffect(() => {
     if (!game.appId || !isVisible) {
       if (!game.appId) setMediaLoading(false);
       return;
     }
-    if (hasMountedData.current) return;
-    hasMountedData.current = true;
     let cancelled = false;
     setMediaLoading(true);
     loadGameAppInfoWithMediaFallback(game.appId)
       .then(async (appInfo) => {
         if (cancelled) return;
-        // Ensure canonical name is resolved — if appinfo.name is null/placeholder,
-        // try metadata resolver and store details, and write back to disk.
         if (appInfo && (!appInfo.name || appInfo.name.startsWith("Steam App "))) {
           const resolvedName = await resolveCanonicalName(game.appId!);
           if (resolvedName) {
@@ -159,7 +211,7 @@ export default function GameLauncherTile({
         if (!cancelled) setMediaLoading(false);
       });
     return () => { cancelled = true; };
-  }, [game.appId, isVisible]);
+  }, [game.appId, isVisible, game.coverPath, game.landscapePath, game.backgroundPath]);
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
 
@@ -170,7 +222,7 @@ export default function GameLauncherTile({
     canonicalInfo,
   );
 
-  // Source trace log — emitted once per instance per game
+  // Source trace log â€” emitted once per instance per game
   const DEBUG_NAME_SOURCE_TRACE = false;
   const displayTraced = useRef(false);
   if (DEBUG_NAME_SOURCE_TRACE && !displayTraced.current && game.appId) {
@@ -191,9 +243,31 @@ export default function GameLauncherTile({
   );
 
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(undefined);
+  const DEBUG_MANUAL_COVER = false;
 
+  // Steam games: resolve via appId + canonical appinfo path
   useEffect(() => {
     if (!game.appId || !displayImage) {
+      // Manual/Epic games: resolve provider-relative path directly
+      if (!game.appId && (game.imageUrl || game.coverPath || game.landscapePath)) {
+        const providerPath = game.imageUrl || (artworkMode === "poster" ? (game.coverPath || game.landscapePath) : (game.landscapePath || game.coverPath));
+        if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_INPUT] title=${game.title} source=${game.source} appId=${game.appId} providerPath=${providerPath} canonicalInfo=${!!canonicalInfo}`);
+        let cancelled = false;
+        resolveProviderMediaPreviewUrl(providerPath!)
+          .then((url) => {
+            if (!cancelled) {
+              if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_RESOLVED] imageUrl=${game.imageUrl} resolvedSrc=${url ?? "null"}`);
+              setResolvedSrc(url ?? undefined);
+            }
+          })
+          .catch((err) => {
+            if (!cancelled) {
+              if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_RESOLVED] imageUrl=${game.imageUrl} resolvedSrc=error error=${err instanceof Error ? err.message : String(err)}`);
+              setResolvedSrc(undefined);
+            }
+          });
+        return () => { cancelled = true; };
+      }
       setResolvedSrc(undefined);
       return;
     }
@@ -214,9 +288,9 @@ export default function GameLauncherTile({
         if (!cancelled) setResolvedSrc(undefined);
       });
     return () => { cancelled = true; };
-  }, [game.appId, displayImage, artworkMode]);
+  }, [game.appId, game.imageUrl, game.coverPath, game.landscapePath, displayImage, artworkMode]);
 
-  // Render-time diagnostics — log once on state change, not every render
+  // Render-time diagnostics â€” log once on state change, not every render
   // Disabled by default to reduce log spam. Set DEBUG_MEDIA_GRID=true in dev console to enable.
   const DEBUG_MEDIA_GRID = false;
   const renderLogRef = useRef<string | null>(null);
@@ -362,7 +436,7 @@ export default function GameLauncherTile({
       };
       await markSyncIndexItem(syncItem);
 
-      // Save provider status as up-to-date (triggers store → subscribers → UI updates)
+      // Save provider status as up-to-date (triggers store â†’ subscribers â†’ UI updates)
       const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
         ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
         : undefined;
@@ -423,7 +497,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
+    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); onOverlayToggle?.(true); onHoverEnd?.(); }} className="lf-game-card group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
       {/* Image */}
       <div
         role="button"
@@ -456,11 +530,35 @@ export default function GameLauncherTile({
           </div>
         )}
         <div className="absolute inset-0 rounded-t-2xl bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none" />
-        {luaUpdateStatus === "update-available" && (
+        {luaUpdateStatus === "update-available" && game.steamInstalled && (
           <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-black">
             Update
           </span>
         )}
+        {game.source === "debrid" && game.repacker && (
+          <span className="absolute right-2 top-2 rounded-full bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-cyan-400 ring-1 ring-cyan-500/30">
+            {game.repacker.toUpperCase()}
+          </span>
+        )}
+        {(() => {
+          const srcBadge = game.hasLua
+            ? { label: "LUA", cls: "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30" }
+            : game.source === "epic"
+              ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300 ring-1 ring-purple-500/40" }
+              : game.source === "debrid"
+                ? { label: "DEBRID", cls: "bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/30" }
+                : game.source === "manual"
+                  ? { label: "MANUAL", cls: "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30" }
+                  : game.source === "steam"
+                    ? { label: "STEAM", cls: "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30" }
+                    : null;
+          if (!srcBadge) return null;
+          return (
+            <span className={`absolute bottom-2 left-2 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
+              {srcBadge.label}
+            </span>
+          );
+        })()}
       </div>
 
       {/* Title + actions row */}
@@ -477,7 +575,7 @@ export default function GameLauncherTile({
                   handleCardClick();
                 }
               }}
-              className="line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
+              className="lf-card-title line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
             >
               {displayTitle}
             </h3>
@@ -490,16 +588,16 @@ export default function GameLauncherTile({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   {installJob.message || (
                     installJob.status === "waiting" || installJob.status === "queued"
-                      ? "Waiting for Steam…"
+                      ? "Waiting for Steamâ€¦"
                       : installJob.status === "downloading"
                         ? `Downloading ${installJob.progress}%`
                         : installJob.status === "extracting" || installJob.status === "installing"
-                          ? "Installing…"
+                          ? "Installingâ€¦"
                           : installJob.status === "checking"
-                            ? "Checking…"
+                            ? "Checkingâ€¦"
                             : installJob.status === "paused"
                               ? "Paused"
-                              : "Installing…"
+                              : "Installingâ€¦"
                   )}
                   {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
                     <span className="text-[10px] text-amber-400/40">
@@ -541,7 +639,7 @@ export default function GameLauncherTile({
             ) : hasPendingUninstall ? (
               <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/70">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Uninstalling…
+                Uninstallingâ€¦
               </div>
             ) : (
               <>
@@ -596,6 +694,38 @@ export default function GameLauncherTile({
                 {action === "missing-path" && (
                   <span className="text-[10px] text-(--color-muted)/50">Missing Path</span>
                 )}
+                {action === "installing" && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-(--color-muted)/50">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Installing
+                  </span>
+                )}
+                {action === "select-exe" && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleActionClick(e, async () => {
+                      try {
+                        const selected = await open({
+                          title: "Select game executable",
+                          filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
+                          defaultPath: game.installDir || "C:\\",
+                          multiple: false,
+                        });
+                        if (selected && game.providerGameId) {
+                          updateDebridGame(game.providerGameId, game.installDir || "", selected);
+                          showSuccess("Game executable set. Ready to play!");
+                        }
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        showError(`File picker failed: ${msg}`);
+                      }
+                    })}
+                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+                  >
+                    <FileSearch className="h-3 w-3" />
+                    Select EXE
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -618,7 +748,7 @@ export default function GameLauncherTile({
           <CardActionMenu
             open={menuOpen}
             anchorRef={menuAnchorRef}
-            onClose={() => { setMenuOpen(false); setContextMenuPos(null); }}
+            onClose={() => { setMenuOpen(false); setContextMenuPos(null); onOverlayToggle?.(false); }}
             cursorPos={contextMenuPos}
             gameId={game.appId}
           >
@@ -653,6 +783,37 @@ export default function GameLauncherTile({
                   }
                 }}
               />
+            ) : action === "installing" ? (
+              <MenuItem
+                label="Installing"
+                icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                disabled
+              />
+            ) : action === "select-exe" ? (
+              <MenuItem
+                label="Select Executable"
+                icon={<FileSearch className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  setMenuOpen(false);
+                  (async () => {
+                    try {
+                      const selected = await open({
+                        title: "Select game executable",
+                        filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
+                        defaultPath: game.installDir || "C:\\",
+                        multiple: false,
+                      });
+                      if (selected && game.providerGameId) {
+                        updateDebridGame(game.providerGameId, game.installDir || "", selected);
+                        showSuccess("Game executable set. Ready to play!");
+                      }
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      showError(`File picker failed: ${msg}`);
+                    }
+                  })();
+                }}
+              />
             ) : !hasActiveInstall ? (
               <MenuItem
                 label="Install"
@@ -661,12 +822,12 @@ export default function GameLauncherTile({
               />
             ) : (
               <MenuItem
-                label={installJob?.status === "waiting" || installJob?.status === "queued" ? "Waiting for Steam…" : "Installing…"}
+                label={installJob?.status === "waiting" || installJob?.status === "queued" ? "Waiting for Steamâ€¦" : "Installingâ€¦"}
                 icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 disabled
               />
             )}
-            {luaUpdateStatus === "update-available" && (
+            {luaUpdateStatus === "update-available" && game.steamInstalled && (
               <MenuItem
                 label="Update Package"
                 icon={<RefreshCw className={`h-3.5 w-3.5 ${updateRunning ? "animate-spin" : ""}`} />
@@ -681,9 +842,9 @@ export default function GameLauncherTile({
             <MenuItem
               label={favorite ? "Remove from favorites" : "Add to favorites"}
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
-              onClick={() => { if (game.appId) toggleFavorite(game.appId); setMenuOpen(false); }}
+              onClick={() => { const fk = getFavoriteKey(game); if (fk) toggleFavorite(fk); setMenuOpen(false); }}
             />
-            {game.appId && (
+            {game.appId && game.source !== "epic" && game.source !== "debrid" && (
               <MenuItem
                 label="Open in Steam"
                 icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -695,8 +856,11 @@ export default function GameLauncherTile({
               icon={<FolderOpen className="h-3.5 w-3.5" />}
               onClick={() => {
                 setMenuOpen(false);
-                if (game.installDir) {
-                  invoke("open_folder", { path: game.installDir }).catch((err) => {
+                const exe = game.executablePath || "";
+                const sep = Math.max(exe.lastIndexOf("\\"), exe.lastIndexOf("/"));
+                const folder = (sep > 0 ? exe.substring(0, sep) : null) || game.installDir || "";
+                if (folder) {
+                  invoke("open_folder", { path: folder }).catch((err) => {
                     showError(`Could not open folder: ${err}`);
                   });
                 }
@@ -709,8 +873,8 @@ export default function GameLauncherTile({
                 setMenuOpen(false);
 
                 try {
-                  if (!game?.appId) {
-                    showError("Game ID not available");
+                  if (!game?.appId && !game?.executablePath && !game?.installDir) {
+                    showError("Game location not available");
                     return;
                   }
 
@@ -718,7 +882,7 @@ export default function GameLauncherTile({
                     "../../services/installedGamesRegistry"
                   );
 
-                  let exePath = await getExePathFromEntry(game.appId);
+                  let exePath = game.appId ? await getExePathFromEntry(game.appId) : undefined;
 
                   if (!exePath && game.executablePath) {
                     exePath = game.executablePath;
@@ -743,7 +907,7 @@ export default function GameLauncherTile({
 
 
                       await setInstalledGameEntry({
-                        gameId: game.appId,
+                        gameId: game.appId ?? "",
                         exePath: validExe.exe_path,
                         exeName: validExe.file_name,
                         installDir: game.installDir,
@@ -778,13 +942,38 @@ export default function GameLauncherTile({
                 {
                   label: "Edit Game Details",
                   icon: <Edit className="h-3.5 w-3.5" />,
-                  onClick: () => { setMenuOpen(false); setEditInitialTab("general"); setEditDialogOpen(true); },
+                  onClick: () => { setMenuOpen(false); setEditInitialTab("details"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
                 {
                   label: "Manage Artwork",
                   icon: <Image className="h-3.5 w-3.5" />,
-                  onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); },
+                  onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
+                {
+                  label: "Game Fixes",
+                  icon: <Wrench className="h-3.5 w-3.5" />,
+                  onClick: () => { setMenuOpen(false); setToolsModalOpen(true); onOverlayToggle?.(true); },
+                },
+                    ...(game.source === "manual"
+                    ? [{
+                        label: "Delete Manual Game",
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        onClick: () => {
+                          setMenuOpen(false);
+                          const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+                          if (rawId) {
+                            try {
+                              if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][TILE] rawId=${rawId} title="${game.title}"`);
+                              removeManualGame(rawId);
+                              showSuccess(`"${game.title ?? rawId}" deleted from library`);
+                            } catch (e) {
+                              showError(`Failed to delete: ${e}`);
+                            }
+                          }
+                        },
+                      }]
+                  : []),
                 ...(hasPendingUninstall
                   ? [{
                     label: "Cancel tracking",
@@ -797,32 +986,51 @@ export default function GameLauncherTile({
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(String(game.appId))}`);
                     },
                   }]
-                  : [{
-                    label: "Uninstall in Steam",
-                    icon: <ExternalLink className="h-3.5 w-3.5" />,
-                    disabled: !game.steamInstalled,
-                    subtitle: !game.steamInstalled ? "Not installed" : undefined,
-                    onClick: game.steamInstalled ? async () => {
-                      setMenuOpen(false);
-                      const appId = Number(game.appId);
-                      markPendingUninstall(String(appId));
-                      showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
-                      try {
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
-                        await uninstallSteamApp(appId);
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
-                      } catch (e1) {
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                    : game.source === "debrid"
+                      ? [{
+                        label: "Remove from Library",
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        onClick: () => {
+                          setMenuOpen(false);
+                          if (DEBUG_MANUAL_REMOVE) console.log(`[DEBRID][TILE_REMOVE] providerGameId=${game.providerGameId} title="${game.title}"`);
+                          const providerGameId = game.providerGameId;
+                          if (providerGameId) {
+                            removeDebridGameFromLibrary(providerGameId);
+                            showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                          } else {
+                            showError("Could not remove this game from the library.");
+                          }
+                        },
+                      }]
+                      : game.source !== "manual" && game.source !== "epic"
+                        ? [{
+                        label: "Uninstall in Steam",
+                        icon: <ExternalLink className="h-3.5 w-3.5" />,
+                        disabled: !game.steamInstalled,
+                        subtitle: !game.steamInstalled ? "Not installed" : undefined,
+                      onClick: game.steamInstalled ? async () => {
+                        setMenuOpen(false);
+                        const appId = Number(game.appId);
+                        markPendingUninstall(String(appId));
+                        showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
                         try {
-                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
-                          await openSteamStoreApp(appId);
-                        } catch (e2) {
-                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
-                          await openExternalUrl(getSteamStoreUrl(appId));
+                          console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
+                          await uninstallSteamApp(appId);
+                          console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
+                        } catch (e1) {
+                          console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                          try {
+                            console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
+                            await openSteamStoreApp(appId);
+                          } catch (e2) {
+                            console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
+                            await openExternalUrl(getSteamStoreUrl(appId));
+                          }
                         }
-                      }
-                    } : undefined,
-                  }]),
+                      } : undefined,
+                    }]
+                    : []),
                 ...(hasLua
                   ? [{
                     label: "Delete Lua",
@@ -839,21 +1047,32 @@ export default function GameLauncherTile({
           </CardActionMenu>
         </div>
 
-        {game.appId && (
-          <GameEditDialog
-            appId={game.appId}
-            open={editDialogOpen}
-            onClose={() => setEditDialogOpen(false)}
-            initialTab={editInitialTab}
-            game={game}
-            settings={{
-              rawgApiKey: settings.rawgApiKey,
-              igdbClientId: settings.igdbClientId,
-              igdbClientSecret: settings.igdbClientSecret,
-              steamGridDbApiKey: settings.steamGridDbApiKey,
-              steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
-            }}
-          />
+        {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
+          <>
+            <GameEditDialog
+              appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
+              manualGameId={game.source === "manual" ? game.providerGameId : undefined}
+              epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
+              debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
+              open={editDialogOpen}
+              onClose={() => { setEditDialogOpen(false); onOverlayToggle?.(false); }}
+              initialTab={editInitialTab}
+              game={game}
+              settings={{
+                rawgApiKey: settings.rawgApiKey,
+                igdbClientId: settings.igdbClientId,
+                igdbClientSecret: settings.igdbClientSecret,
+                steamGridDbApiKey: settings.steamGridDbApiKey,
+                steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
+              }}
+            />
+
+            <ToolsModal
+              open={toolsModalOpen}
+              game={game}
+              onClose={() => { setToolsModalOpen(false); onOverlayToggle?.(false); }}
+            />
+          </>
         )}
       </div>
     </div>

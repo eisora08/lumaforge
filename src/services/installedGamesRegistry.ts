@@ -56,6 +56,11 @@ async function persistRegistry(store: RegistryStore): Promise<void> {
   try {
     const data = JSON.stringify(store);
     await writeInstalledGamesRegistry(data);
+    // Dual-write: also persist to SQLite for fast boot reads
+    try {
+      const { upsertGameCatalogBlob, CATALOG_KEYS } = await import("./tauri");
+      await upsertGameCatalogBlob(CATALOG_KEYS.installedGames, data);
+    } catch { /* non-critical */ }
     console.debug("[Registry] written to file", { count: Object.keys(store).length });
   } catch (err) {
     console.warn("[Registry] failed to write to file", err);

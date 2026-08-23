@@ -100,6 +100,9 @@ pub struct ExternalPlaytimeImport {
     pub external_playtime_seconds: u64,
     #[serde(rename = "externalSource")]
     pub external_source: String,
+    /// Optional last-played timestamp (Unix seconds) to seed when entry has none.
+    #[serde(rename = "lastPlayedAtSeconds", default)]
+    pub last_played_at_seconds: Option<u64>,
 }
 
 pub const PLAYTIME_STORE_VERSION: u32 = 1;

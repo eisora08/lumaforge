@@ -1,16 +1,14 @@
 import {
   readStoreAppinfo,
   updateStoreAppinfoEntry,
-  readStoreGameDetails,
-  writeStoreGameDetails,
+  getStoreDetails,
   readStoreReviewSummary,
-  writeStoreReviewSummary,
 } from "./tauri";
 import {
   persistStoreDetails,
 } from "./gameCacheService";
 
-import type { StoreAppInfoEntry, StoreAppInfoMap, StoreGameDetailsEntry } from "./tauri";
+import type { StoreAppInfoEntry, StoreAppInfoMap, GameStoreDetails, StoreReviewEntry } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
 // ---------------------------------------------------------------------------
@@ -55,9 +53,9 @@ export async function updateStoreAppInfo(appId: string, entry: StoreAppInfoEntry
   }
 }
 
-export async function getStoreGameDetails(appId: number): Promise<StoreGameDetailsEntry | null> {
+export async function getStoreGameDetails(appId: number): Promise<GameStoreDetails | null> {
   try {
-    return await readStoreGameDetails(appId);
+    return await getStoreDetails(String(appId));
   } catch {
     return null;
   }
@@ -65,29 +63,33 @@ export async function getStoreGameDetails(appId: number): Promise<StoreGameDetai
 
 export async function saveStoreGameDetails(appId: number, metadata: SteamAppMetadata): Promise<boolean> {
   try {
-    await writeStoreGameDetails(appId, {
-      app_id: appId,
-      data: metadata as unknown,
-      updated_at: Date.now(),
-      version: 1,
-    });
-    // Also save to canonical cache
-    persistStoreDetails(String(appId), {
+    // Single canonical write — no more dual-write to store/details/
+    await persistStoreDetails(String(appId), {
       app_id: String(appId),
       source: "steam-store",
-      updated_at: Date.now(),
+      updated_at: Math.floor(Date.now() / 1000),
       data: metadata as unknown,
-    }).catch(() => {});
+    });
     return true;
   } catch {
     return false;
   }
 }
 
-export async function getStoreReviewSummary(appId: number): Promise<StoreGameDetailsEntry | null> {
+export async function getStoreReviewSummary(appId: number): Promise<StoreReviewEntry | null> {
+  // SQLite-first fallback: fast boot reads without scanning JSON files
   try {
-    const entry = await readStoreReviewSummary(appId);
-    return entry as unknown as StoreGameDetailsEntry | null;
+    const { getStoreReviewFromDb } = await import("./tauri");
+    const dbRow = await getStoreReviewFromDb(String(appId));
+    if (dbRow && dbRow.data) {
+      return { app_id: Number(dbRow.appId), data: JSON.parse(dbRow.data), updated_at: dbRow.updatedAt, version: 1 };
+    }
+  } catch {
+    // not in SQLite yet
+  }
+  // JSON fallback
+  try {
+    return await readStoreReviewSummary(appId);
   } catch {
     return null;
   }
@@ -95,11 +97,11 @@ export async function getStoreReviewSummary(appId: number): Promise<StoreGameDet
 
 export async function saveStoreReviewSummary(appId: number, data: unknown): Promise<boolean> {
   try {
-    await writeStoreReviewSummary(appId, {
-      app_id: appId,
-      data: data,
-      updated_at: Date.now(),
-      version: 1,
+    const { upsertStoreReview } = await import("./tauri");
+    await upsertStoreReview({
+      appId: String(appId),
+      data: JSON.stringify(data),
+      updatedAt: Date.now(),
     });
     return true;
   } catch {
@@ -130,46 +132,10 @@ export function saveStoreMetadataToStoreCache(metadata: SteamAppMetadata): void 
 }
 
 /**
- * Promote Store cache data to Library cache for an installed/library game.
- * Only call this when the appId belongs to a library game or when the user
- * explicitly requests it (e.g., "Add to Library").
+ * @deprecated library/appinfo.json is no longer maintained.
+ * Games get their data from games/{appid}/appinfo.json (canonical) or SQLite.
+ * Kept as no-op stub to avoid import errors in any remaining call sites.
  */
-export async function promoteStoreCacheToLibrary(appId: string): Promise<boolean> {
-  try {
-    const appInfo = await getStoreAppInfo(appId);
-    const details = await readStoreGameDetails(Number(appId));
-
-    if (!appInfo && !details) {
-      return false;
-    }
-
-    const { updateLibraryAppinfoEntry, writeLibraryGameDetails } = await import("./tauri");
-
-    if (appInfo) {
-      await updateLibraryAppinfoEntry(appId, {
-        app_id: appId,
-        name: appInfo.name,
-        header_image: appInfo.header_image,
-        cover_path: null,
-        grid_path: null,
-        hero_path: null,
-        logo_path: null,
-        icon_path: null,
-        updated_at: nowTimestamp(),
-      });
-    }
-
-    if (details) {
-      await writeLibraryGameDetails(appId, {
-        app_id: appId,
-        source: "steam-store",
-        updated_at: nowTimestamp(),
-        data: details.data,
-      });
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
+export async function promoteStoreCacheToLibrary(_appId: string): Promise<boolean> {
+  return false;
 }

@@ -4,14 +4,14 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { getGameAchievementSummary, formatPlaytime, formatRelativeTime } from "./consoleGameStats";
+import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { getGameAchievementSummary, getGameLastPlayedTimestamp, formatPlaytime, formatRelativeTime } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleSpotlightDock from "./ConsoleSpotlightDock";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleActionHints from "./ConsoleActionHints";
-import { deduplicateByAppId } from "../../services/gameCacheService";
+import { deduplicateByStableId, getFavoriteKey } from "../../services/gameCacheService";
 import { RichEmptyState } from "./ConsoleEmptyState";
 
 const DEBUG_SWITCH_SPOTLIGHT = false;
@@ -104,19 +104,33 @@ export default function ConsoleSwitchSpotlightLayout({
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
   const logoSrc = useMemo(() => getConsoleLogoSrc(focusedGame), [focusedGame]);
-  const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
+  const [logoNaturalHeight, setLogoNaturalHeight] = useState<number | null>(null);
+  const handleLogoLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    setLogoNaturalHeight(e.currentTarget.naturalHeight);
+  }, []);
+  useEffect(() => { setLogoNaturalHeight(null); }, [logoSrc]);
+  const logoDisplayHeight = (() => {
+    if (logoNaturalHeight == null) return undefined;
+    const MIN_H = 80;
+    const MAX_H = 150;
+    return Math.max(MIN_H, Math.min(MAX_H, logoNaturalHeight));
+  })();
+  const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
 
   const scs = settings.spotlightCardStyle;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
-  const dedupedRail = useMemo(() => deduplicateByAppId(currentRail), [currentRail]);
+  const dedupedRail = useMemo(() => deduplicateByStableId(currentRail), [currentRail]);
 
   const useHeroMotion = settings.heroMotion;
   const railTitle = RAIL_CONFIGS[focusedRail >= 0 ? focusedRail : 0].title;
   const sectionLabel = SECTION_LABELS[railTitle] ?? railTitle;
 
   const playtimeSeconds = useMemo(() => {
-    return focusedGame?.appId ? getPlaytimeSecondsForAppId(focusedGame.appId) : 0;
+    if (!focusedGame) return 0;
+    const byAppId = focusedGame.appId ? getPlaytimeSecondsForAppId(focusedGame.appId) : 0;
+    if (byAppId > 0) return byAppId;
+    return getPlaytimeSecondsByGameKey(resolvePlaytimeKey(focusedGame));
   }, [focusedGame]);
 
   const playtimeDisplay = useMemo(() => formatPlaytime(playtimeSeconds), [playtimeSeconds]);
@@ -127,7 +141,7 @@ export default function ConsoleSwitchSpotlightLayout({
 
   const lastPlayedStr = useMemo(() => {
     if (!focusedGame) return null;
-    const ts = focusedGame.localLastPlayedAt ?? focusedGame.steamLastPlayedAt;
+    const ts = getGameLastPlayedTimestamp(focusedGame);
     return ts ? formatRelativeTime(ts) : null;
   }, [focusedGame]);
 
@@ -169,7 +183,7 @@ export default function ConsoleSwitchSpotlightLayout({
   }, [focusedIndex]);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg)">
+    <div className="relative h-screen w-screen overflow-hidden bg-(--console-bg)">
 
       {/* ── Layer 1: Hero background — z-[0] ── */}
       <div className="absolute inset-0 z-[0] overflow-hidden">
@@ -227,11 +241,12 @@ export default function ConsoleSwitchSpotlightLayout({
             key={focusedGame.appId}
             src={logoSrc}
             alt={focusedGame.title}
-            className="object-contain drop-shadow-2xl"
-            style={{
-              maxWidth: "clamp(280px, 28vw, 560px)",
-              maxHeight: "clamp(80px, 12vh, 150px)",
-            }}
+            className="object-contain drop-shadow-2xl w-auto"
+            style={logoDisplayHeight != null
+              ? { height: `${logoDisplayHeight}px`, maxWidth: "min(560px, 42vw)" }
+              : { maxHeight: "clamp(80px, 12vh, 150px)", maxWidth: "clamp(280px, 28vw, 560px)" }
+            }
+            onLoad={handleLogoLoad}
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
         </div>
@@ -409,11 +424,11 @@ export default function ConsoleSwitchSpotlightLayout({
               dedupedRail.map((game, i) => {
                 const isFocused = focusedIndex === i;
                 const src = getConsoleCardSrc(game, spotlightVariant);
-                const isFav = game.appId ? favoriteIds.has(game.appId) : false;
+                const isFav = favoriteIds.has(getFavoriteKey(game) ?? game.id);
 
                 return (
                   <div
-                    key={"switch:" + game.appId}
+                    key={"switch:" + (game.appId || game.id)}
                     role="button"
                     tabIndex={isFocused ? 0 : -1}
                     aria-label={game.title}
@@ -446,7 +461,7 @@ export default function ConsoleSwitchSpotlightLayout({
                     >
                       {src ? (
                         <img
-                          key={game.appId}
+                          key={game.appId || game.id}
                           src={src}
                           alt={game.title}
                           className="h-full w-full object-cover"

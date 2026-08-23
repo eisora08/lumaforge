@@ -22,7 +22,7 @@ export default function HeroPanel() {
         </p>
 
         <div className="mt-6 flex flex-wrap gap-3">
-          <button className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-black transition hover:opacity-90">
+          <button className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90">
             <Download className="h-4 w-4" />
             Explorar paquetes
           </button>

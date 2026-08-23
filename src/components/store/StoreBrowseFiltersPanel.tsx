@@ -1,30 +1,27 @@
-import { useState } from "react";
 import {
+  ArrowDownAZ,
+  Calendar,
   Check,
-  ChevronDown,
   RotateCcw,
   Search,
+  Star,
   X,
 } from "lucide-react";
 
 export type BrowseFilters = {
   keywords: string;
-  luaReady: boolean;
   installed: boolean;
   hasSource: boolean;
   platforms: string[];
-  sourceTypes: string[];
-  providers: string[];
+  sort: "name" | "rating" | "recent";
 };
 
 export const DEFAULT_BROWSE_FILTERS: BrowseFilters = {
   keywords: "",
-  luaReady: false,
   installed: false,
   hasSource: false,
   platforms: [],
-  sourceTypes: [],
-  providers: [],
+  sort: "recent",
 };
 
 type StoreBrowseFiltersPanelProps = {
@@ -40,15 +37,6 @@ const PLATFORM_LABELS: Record<string, string> = {
   mac: "macOS",
   linux: "Linux",
 };
-const SOURCE_TYPE_OPTIONS = ["lua", "zip", "manifest"];
-const PROVIDER_OPTIONS = [
-  { id: "hubcapdb", label: "HubcapDB" },
-  { id: "ryuu", label: "Ryuu" },
-  { id: "sushi", label: "Sushi" },
-  { id: "twentytwo-cloud", label: "TwentyTwo Cloud" },
-  { id: "custom", label: "Custom API" },
-];
-
 function toggleArrayItem<T>(arr: T[], item: T): T[] {
   if (arr.includes(item)) {
     return arr.filter((i) => i !== item);
@@ -107,8 +95,6 @@ export default function StoreBrowseFiltersPanel({
   totalGames,
   filteredGames,
 }: StoreBrowseFiltersPanelProps) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
   function update(partial: Partial<BrowseFilters>) {
     onFiltersChange({ ...filters, ...partial });
   }
@@ -118,12 +104,10 @@ export default function StoreBrowseFiltersPanel({
   }
 
   const hasAnyFilter =
-    filters.luaReady ||
     filters.installed ||
     filters.hasSource ||
     filters.platforms.length > 0 ||
-    filters.sourceTypes.length > 0 ||
-    filters.providers.length > 0 ||
+    filters.sort !== "name" ||
     filters.keywords.trim().length > 0;
 
   return (
@@ -167,15 +151,36 @@ export default function StoreBrowseFiltersPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4 lf-scroll-area">
+        <FilterDivider />
+
+        <FilterSection title="Sort by">
+          <div className="flex gap-1 px-3">
+            {[
+              { key: "name" as const, label: "Name", icon: ArrowDownAZ },
+              { key: "rating" as const, label: "Rating", icon: Star },
+              { key: "recent" as const, label: "Recent", icon: Calendar },
+            ].map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => update({ sort: key })}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                  filters.sort === key
+                    ? "bg-(--color-accent)/20 text-(--color-accent)"
+                    : "text-(--color-muted) hover:bg-white/[0.04] hover:text-(--color-text)"
+                }`}
+              >
+                <Icon className="h-3 w-3" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </FilterSection>
+
         <FilterDivider />
 
         <FilterSection title="Availability">
-          <CheckRow
-            checked={filters.luaReady}
-            onChange={() => update({ luaReady: !filters.luaReady })}
-            label="Lua Ready"
-          />
           <CheckRow
             checked={filters.installed}
             onChange={() => update({ installed: !filters.installed })}
@@ -211,53 +216,6 @@ export default function StoreBrowseFiltersPanel({
         </FilterSection>
 
         <FilterDivider />
-
-        <FilterSection title="Source Type">
-          {SOURCE_TYPE_OPTIONS.map((type) => (
-            <CheckRow
-              key={type}
-              checked={filters.sourceTypes.includes(type)}
-              onChange={() =>
-                update({
-                  sourceTypes: toggleArrayItem(filters.sourceTypes, type),
-                })
-              }
-              label={`.${type}`}
-            />
-          ))}
-        </FilterSection>
-
-        <FilterDivider />
-
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-(--color-muted) transition hover:bg-white/[0.04] hover:text-(--color-text)"
-          >
-            Advanced Providers
-            <ChevronDown
-              className={`h-3.5 w-3.5 transition ${showAdvanced ? "rotate-180" : ""}`}
-            />
-          </button>
-
-          {showAdvanced && (
-            <div className="mt-0.5 space-y-0.5">
-              {PROVIDER_OPTIONS.map((provider) => (
-                <CheckRow
-                  key={provider.id}
-                  checked={filters.providers.includes(provider.id)}
-                  onChange={() =>
-                    update({
-                      providers: toggleArrayItem(filters.providers, provider.id),
-                    })
-                  }
-                  label={provider.label}
-                />
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="shrink-0 border-t border-(--surface-active-border) px-5 py-3">

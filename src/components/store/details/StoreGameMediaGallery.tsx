@@ -13,6 +13,7 @@ type StoreGameMediaGalleryProps = {
   appId: string;
   developer: string;
   platforms: string[];
+  onMediaSelect?: (imageUrl: string | null) => void;
 };
 
 const RAIL_SCROLL_AMOUNT = 360;
@@ -43,7 +44,7 @@ function formatTime(seconds: number): string {
 }
 
 export default function StoreGameMediaGallery({
-  title, mediaItems, appId, developer, platforms,
+  title, mediaItems, appId, developer, platforms, onMediaSelect,
 }: StoreGameMediaGalleryProps) {
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -67,7 +68,7 @@ export default function StoreGameMediaGallery({
   const railRef = useRef<HTMLDivElement>(null);
   const thumbRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const lastScrollState = useRef<string>("");
-  const controlsTimerRef = useRef<number>(0);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastSelectedLogId = useRef<string>("");
   const lastOverlayLogRef = useRef<string>("");
@@ -87,7 +88,23 @@ export default function StoreGameMediaGallery({
   const currentPrefSrc = currentIsTrailer ? getPreferredSrc(currentItem) : undefined;
   const currentBestType = currentIsTrailer ? getBestType(currentItem) : "unknown";
 
+  // Report the currently-shown media image so the ambient background can follow
+  // the hero gallery (trailers report their thumbnail/poster, screenshots their image).
+  const onMediaSelectRef = useRef(onMediaSelect);
+  onMediaSelectRef.current = onMediaSelect;
+  const currentMediaImage =
+    currentItem?.type === "trailer"
+      ? (currentItem.thumbnail ?? currentItem.poster ?? null)
+      : (currentItem?.image ?? null);
+  useEffect(() => {
+    onMediaSelectRef.current?.(currentMediaImage);
+  }, [currentMediaImage]);
+
+  const _lastMediaScrollUpdate = useRef(0);
   function updateScrollState() {
+    const now = Date.now();
+    if (now - _lastMediaScrollUpdate.current < 150) return;
+    _lastMediaScrollUpdate.current = now;
     const el = railRef.current;
     if (!el) return;
     const left = el.scrollLeft > 4;
@@ -749,7 +766,7 @@ export default function StoreGameMediaGallery({
 
           <div
             ref={railRef}
-            className="store-media-rail flex gap-2 overflow-x-auto px-4 py-3"
+            className="store-media-rail flex gap-2 overflow-x-auto px-4 py-3 scrollbar-none"
           >
             {validItems.map((item, idx) => {
               const thumbSrc = getThumbnailSrc(item);

@@ -42,6 +42,16 @@ export const themes: ThemeOption[] = [
       accent: "#ffffff",
     },
   },
+  {
+    id: "fluent",
+    name: "Fluent",
+    description: "Estilo Windows 11 con acento azul y superficies de vidrio. Ideal con Liquid Glass.",
+    preview: {
+      background: "#1f1f1f",
+      surface: "#2b2b2b",
+      accent: "#60cdff",
+    },
+  },
 ];
 
 export const themeVariables: Record<ThemeId, Record<string, string>> = {
@@ -54,6 +64,7 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#ffffff",
     "--color-muted": "#9ca3af",
     "--color-accent": "#b8d7dc",
+    "--color-accent-text": "#ffffff",
     "--color-destructive": "#ef4444",
     "--color-warning": "#d97706",
     "--color-success": "#059669",
@@ -69,6 +80,7 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#f8fafc",
     "--color-muted": "#94a3b8",
     "--color-accent": "#38bdf8",
+    "--color-accent-text": "#ffffff",
     "--color-destructive": "#ef4444",
     "--color-warning": "#fbbf24",
     "--color-success": "#34d399",
@@ -84,6 +96,7 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#ffffff",
     "--color-muted": "#c7d5e0",
     "--color-accent": "#66c0f4",
+    "--color-accent-text": "#ffffff",
     "--color-destructive": "#ef4444",
     "--color-warning": "#eab308",
     "--color-success": "#22c55e",
@@ -99,10 +112,27 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#ffffff",
     "--color-muted": "#a3a3a3",
     "--color-accent": "#ffffff",
+    "--color-accent-text": "#000000",
     "--color-destructive": "#ef4444",
     "--color-warning": "#f59e0b",
     "--color-success": "#22c55e",
     "--color-info": "#ffffff",
+  },
+
+  "fluent": {
+    "--color-bg": "#1f1f1f",
+    "--color-sidebar": "#171717",
+    "--color-surface": "#2b2b2b",
+    "--color-surface-soft": "#232323",
+    "--color-border": "rgba(255,255,255,0.08)",
+    "--color-text": "#ffffff",
+    "--color-muted": "#a8a8a8",
+    "--color-accent": "#60cdff",
+    "--color-accent-text": "#002238",
+    "--color-destructive": "#ff6b6b",
+    "--color-warning": "#ffb340",
+    "--color-success": "#6ccb5f",
+    "--color-info": "#60cdff",
   },
 };
 
@@ -119,8 +149,18 @@ export const surfaceModes: SurfaceModeOption[] = [
     description: "Superficies con tinte suave del tema activo.",
   },
   {
-    id: "liquid-glass",
-    name: "Liquid Glass",
-    description: "Superficies translúcidas con blur y profundidad visual.",
+    id: "frosted",
+    name: "Frosted",
+    description: "Vidrio esmerilado oscuro con blur sutil. Premium sin distorsión.",
+  },
+  {
+    id: "dark-glass",
+    name: "Dark Glass",
+    description: "Vidrio oscuro premium con blur moderado. Sutil y elegante.",
+  },
+  {
+    id: "glass",
+    name: "Glass",
+    description: "Vidrio premium con blur intenso. Estilo lf-glass-strong.",
   },
 ];

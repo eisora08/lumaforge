@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "InterVariable";
+  src: url("/fonts/InterVariable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "InterVariable", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+}
+
 :root {
   --color-bg: #181114;
   --color-sidebar: #140d10;
@@ -9,6 +22,7 @@
   --color-text: #ffffff;
   --color-muted: #9ca3af;
   --color-accent: #b8d7dc;
+  --color-accent-text: #ffffff;
 }
 
 /* =========================
@@ -93,21 +107,54 @@
 
 
 /* =========================
+   SURFACE MODE: FROSTED
+========================= */
+
+:root[data-surface="frosted"] {
+  --page-bg: var(--color-bg);
+
+  --shell-bg: rgba(20, 20, 30, 0.45);
+  --shell-border: rgba(255, 255, 255, 0.08);
+  --shell-blur: blur(6px);
+
+  --surface-active: rgba(20, 20, 30, 0.35);
+  --surface-active-border: rgba(255, 255, 255, 0.08);
+  --surface-active-hover: rgba(255, 255, 255, 0.10);
+  --surface-active-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  --surface-active-blur: blur(6px);
+}
+
+
+/* =========================
    SURFACE MODE: LIQUID GLASS
 ========================= */
 
-:root[data-surface="liquid-glass"] {
-  --page-bg: transparent;
+:root[data-surface="dark-glass"] {
+  --page-bg: var(--color-bg);
 
-  --shell-bg: rgba(255, 255, 255, 0.035);
-  --shell-border: rgba(255, 255, 255, 0.16);
-  --shell-blur: blur(28px);
+  --shell-bg: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  --shell-border: color-mix(in srgb, var(--color-border) 60%, transparent);
+  --shell-blur: blur(16px) saturate(1.3);
 
-  --surface-active: rgba(255, 255, 255, 0.045);
-  --surface-active-border: rgba(255, 255, 255, 0.18);
-  --surface-active-hover: rgba(255, 255, 255, 0.09);
-  --surface-active-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
-  --surface-active-blur: blur(26px);
+  --surface-active: color-mix(in srgb, var(--color-surface) 50%, transparent);
+  --surface-active-border: color-mix(in srgb, var(--color-border) 60%, transparent);
+  --surface-active-hover: color-mix(in srgb, var(--color-surface) 60%, transparent);
+  --surface-active-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  --surface-active-blur: blur(20px) saturate(1.3);
+}
+
+:root[data-surface="glass"] {
+  --page-bg: var(--color-bg);
+
+  --shell-bg: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  --shell-border: color-mix(in srgb, var(--color-border) 60%, transparent);
+  --shell-blur: blur(32px) saturate(1.4);
+
+  --surface-active: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  --surface-active-border: color-mix(in srgb, var(--color-border) 60%, transparent);
+  --surface-active-hover: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  --surface-active-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  --surface-active-blur: blur(32px) saturate(1.4);
 }
 
 
@@ -126,6 +173,11 @@ body,
   min-height: 100%;
   background: var(--color-bg);
   color: var(--color-text);
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -348,6 +400,47 @@ html {
   background: none !important;
 }
 
+/* Fluent: neutral Mica-like backdrop so Liquid Glass reads as neutral glass */
+:root[data-theme="fluent"] body,
+:root[data-theme="fluent"] .lf-backdrop {
+  background:
+    radial-gradient(
+      circle at 50% 18%,
+      rgba(120, 140, 170, 0.10),
+      transparent 45%
+    ),
+    radial-gradient(
+      circle at 82% 88%,
+      rgba(80, 110, 150, 0.08),
+      transparent 40%
+    ),
+    linear-gradient(
+      160deg,
+      #23252a,
+      var(--color-bg) 72%
+    );
+}
+
+:root[data-theme="fluent"][data-surface="dark-glass"] {
+  --shell-border: rgba(255, 255, 255, 0.14);
+  --surface-active-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 20px 50px rgba(0, 0, 0, 0.3);
+}
+
+:root[data-theme="fluent"][data-surface="glass"] {
+  --shell-border: rgba(255, 255, 255, 0.14);
+  --surface-active-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 20px 50px rgba(0, 0, 0, 0.35);
+}
+
+/* Ambient background: translucent shell/page so active game art shows through */
+:root[data-ambient="on"] {
+  --page-bg: transparent;
+  --shell-bg: color-mix(in srgb, var(--color-bg) 55%, transparent);
+  --shell-blur: blur(24px) saturate(1.4);
+  --shell-border: color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
 /* =========================
    LIGHTWEIGHT TRANSITIONS
 ========================= */
@@ -364,6 +457,144 @@ html {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* Ambient background layered crossfade (old layer fades out, new fades in) */
+@keyframes ambientIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ambientOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.animate-ambient-in {
+  animation: ambientIn 600ms ease-out both;
+}
+
+.animate-ambient-out {
+  animation: ambientOut 600ms ease-in forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ambient-in,
+  .animate-ambient-out {
+    animation: none;
+  }
+}
+
+/* Ambient color mode — dominant-color field derived from the artwork palette.
+   Custom properties are registered so palette swaps interpolate smoothly. */
+@property --ambient-primary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #1d3343;
+}
+@property --ambient-secondary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2f9fff;
+}
+@property --ambient-glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2f9fff;
+}
+
+.lf-ambient-color {
+  background: radial-gradient(
+    120% 120% at 20% 12%,
+    var(--ambient-secondary),
+    var(--ambient-primary) 62%
+  );
+  transition:
+    --ambient-primary var(--motion-palette) var(--ease-standard),
+    --ambient-secondary var(--motion-palette) var(--ease-standard),
+    --ambient-glow var(--motion-palette) var(--ease-standard);
+}
+
+.lf-ambient-glow {
+  background: radial-gradient(
+    55% 70% at 24% 16%,
+    color-mix(in oklab, var(--ambient-glow) 26%, transparent),
+    transparent 72%
+  );
+}
+
+/* =========================
+   HERO MEDIA TRANSITIONS (selectable via Settings → Animaciones)
+   Applied to the background/hero layers of every page (dashboard hero,
+   library game details hero, store discover carousel, console details).
+   "crossfade" = two-layer soft fade (default); the old layer fades out
+   while the new layer fades in. Duration 600ms matches the ambient
+   premium crossfade so all surfaces feel consistent.
+========================= */
+
+@keyframes heroCrossfadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-hero-crossfade-in {
+  animation: heroCrossfadeIn 600ms ease-out both;
+}
+
+@keyframes heroMediaOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.animate-hero-media-out {
+  animation: heroMediaOut 600ms ease-in forwards;
+}
+
+/* Ken Burns mode for single-image heroes: continuous slow zoom + mount fade-in */
+.animate-hero-kenburns-in {
+  animation:
+    heroKenburns 14s ease-in-out infinite alternate,
+    heroCrossfadeIn 600ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-crossfade-in,
+  .animate-hero-media-out,
+  .animate-hero-kenburns-in,
+  .animate-hero-focus-in,
+  .animate-hero-blur-in,
+  .animate-hero-sharp-in,
+  .animate-hero-entrance {
+    animation: none !important;
+  }
+}
+
+/* =========================
+   GAME HOVER PREVIEW
+   Crossfade for screenshot carousel
+   Duration: 400ms
+========================= */
+
+@keyframes hoverPreviewFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes hoverPreviewFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lf-game-hover-preview img {
+    animation: none !important;
   }
 }
 
@@ -396,7 +627,7 @@ html {
 ========================= */
 
 .lf-page-in {
-  animation: lfPageIn 240ms cubic-bezier(.2,.8,.2,1) both;
+  animation: lfPageIn 400ms cubic-bezier(.2,.8,.2,1) both;
 }
 
 @keyframes lfPageIn {
@@ -408,6 +639,162 @@ html {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* =========================
+   HERO FADE-IN (blur layer reveals first, sharp image follows)
+   Gives a sense of depth — the ambient blur fades in 200ms sooner
+   than the sharp foreground image.
+========================= */
+
+@keyframes heroBlurIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes heroSharpIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-hero-blur-in {
+  animation: heroBlurIn 800ms cubic-bezier(.2,.8,.2,1) both;
+}
+.animate-hero-sharp-in {
+  animation: heroSharpIn 1000ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+/* =========================
+   HERO FOCUS-IN (pull-focus reveal)
+   The sharp layer starts from the same blurred/scaled state as the backdrop,
+   so when the real background loads it "focuses" into place — reads as the
+   image gaining sharpness rather than an asset swap.
+   Starts at opacity 0 (seamless with the blurred backdrop beneath) and ramps
+   up slowly with a gentle ease for a soft, continuous focus pull.
+========================= */
+
+@keyframes heroFocusIn {
+  from { opacity: 0; filter: blur(24px); transform: scale(1.05); }
+  to   { opacity: 1; filter: blur(0);    transform: scale(1); }
+}
+.animate-hero-focus-in {
+  animation: heroFocusIn 900ms cubic-bezier(0.33, 0, 0.2, 1) both;
+}
+
+@keyframes slideInDown {
+  from { opacity: 0; transform: translateY(-100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-\\[slideInDown_200ms_ease-out\\] {
+    animation: none !important;
+  }
+}
+
+/* =========================
+   DASHBOARD HERO KEN BURNS (continuous slow zoom/pan)
+   Subtle ambient motion on the hero background art. Runs continuously
+   while the hero is visible; the section's overflow-hidden clips the
+   scaled edges so no gaps ever appear. Disabled for reduced motion.
+========================= */
+
+@keyframes heroKenburns {
+  0% {
+    transform: scale(1) translate(0, 0);
+    transform-origin: center;
+  }
+  100% {
+    transform: scale(1.09) translate(-1.5%, 0.8%);
+    transform-origin: center;
+  }
+}
+.animate-hero-kenburns {
+  animation: heroKenburns 14s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-kenburns {
+    animation: none !important;
+  }
+}
+
+/* =========================
+   HERO SLOW ZOOM (progressive zoom per slide)
+   Scales from 1 → 1.06 over the auto-advance interval (7 s).
+   Resets on each slide change via React key on the wrapper.
+   Skipped in Ken Burns mode (which already provides its own zoom).
+========================= */
+
+@keyframes heroSlowZoom {
+  from { transform: scale(1); }
+  to   { transform: scale(1.06); }
+}
+.animate-hero-slow-zoom {
+  animation: heroSlowZoom 7s linear forwards;
+  transform-origin: center;
+}
+
+/* =========================
+   HERO PROGRESS BAR
+   Thin accent bar at the bottom showing time until next slide.
+   Uses scaleX for GPU-accelerated fill; pauses on hover.
+========================= */
+
+@keyframes heroProgressFill {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.animate-hero-progress {
+  animation: heroProgressFill 7s linear forwards;
+  transform-origin: left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-slow-zoom,
+  .animate-hero-progress {
+    animation: none !important;
+  }
+}
+
+/* =========================
+   HERO BACKDROP ENTRANCE (replays on every game switch)
+   LibraryGameDetails remounts per game via key=source:appId,
+   so this container-level fade guarantees a visible background
+   fade-in for ALL games (manual/steam/lua), regardless of whether
+   the placeholder and hero URLs differ or load asynchronously.
+   Layer crossfades (animate-hero-blur-in) compose on top of it.
+========================= */
+
+@keyframes heroEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-hero-entrance {
+  animation: heroEntrance 500ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+/* =========================
+   INLINE STATS ENTRANCE (cloud / last played / playtime)
+   Fades the stats row in on each game switch instead of an
+   instant value swap when canonical/playtime data arrives.
+========================= */
+
+@keyframes statsIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-stats-in {
+  animation: statsIn 300ms cubic-bezier(.2,.8,.2,1) both;
 }
 
 /* =========================
@@ -496,6 +883,21 @@ html {
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+
+.lf-popover-exit {
+  animation: lfPopoverExit 140ms ease-in forwards;
+}
+
+@keyframes lfPopoverExit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
   }
 }
 
@@ -850,18 +1252,12 @@ html {
 ========================= */
 
 .lf-ach-toast-enter {
-  animation: lfAchToastEnter 220ms cubic-bezier(.2,.8,.2,1) forwards;
+  animation: lfAchToastEnter 120ms ease-out forwards;
 }
 
 @keyframes lfAchToastEnter {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* =========================
@@ -871,18 +1267,160 @@ html {
 ========================= */
 
 .lf-ach-toast-exit {
-  animation: lfAchToastExit 180ms cubic-bezier(.2,.8,.2,1) forwards;
+  animation: lfAchToastExit 150ms ease-in forwards;
 }
 
 @keyframes lfAchToastExit {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(16px); }
+}
+
+/* =========================
+   ACHIEVEMENT TOAST RARE GLOW
+   Pulsating glow for rare/ultra-rare achievements
+   Applied via .lf-ach-toast-rare-glow class
+========================= */
+
+.lf-ach-toast-rare-glow {
+  animation: lfAchToastRareGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes lfAchToastRareGlow {
   from {
-    opacity: 1;
-    transform: translateX(0) scale(1);
+    filter: brightness(1);
   }
   to {
-    opacity: 0;
-    transform: translateX(20px) scale(0.98);
+    filter: brightness(1.08);
   }
+}
+
+/* =========================
+   ACHIEVEMENT TOAST STAGGERED REVEAL
+   Icon springs in first, then badge, then text slides from right
+   Premium console-style entry animation
+======================== */
+
+.lf-ach-icon-reveal {
+  animation: lfAchIconReveal 350ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes lfAchIconReveal {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.lf-ach-text-reveal {
+  animation: lfAchTextReveal 280ms cubic-bezier(0.2, 0.8, 0.2, 1) 140ms both;
+}
+
+@keyframes lfAchTextReveal {
+  0% { opacity: 0; transform: translateX(14px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+/* =========================
+   MULTI-ACHIEVEMENT STRIP ICONS
+   Each icon pops in with staggered delay via inline animation-delay
+======================== */
+
+.lf-ach-strip-icon-reveal {
+  animation: lfAchStripIconReveal 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes lfAchStripIconReveal {
+  0% { opacity: 0; transform: scale(0.5); }
+  70% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* =========================
+   ACHIEVEMENT PLATINUM PREMIUM
+   Pulsing violet ring + sparkle particles
+======================== */
+
+.lf-ach-toast-platinum {
+  border-color: rgba(167, 139, 250, 0.9) !important;
+}
+
+.lf-ach-platinum-ring {
+  animation: lfAchPlatinumRing 1.5s ease-in-out infinite;
+}
+
+@keyframes lfAchPlatinumRing {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px 4px rgba(167, 139, 250, 0.35);
+  }
+}
+
+.lf-ach-platinum-sparkle {
+  animation: lfAchPlatinumSparkle 2s ease-in-out infinite;
+}
+
+@keyframes lfAchPlatinumSparkle {
+  0%, 100% {
+    background: radial-gradient(circle at 20% 20%, rgba(167, 139, 250, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(196, 181, 253, 0.12) 0%, transparent 50%);
+  }
+  50% {
+    background: radial-gradient(circle at 80% 20%, rgba(167, 139, 250, 0.2) 0%, transparent 50%),
+                radial-gradient(circle at 20% 80%, rgba(196, 181, 253, 0.15) 0%, transparent 50%);
+  }
+}
+
+/* =========================
+   RARITY GLOW ON GRID CARDS
+   Animated border glow for epic/legendary unlocked cards
+======================== */
+
+.lf-ach-card-glow-epic {
+  animation: lfAchGlowEpic 3s ease-in-out infinite alternate;
+}
+
+@keyframes lfAchGlowEpic {
+  from { box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.15), 0 0 12px 0 rgba(168, 85, 247, 0.08); }
+  to   { box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.3),  0 0 20px 2px rgba(168, 85, 247, 0.15); }
+}
+
+.lf-ach-card-glow-legendary {
+  animation: lfAchGlowLegendary 2.5s ease-in-out infinite alternate;
+}
+
+@keyframes lfAchGlowLegendary {
+  from { box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2), 0 0 14px 0 rgba(251, 191, 36, 0.1); }
+  to   { box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.4), 0 0 24px 3px rgba(251, 191, 36, 0.2); }
+}
+
+/* =========================
+   AMBIENT PULSE ON ACHIEVEMENT UNLOCK
+   Radial glow that fades in and out over 2.5s
+======================== */
+
+.animate-ambient-pulse-in {
+  animation: ambientPulseIn 2.5s ease-in-out forwards;
+}
+
+@keyframes ambientPulseIn {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  70%  { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ambient-pulse-in { animation: none !important; }
 }
 
 /* =========================
@@ -1028,6 +1566,43 @@ html {
 }
 
 /* =========================
+   STORE SECTION PREMIUM POLISH
+   Skeleton, accent line, hover glow
+========================= */
+
+.lf-store-skeleton-card {
+  border-radius: 0.75rem;
+  background: linear-gradient(110deg, var(--color-surface) 30%, color-mix(in srgb, var(--color-surface) 60%, transparent) 50%, var(--color-surface) 70%);
+  background-size: 200% 100%;
+  animation: lf-shimmer-slide 1.6s ease-in-out infinite;
+  border: 1px solid var(--surface-active-border, rgba(255,255,255,0.06));
+}
+
+.lf-store-section-accent {
+  position: relative;
+}
+.lf-store-section-accent::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  opacity: 0.6;
+}
+
+.lf-store-card-glow {
+  transition: box-shadow 200ms cubic-bezier(.2,.8,.2,1), transform 200ms cubic-bezier(.2,.8,.2,1);
+}
+.lf-store-card-glow:hover {
+  box-shadow: 0 8px 32px -4px color-mix(in srgb, var(--color-accent) 25%, transparent),
+              0 4px 16px -2px rgba(0,0,0,0.3);
+  transform: translateY(-2px);
+}
+
+/* =========================
    COMPACT MODE (Settings toggle)
 ========================= */
 
@@ -1060,6 +1635,11 @@ html[data-compact="true"] .lf-sidebar-drawer-exit,
 html[data-compact="true"] .lf-card-stagger > *,
 html[data-compact="true"] .lf-ach-toast-enter,
 html[data-compact="true"] .lf-ach-toast-exit,
+html[data-compact="true"] .lf-ach-icon-reveal,
+html[data-compact="true"] .lf-ach-text-reveal,
+html[data-compact="true"] .lf-ach-strip-icon-reveal,
+html[data-compact="true"] .lf-ach-platinum-ring,
+html[data-compact="true"] .lf-ach-platinum-sparkle,
 html[data-compact="true"] .lf-toast-entry,
 html[data-compact="true"] .lf-toast-exit,
 html[data-compact="true"] .lf-press-effect,
@@ -1109,6 +1689,11 @@ html[data-compact="true"] .lf-launch-bar {
   .lf-launch-bar,
   .lf-ach-toast-enter,
   .lf-ach-toast-exit,
+  .lf-ach-icon-reveal,
+  .lf-ach-text-reveal,
+  .lf-ach-strip-icon-reveal,
+  .lf-ach-platinum-ring,
+  .lf-ach-platinum-sparkle,
   .lf-toast-entry,
   .lf-toast-exit {
     animation: none;
@@ -1175,13 +1760,13 @@ html[data-compact="true"] .lf-launch-bar {
     transform-origin: center;
   }
   100% {
-    transform: scale(1.06) translate(-1%, 0.5%);
+    transform: scale(1.09) translate(-1.5%, 0.8%);
     transform-origin: center;
   }
 }
 
 .spotlight-hero-motion {
-  animation: spotlight-hero-kenburns 25s ease-in-out infinite alternate;
+  animation: spotlight-hero-kenburns 14s ease-in-out infinite alternate;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1367,6 +1952,24 @@ html[data-compact="true"] .lf-launch-bar {
 }
 
 /* =========================
+   CONSOLE PAGE BACKGROUND
+   Ambient-aware page background for console layout roots.
+   Mirrors the desktop .lf-page / --page-bg contract:
+   resolves to the console theme's --color-bg by default,
+   but becomes fully transparent when the global ambient
+   background is on, letting the artwork show through the
+   entire console UI (grid, spotlight, details, settings).
+========================= */
+
+[data-console-theme] {
+  --console-bg: var(--color-bg);
+}
+
+:root[data-ambient="on"] [data-console-theme] {
+  --console-bg: transparent;
+}
+
+/* =========================
    CONSOLE TEXTURE: GRAIN SOFT
    Subtle noise overlay on the full viewport
    Uses a fixed pseudo-element with pointer-events: none
@@ -1417,4 +2020,242 @@ html[data-compact="true"] .lf-launch-bar {
   z-index: 9999;
   pointer-events: none;
   background: rgba(0, 0, 0, 0.06);
+}
+
+/* =========================
+   CONSOLE GLASS SURFACES
+   Translucent panels/bars that inherit theme CSS vars so
+   data-console-theme (and follow-app) overrides apply.
+   Surfaces keep their own border utilities; only background,
+   backdrop blur and an inset highlight are provided.
+========================= */
+
+/* Glass utilities removed — all surfaces now use .lf-surface */
+
+/* =========================
+   CARD RADIUS (Settings-driven)
+   Applied via --card-radius CSS variable.
+   Falls back to hardcoded Tailwind values when variable is unset.
+========================= */
+
+/* Library grid cards (GameLauncherTile) */
+.lf-game-card,
+.lf-game-card-header,
+.lf-game-card-overlay {
+  border-radius: var(--card-radius, 16px) !important;
+}
+
+/* Dashboard horizontal-scroll section cards (rounded-xl default) */
+.lf-dash-card {
+  border-radius: var(--card-radius, 12px) !important;
+}
+
+/* Store PackageCard */
+.lf-store-card {
+  border-radius: var(--card-radius, 16px) !important;
+}
+
+/* =========================
+   CARD LABELS (Settings-driven)
+   Applied via --card-label-display CSS variable.
+   Hides card title text below artwork.
+========================= */
+
+[data-card-label="hidden"] .lf-card-title {
+  display: none !important;
+}
+
+/* =========================
+   MOTION TOKENS
+   Centralized durations + easing for premium motion.
+========================= */
+:root {
+  --motion-instant: 80ms;
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-emphasized: 240ms;
+  --motion-entrance: 320ms;
+  --motion-artwork: 500ms;
+  --motion-palette: 600ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* =========================
+   DOWNLOADS — Dynamic Effect palette
+   Custom properties are registered so palette swaps interpolate smoothly.
+   Fallback initial-values keep surfaces usable before extraction resolves.
+========================= */
+@property --dynamic-primary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #1d3343;
+}
+@property --dynamic-secondary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2f9fff;
+}
+@property --dynamic-glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2f9fff;
+}
+
+.lf-download-dynamic {
+  transition:
+    --dynamic-primary var(--motion-palette) var(--ease-standard),
+    --dynamic-secondary var(--motion-palette) var(--ease-standard),
+    --dynamic-glow var(--motion-palette) var(--ease-standard);
+}
+
+/* Hero tint + localized glow derived from the artwork palette. */
+.lf-download-tint {
+  background: color-mix(in oklab, var(--dynamic-primary) 6%, transparent);
+}
+.lf-download-glow {
+  background: radial-gradient(
+    60% 70% at 18% 78%,
+    color-mix(in oklab, var(--dynamic-glow) 12%, transparent),
+    transparent 70%
+  );
+}
+
+/* =========================
+   DOWNLOADS — floating download core
+========================= */
+.lf-download-capsule {
+  background: color-mix(in oklab, var(--dynamic-primary) 9%, rgba(12, 14, 19, 0.74));
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    0 16px 40px rgba(0, 0, 0, 0.4);
+}
+
+/* Solid fallback when backdrop-filter is unsupported. */
+@supports not (backdrop-filter: blur(1px)) {
+  .lf-download-capsule {
+    background: color-mix(in oklab, var(--dynamic-primary) 9%, #10131a);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Chart bars: gradient blue→cyan, newest bar highlighted. */
+.lf-download-bar-old {
+  background: linear-gradient(
+    to top,
+    color-mix(in oklab, var(--dynamic-primary) 30%, transparent),
+    color-mix(in oklab, var(--dynamic-secondary) 78%, transparent)
+  );
+}
+.lf-download-bar-new {
+  background: var(--dynamic-secondary);
+}
+.lf-download-chart-bar {
+  transition: height var(--motion-normal) var(--ease-standard);
+}
+.lf-download-chart-frozen {
+  filter: saturate(0.55);
+}
+.lf-download-chart-frozen .lf-download-chart-bar {
+  transition: none;
+}
+
+/* Main progress fill (scaleX, never animated from 0 on mount). */
+.lf-download-progress-fill {
+  transition: transform var(--motion-normal) var(--ease-standard);
+}
+
+/* Entry animations for title + capsule. */
+.lf-download-title-in {
+  animation: lfDownloadTitleIn var(--motion-entrance) var(--ease-emphasized) both;
+}
+.lf-download-capsule-in {
+  animation: lfDownloadCapsuleIn var(--motion-entrance) var(--ease-emphasized) both;
+}
+@keyframes lfDownloadTitleIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes lfDownloadCapsuleIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Newest chart bar slides in from the right edge when a sample arrives. */
+.lf-download-chart-bar-new {
+  animation: lfChartBarIn var(--motion-normal) var(--ease-standard) both;
+}
+@keyframes lfChartBarIn {
+  from { opacity: 0; transform: translateX(4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ─────────────────────────────────────────────
+   FIX MODAL: completion glow + checkmark pop
+   ───────────────────────────────────────────── */
+@keyframes fixGlowPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+  30%  { box-shadow: 0 0 20px 4px rgba(52, 211, 153, 0.25); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+.lf-fix-glow-pulse {
+  animation: fixGlowPulse 1.2s ease-out both;
+}
+
+@keyframes fixCheckPop {
+  0%   { transform: scale(0); opacity: 0; }
+  60%  { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.lf-fix-check-pop {
+  animation: fixCheckPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes fixResultSlideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.lf-fix-result-slide-in {
+  animation: fixResultSlideIn 0.25s ease-out both;
+}
+
+@keyframes fixResultFadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.lf-fix-result-fade-out {
+  animation: fixResultFadeOut 0.4s ease-in both;
+}
+
+/* Respect reduced motion: kill palette/entry/chart/progress motion. */
+@media (prefers-reduced-motion: reduce) {
+  .lf-download-dynamic {
+    transition: none;
+  }
+  .lf-download-capsule {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .lf-download-chart-bar,
+  .lf-download-progress-fill {
+    transition: none;
+  }
+  .lf-download-chart-bar-new {
+    animation: none;
+  }
+  .lf-download-title-in,
+  .lf-download-capsule-in {
+    animation: none;
+  }
+  .lf-fix-glow-pulse,
+  .lf-fix-check-pop,
+  .lf-fix-result-slide-in,
+  .lf-fix-result-fade-out {
+    animation: none;
+  }
 }

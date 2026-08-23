@@ -46,7 +46,7 @@ export default function StoreHighlightsSection({ onNavigate }: Props) {
 
         <button
           onClick={() => onNavigate?.("store")}
-          className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-black transition hover:opacity-90"
+          className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
         >
           <Gamepad2 className="h-4 w-4" />
           Browse Store

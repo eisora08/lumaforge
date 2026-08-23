@@ -11,6 +11,7 @@ import {
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
+import { useSettings } from "../../context/SettingsContext";
 import { getAvatarPreset, getBannerPreset } from "../profile/profilePresets";
 import type {
   ConsoleSettings,
@@ -31,6 +32,7 @@ import {
   CONSOLE_THEME_INFOS,
   WIDTH_PRESETS,
   RADIUS_PRESETS,
+  PANEL_WIDTH_PRESETS,
   GRID_CARD_DEFAULTS,
   SPOTLIGHT_CARD_DEFAULTS,
   SPOTLIGHT_CONTENT_DEFAULTS,
@@ -319,6 +321,19 @@ const SETTING_ROWS_VISUALS: SettingRowDef[] = [
   },
   { id: "focusShine", type: "toggle", label: "Focus Shine Animation", description: "Glow sweep on focused cards", getValue: (s) => s.focusShine, onAction: (s) => ({ focusShine: !s.focusShine }) },
   { id: "heroMotion", type: "toggle", label: "Hero Motion", description: "Slow Ken Burns effect on hero background", getValue: (s) => s.heroMotion, onAction: (s) => ({ heroMotion: !s.heroMotion }) },
+  {
+    id: "sidePanelPreset", type: "segmented", label: "Panel Size",
+    segOptions: PANEL_WIDTH_PRESETS.map(p => ({ label: p.label, value: p.value })),
+    description: "Auto adapts to 1080p/1440p/4K",
+    getValue: (s) => s.sidePanelPreset,
+    onAction: (s, k) => {
+      const idx = PANEL_WIDTH_PRESETS.findIndex(o => o.value === s.sidePanelPreset);
+      const next = PANEL_WIDTH_PRESETS[Math.min(PANEL_WIDTH_PRESETS.length - 1, idx + 1)];
+      const prev = PANEL_WIDTH_PRESETS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { sidePanelPreset: prev.value } : {};
+      return next ? { sidePanelPreset: next.value } : {};
+    },
+  },
   { id: "showTrailerPreview", type: "toggle", label: "Show Trailer Preview", description: "Show mini trailer/artwork preview in Spotlight", getValue: (s) => s.spotlightCardStyle.showTrailerPreview, onAction: (s) => patchSpotlightCardStyle(s, { showTrailerPreview: !s.spotlightCardStyle.showTrailerPreview }) },
   { id: "spotlightCardWidth", type: "slider", label: "Spotlight Card Width", sliderMin: 200, sliderMax: 420, sliderStep: 10, sliderUnit: "px", getValue: (s) => s.spotlightCardStyle.widthPreset, onAction: (s, k) => patchSpotlightCardStyle(s, { widthPreset: k === "left" ? Math.max(200, s.spotlightCardStyle.widthPreset - 10) : Math.min(420, s.spotlightCardStyle.widthPreset + 10) }) },
   { id: "spotlightCardGap", type: "slider", label: "Spotlight Card Gap", sliderMin: 8, sliderMax: 48, sliderStep: 2, sliderUnit: "px", getValue: (s) => s.spotlightCardGap, onAction: (s, k) => k === "left" ? { spotlightCardGap: Math.max(8, s.spotlightCardGap - 2) } : { spotlightCardGap: Math.min(48, s.spotlightCardGap + 2) } },
@@ -407,7 +422,6 @@ const SETTING_ROWS_SYSTEM_BAR: SettingRowDef[] = [
   { id: "showClock", type: "toggle", label: "Show Clock", description: "Display the clock in the top bar", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
   { id: "showNetworkIndicator", type: "toggle", label: "Network Indicator", description: "Show online/offline status in the top bar", getValue: (s) => s.showNetworkIndicator, onAction: (s) => ({ showNetworkIndicator: !s.showNetworkIndicator }) },
   { id: "showControllerIndicator", type: "toggle", label: "Controller Indicator", description: "Show connected controller status in the top bar", getValue: (s) => s.showControllerIndicator, onAction: (s) => ({ showControllerIndicator: !s.showControllerIndicator }) },
-  { id: "showJobIndicator", type: "toggle", label: "Jobs Indicator", description: "Show pending background job count in the top bar", getValue: (s) => s.showJobIndicator, onAction: (s) => ({ showJobIndicator: !s.showJobIndicator }) },
   { id: "resetSystemBar", type: "button", label: "Reset System Bar to Defaults", getValue: () => "", onAction: () => resetConsoleSystemBarSettings() },
 ];
 
@@ -1248,6 +1262,7 @@ export default function ConsoleSettingsPanelV2({
   onNavigate, allGames, onSelectGame, onRefreshLibrary,
 }: Props) {
   const [profile] = useUserProfile();
+  const { settings: desktopSettings, updateSetting: updateDesktopSetting } = useSettings();
   const [page, setPage] = useState<PanelPage>("main");
   const [subPage, setSubPage] = useState<PanelPage | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -1768,12 +1783,43 @@ export default function ConsoleSettingsPanelV2({
     const rows = subPage ? SUBPAGE_ROWS[subPage] : undefined;
     const title = subPage ? SUBPAGE_TITLES[subPage] ?? "" : "";
     if (rows && title) {
+      // ── Startup sub-page: sync 4 shared fields with Desktop settings ──
+      const isStartup = subPage === "startup";
+      const effectiveSettings = isStartup ? {
+        ...settings,
+        autostart: desktopSettings.startWithWindows,
+        startMaximized: desktopSettings.startMaximized,
+        startInTray: desktopSettings.startInTray,
+        closeToTray: desktopSettings.closeToTray,
+        windowMode: desktopSettings.startupWindowMode as ConsoleSettings["windowMode"],
+      } : settings;
+
+      const effectiveOnPatch = isStartup
+        ? (p: Partial<ConsoleSettings>) => {
+            onPatch(p);
+            // Sync shared startup fields to Desktop settings
+            if (p.autostart !== undefined) updateDesktopSetting("startWithWindows", p.autostart);
+            if (p.startMaximized !== undefined) updateDesktopSetting("startMaximized", p.startMaximized);
+            if (p.startInTray !== undefined) updateDesktopSetting("startInTray", p.startInTray);
+            if (p.closeToTray !== undefined) updateDesktopSetting("closeToTray", p.closeToTray);
+            // windowMode (Console) → startupWindowMode (Desktop)
+            if (p.windowMode !== undefined) {
+              updateDesktopSetting("startupWindowMode", p.windowMode as "windowed" | "maximized" | "fullscreen");
+            }
+            // launchMode: map Console's 3-value to Desktop's 2-value
+            if (p.launchMode !== undefined) {
+              const mapped = p.launchMode === "last-used" ? "desktop" : p.launchMode;
+              updateDesktopSetting("launchMode", mapped as "desktop" | "console");
+            }
+          }
+        : onPatch;
+
       return (
         <ConsoleSettingsSubPage
           title={title}
           rows={rows}
-          settings={settings}
-          onPatch={onPatch}
+          settings={effectiveSettings}
+          onPatch={effectiveOnPatch}
           onBack={doBackNav}
           focusedIndex={focusedIndex}
           settingEditingId={settingEditingId}

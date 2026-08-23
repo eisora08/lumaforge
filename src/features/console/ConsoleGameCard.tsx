@@ -3,6 +3,7 @@ import { Gamepad2, Heart } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleCardSrc } from "./consoleMedia";
+import { getFavoriteKey } from "../../services/gameCacheService";
 
 type Props = {
   game: LibraryGame;
@@ -14,11 +15,13 @@ type Props = {
   cardWidth?: number;
   noTitle?: boolean;
   cornerRadius?: number;
+  onHover?: (game: LibraryGame) => void;
+  onHoverEnd?: () => void;
 };
 
-function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius }: Props) {
+function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius, onHover, onHoverEnd }: Props) {
   const { isFavorite } = useFavorites();
-  const fav = game.appId ? isFavorite(game.appId) : false;
+  const fav = isFavorite(getFavoriteKey(game) ?? game.id);
   const isSpotlight = !compact;
   const radius = cornerRadius ?? 16;
 
@@ -36,6 +39,8 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
       tabIndex={isFocused ? 0 : -1}
       aria-label={game.title}
       onClick={onClick}
+      onMouseEnter={() => onHover?.(game)}
+      onMouseLeave={() => onHoverEnd?.()}
       className={`relative cursor-pointer border transition-[transform,opacity,border-color] duration-[200ms] ease-out shrink-0 ${
         compact ? "" : variant === "poster" ? "w-[200px]" : "w-[280px]"
       } ${cardWidth ? "" : "shrink-0"} ${
@@ -58,7 +63,7 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
       >
         {src ? (
           <img
-            key={game.appId}
+            key={game.appId || game.id}
             src={src}
             alt={game.title}
             className="h-full w-full object-cover"
@@ -91,23 +96,25 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
           </div>
         )}
 
+        {/* Repacker badge (Debrid) */}
+        {game.source === "debrid" && game.repacker && (
+          <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-medium text-cyan-400 backdrop-blur-sm ring-1 ring-cyan-500/30">
+            {game.repacker.toUpperCase()}
+          </div>
+        )}
+
         {/* Favorite heart */}
         {fav && (
-          <div className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 backdrop-blur-sm">
+          <div className="absolute right-2 top-9 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 backdrop-blur-sm">
             <Heart className="h-3.5 w-3.5 fill-rose-400 text-rose-400" />
           </div>
         )}
 
         {/* Badges */}
-        <div className="absolute bottom-2 left-2 flex flex-wrap gap-1">
+        <div className="absolute bottom-2 left-2 flex flex-wrap items-center gap-1">
           {game.steamInstalled && (
             <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
               Installed
-            </span>
-          )}
-          {game.isLuaActive && (
-            <span className="rounded-md bg-violet-500/80 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
-              Lua
             </span>
           )}
           {game.hasUpdate && (
@@ -115,6 +122,25 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
               Update
             </span>
           )}
+          {(() => {
+            const srcBadge = game.hasLua
+              ? { label: "LUA", cls: "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30" }
+              : game.source === "epic"
+                ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300 ring-1 ring-purple-500/40" }
+                : game.source === "debrid"
+                  ? { label: "DEBRID", cls: "bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/30" }
+                  : game.source === "manual"
+                    ? { label: "MANUAL", cls: "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30" }
+                    : game.source === "steam"
+                      ? { label: "STEAM", cls: "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30" }
+                      : null;
+            if (!srcBadge) return null;
+            return (
+              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide backdrop-blur-sm ${srcBadge.cls}`}>
+                {srcBadge.label}
+              </span>
+            );
+          })()}
         </div>
 
         {/* Title gradient overlay for landscape variant — hidden with noTitle */}

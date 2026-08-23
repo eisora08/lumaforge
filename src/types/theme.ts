@@ -2,12 +2,15 @@ export type ThemeId =
   | "crimson-dark"
   | "midnight-blue"
   | "steam-gray"
-  | "oled-black";
+  | "oled-black"
+  | "fluent";
 
 export type SurfaceMode =
   | "solid"
   | "tinted"
-  | "liquid-glass";
+  | "frosted"
+  | "dark-glass"
+  | "glass";
 
 export type ThemeOption = {
   id: ThemeId;

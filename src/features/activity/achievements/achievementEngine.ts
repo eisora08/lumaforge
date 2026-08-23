@@ -17,6 +17,10 @@ type EvaluationContext = {
   genreCount: number;
   weekendStreak: number;
   gamesPlayed: number;
+  // Fase 2
+  providerCount: number;
+  luaGames: number;
+  shortSessions: number;
 };
 
 type EvaluateResult = {
@@ -27,7 +31,7 @@ type EvaluateResult = {
 let _lastEvalHash = "";
 
 function computeEvalHash(ctx: EvaluationContext): string {
-  return `${ctx.librarySize}-${ctx.totalPlaytimeSeconds}-${ctx.totalSessions}-${ctx.completedGames}-${ctx.currentStreak}-${ctx.genreCount}`;
+  return `${ctx.librarySize}-${ctx.totalSessions}-${ctx.completedGames}-${ctx.currentStreak}-${ctx.genreCount}-${ctx.gamesPlayed}-${ctx.providerCount}-${ctx.luaGames}-${ctx.shortSessions}`;
 }
 
 /**
@@ -98,11 +102,26 @@ function checkCondition(def: AchievementDef, ctx: EvaluationContext): boolean {
     // Exploration
     case "genre-hopper":          return ctx.genreCount >= 5;
     case "renaissance-gamer":     return ctx.genreCount >= 10;
-    case "hidden-gem-hunter":     return false; // TODO: requires per-game rating data
+    case "hidden-gem-hunter":     return ctx.gamesPlayed >= 10 && ctx.completedGames === 0;
 
     // Session
     case "session-centurion":     return ctx.totalSessions >= 100;
     case "weekend-warrior":       return ctx.weekendStreak >= 4;
+
+    // Fase 2 — Play
+    case "century-club":          return Math.floor(ctx.totalPlaytimeSeconds / 3600) >= 100;
+    case "no-lifer":              return Math.floor(ctx.totalPlaytimeSeconds / 3600) >= 500;
+
+    // Fase 2 — Streak
+    case "daily-grinder":         return ctx.currentStreak >= 3;
+
+    // Fase 2 — Exploration
+    case "multi-platform":        return ctx.providerCount >= 3;
+    case "lua-enthusiast":        return ctx.luaGames >= 5;
+
+    // Fase 2 — Session
+    case "speedrunner":           return ctx.shortSessions >= 10;
+    case "marathon-master":       return ctx.marathonSessions >= 20;
 
     default: return false;
   }

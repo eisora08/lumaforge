@@ -188,9 +188,63 @@ function readOverlayPosition(): OverlayPosition {
   return valid.includes(pos) ? pos : "top-right";
 }
 
+// ── Batch toast collector ──
+// Collects all toasts within a short window and sends them as a single batch
+// so multiple simultaneous unlocks are all shown at once in a vertical stack.
+interface QueuedToast {
+  name: string;
+  description?: string | null;
+  iconUrl?: string | null;
+  iconGrayUrl?: string | null;
+  appId?: string | null;
+  rarity?: number | null;
+  gameTitle?: string | null;
+  duration?: number;
+  isPlatinum?: boolean;
+}
+
+let _batchBuffer: QueuedToast[] = [];
+let _batchTimer: ReturnType<typeof setTimeout> | null = null;
+let _batchSending = false;
+
+const BATCH_COLLECT_MS = 150;
+
+function getToastDuration(rarity?: number | null, isPlatinum?: boolean): number {
+  if (isPlatinum) return 10000;
+  if (rarity == null || !Number.isFinite(rarity) || rarity <= 0) return 4500;
+  if (rarity <= 1) return 8000;
+  if (rarity <= 5) return 6500;
+  if (rarity <= 10) return 5500;
+  return 4500;
+}
+
+/** Flush the accumulated batch buffer to the overlay as a single batch call. */
+async function flushBatch(): Promise<void> {
+  const batch = _batchBuffer.splice(0);
+  if (batch.length === 0) return;
+  if (_batchSending) return; // already sending a batch — next flush scheduled by caller
+  _batchSending = true;
+  try {
+    await showAchievementOverlayBatch(batch);
+  } finally {
+    _batchSending = false;
+  }
+}
+
+/** Queue an achievement toast — batched with others arriving within 150ms. */
+export function queueAchievementOverlay(toast: QueuedToast): void {
+  _batchBuffer.push(toast);
+  if (_batchTimer) clearTimeout(_batchTimer);
+  _batchTimer = setTimeout(() => {
+    _batchTimer = null;
+    flushBatch();
+  }, BATCH_COLLECT_MS);
+}
+
 /** Show an achievement notification in the Tauri overlay window. */
 export async function showAchievementOverlay(params: {
   name: string;
+  description?: string | null;
   iconUrl?: string | null;
   appId?: string | null;
   rarity?: number | null;
@@ -205,6 +259,7 @@ export async function showAchievementOverlay(params: {
     const overlayPosition = readOverlayPosition();
     const invokePayload = {
       name: params.name,
+      description: params.description ?? null,
       iconUrl: resolvedIcon,
       appId: params.appId ?? null,
       rarity: params.rarity ?? null,
@@ -235,6 +290,73 @@ export async function showGroupedAchievementOverlay(count: number): Promise<bool
     rarity: null,
     gameTitle: null,
   });
+}
+
+/**
+ * Show multiple achievement toasts as a batch in a single overlay window.
+ * All toasts render simultaneously, stacked vertically.
+ */
+export async function showAchievementOverlayBatch(
+  toasts: QueuedToast[],
+): Promise<boolean> {
+  if (toasts.length === 0) return false;
+
+  // Resolve all icons in parallel
+  const resolved = await Promise.all(
+    toasts.map(async (t) => {
+      const icon = await resolveOverlayIconUrl(t.iconUrl ?? null, t.iconGrayUrl ?? null, t.appId ?? null);
+      const duration = t.duration ?? getToastDuration(t.rarity, t.isPlatinum);
+      return {
+        name: t.name,
+        description: t.description ?? null,
+        iconUrl: icon,
+        appId: t.appId ?? null,
+        rarity: t.isPlatinum ? 100 : (t.rarity ?? null),
+        gameTitle: t.gameTitle ?? null,
+        duration,
+        isPlatinum: t.isPlatinum ?? false,
+      };
+    }),
+  );
+
+  // Use the longest duration for the window auto-close
+  const maxDuration = Math.max(...resolved.map((r) => r.duration));
+
+  console.log(`[ACH][OVERLAY_BATCH] count=${resolved.length} maxDuration=${maxDuration}`);
+
+  try {
+    const themeVars = collectThemeVars();
+    const overlayPosition = readOverlayPosition();
+    const invokePayload = {
+      toasts: resolved,
+      maxDuration,
+      themeVars,
+      overlayPosition,
+    };
+    await Promise.race([
+      invoke("show_achievement_overlay_batch", invokePayload),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("invoke timed out after 5s")), 5000),
+      ),
+    ]);
+    return true;
+  } catch (err) {
+    console.warn("[ACH][OVERLAY_BATCH] invoke failed:", err);
+    // Fallback: try showing just the first one via single overlay
+    if (resolved.length > 0) {
+      const first = resolved[0];
+      return showAchievementOverlay({
+        name: first.name,
+        description: first.description,
+        iconUrl: first.iconUrl,
+        appId: first.appId,
+        rarity: first.rarity,
+        gameTitle: first.gameTitle,
+        duration: first.duration,
+      });
+    }
+    return false;
+  }
 }
 
 /**

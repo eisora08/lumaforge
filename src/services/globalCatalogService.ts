@@ -1,5 +1,35 @@
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import { getStoreGameDetails } from "./storeLocalCacheService";
+import type { StoreCatalogGame } from "./storeCatalogProvider";
+
+/**
+ * Bridge: convert a StoreCatalogGame (from the orchestrator's canonical sections)
+ * into a NormalizedCatalogGame for dashboard card rendering.
+ * Media fields are derived from the orchestrator's imageUrl/backgroundImageUrl.
+ * Metadata is null — callers that need full metadata should use enrichEntry/normalizeEntry.
+ */
+export function mapStoreCatalogGameToCard(game: StoreCatalogGame): NormalizedCatalogGame {
+  const appId = game.steamAppId ?? game.id;
+  const releaseTs = game.releaseTimestamp ?? 0;
+  const now = Date.now();
+  const isNew = releaseTs > 0 && (now - releaseTs) < 30 * 24 * 60 * 60 * 1000;
+
+  return {
+    appId,
+    title: game.title,
+    releaseDate: game.releaseDate ?? null,
+    releaseTimestamp: releaseTs,
+    isNew,
+    media: {
+      headerImage: game.backgroundImageUrl ?? null,
+      capsuleImage: game.imageUrl ?? null,
+      capsuleImageV5: null,
+      libraryHeroImage: null,
+      backgroundImage: game.backgroundImageUrl ?? null,
+    },
+    metadata: null,
+  };
+}
 
 export type SteamDbEntry = {
   appid: number;

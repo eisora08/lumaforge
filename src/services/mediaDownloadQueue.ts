@@ -6,6 +6,7 @@ import { isInteractionBusy } from "./perfCounters";
 const FLUSH_IDLE_RETRY_MS = 2000; // Phase 3: retry delay when paused
 
 const ENABLE_VERBOSE_MEDIA_QUEUE_LOGS = false;
+const DEBUG_MEDIA_QUEUE = false;
 
 function log(...args: unknown[]) {
   if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) {
@@ -219,7 +220,7 @@ async function flushAppInfoUpdates() {
         p => p !== expectedPrefix && filename.startsWith(p),
       );
       if (matchesWrongRole) {
-        console.log(`[MEDIA_ROLE_REPAIR] appid=${appId} cleared ${field}=${path} reason=role-path-mismatch expected=${expectedPrefix}*`);
+        if (DEBUG_MEDIA_QUEUE) console.log(`[MEDIA_ROLE_REPAIR] appid=${appId} cleared ${field}=${path} reason=role-path-mismatch expected=${expectedPrefix}*`);
         (merged as any)[field] = null;
         staleRepairChanged = true;
       }
@@ -419,7 +420,7 @@ function inferActualMediaType(path: string | null, intendedRole: string): string
 
 async function performDownload(entry: InternalJob, key: string) {
   const { job } = entry;
-  const DOWNLOAD_LOG = (tag: string, msg: string) => console.log(`[MEDIA_QUEUE][${tag}] appid=${job.appId} role=${job.mediaType} ${msg}`);
+  const DOWNLOAD_LOG = (tag: string, msg: string) => { if (DEBUG_MEDIA_QUEUE) console.log(`[MEDIA_QUEUE][${tag}] appid=${job.appId} role=${job.mediaType} ${msg}`); };
 
   DOWNLOAD_LOG("DOWNLOAD_START", `url=${job.url} forceRefresh=${job.forceRefresh ?? false}`);
 
@@ -454,7 +455,7 @@ async function performDownload(entry: InternalJob, key: string) {
     // ensures no cross-role path contamination even if a bug occurs.
     const actualRole = result ? inferActualMediaType(result, job.mediaType) : job.mediaType;
     if (actualRole !== job.mediaType) {
-      console.log(`[MEDIA_ROLE_WRITE] appid=${job.appId} intended=${job.mediaType} actual=${actualRole} path=${result}`);
+      if (DEBUG_MEDIA_QUEUE) console.log(`[MEDIA_ROLE_WRITE] appid=${job.appId} intended=${job.mediaType} actual=${actualRole} path=${result}`);
     }
 
     if (result !== null) {
@@ -555,7 +556,7 @@ export function enqueueMediaDownload(job: MediaDownloadJob): Promise<MediaDownlo
         }, 100);
         const failsafe = setTimeout(() => {
           clearInterval(poll);
-          console.log(`[MEDIA_QUEUE][CANCELLED_WAIT_TIMEOUT] key=${key} timeoutMs=${CANCELLED_KEY_WAIT_TIMEOUT_MS}`);
+          if (DEBUG_MEDIA_QUEUE) console.log(`[MEDIA_QUEUE][CANCELLED_WAIT_TIMEOUT] key=${key} timeoutMs=${CANCELLED_KEY_WAIT_TIMEOUT_MS}`);
           resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Cancelled wait timeout" });
         }, CANCELLED_KEY_WAIT_TIMEOUT_MS);
       });
@@ -634,7 +635,7 @@ export function cancelMediaJobsForApp(appId: string) {
     if (entry.job.appId === appId) {
       const key = dedupKey(entry.job);
       cancelledKeys.add(key);
-      console.log(`[MEDIA_QUEUE][CANCEL_MARKED] appid=${appId} job=${key}`);
+      if (DEBUG_MEDIA_QUEUE) console.log(`[MEDIA_QUEUE][CANCEL_MARKED] appid=${appId} job=${key}`);
       activeJobs.delete(id);
       inFlightAppIds.delete(appId);
       entry.resolve({ success: false, appId, mediaType: entry.job.mediaType, error: "Cancelled" });
@@ -698,7 +699,7 @@ export function clearMediaQueueState() {
   } else {
     // Active or orphaned in-flight jobs still exist — preserve dedup state
     // to prevent duplicate re-enqueue when the same media is queued again.
-    console.log(`[MEDIA_QUEUE][CLEAR_DEFERRED] active=${activeJobs.size} orphaned=${cancelledKeys.size}`);
+    if (DEBUG_MEDIA_QUEUE) console.log(`[MEDIA_QUEUE][CLEAR_DEFERRED] active=${activeJobs.size} orphaned=${cancelledKeys.size}`);
   }
   pendingAppInfoUpdates.clear();
   if (appInfoFlushTimer) clearTimeout(appInfoFlushTimer);

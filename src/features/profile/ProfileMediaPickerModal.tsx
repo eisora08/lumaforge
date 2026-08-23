@@ -172,7 +172,7 @@ export default function ProfileMediaPickerModal({ kind, open, onClose, onSelect 
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
     >
       <div
         ref={panelRef}

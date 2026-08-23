@@ -1,7 +1,8 @@
-import { useMemo, useEffect, useCallback, useRef, useState } from "react";
+import { useMemo, useEffect, useCallback, useRef, useState, useSyncExternalStore } from "react";
 import {
-  ArrowLeft, Trophy, Heart, Gamepad2, Play, Square, Clock, HardDrive, CheckCircle2,
-  Star, Languages, Layers, Download, RefreshCw, Search,
+  ArrowLeft, ChevronLeft, ChevronRight, Trophy, Heart, Gamepad2, Play, Square, HardDrive, CheckCircle2,
+  Star, Languages, Layers, Download, RefreshCw, Search, FileSearch, Loader2, MoreHorizontal,
+  CircleCheck, CircleDashed, Clock, Volume2, VolumeX,
 } from "lucide-react";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -10,7 +11,10 @@ import type { StoreMediaItem, StoreTrailerMedia } from "../../types/store";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
+import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { getFavoriteKey } from "../../services/gameCacheService";
+import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { buildStoreMedia } from "../../services/storeMediaService";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
 import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
@@ -25,7 +29,7 @@ import ConsoleMediaGallery from "./ConsoleMediaGallery";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
 import ConsoleInstallModal from "./ConsoleInstallModal";
-import { getConsoleInputHints } from "./consoleInputHints";
+import { getConsoleInputHints, isGamepadDetected } from "./consoleInputHints";
 import type { TrailerData } from "./consoleTrailerData";
 import { resolveConsoleDetailsArtwork, clearConsoleArtworkCache, consoleArtworkToBundle } from "./consoleArtworkResolver";
 import type { ConsoleArtwork, ConsoleArtworkOptions } from "./consoleArtworkResolver";
@@ -37,9 +41,10 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamep
 import { handleConsolePrimaryAction, getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel } from "./consoleGameActions";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 
+import { useCrossfadeSrc } from "../../hooks/useCrossfadeSrc";
+
 const DEBUG = false;
 const DEBUG_CONSOLE_PLAY = false;
-const DEBUG_CONSOLE_ACTIONS = false;
 const DEBUG_CONSOLE_DETAILS_ACTION = false;
 
 function getBlockedReason(action: string): string {
@@ -68,14 +73,12 @@ const _prefersReducedMotion = typeof window !== "undefined"
    ══════════════════════════════════════════ */
 type FocusZone =
   | "back-button"
-  | "left-actions"
-  | "left-info"
+  | "hero"
+  | "cards"
+  | "actions"
   | "media-preview"
   | "media-carousel"
-  | "info-cards"
-  | "footer-actions";
-
-type InfoCardSide = "achievements" | "reviews";
+  | "hints";
 
 type Props = {
   game: LibraryGame;
@@ -84,10 +87,11 @@ type Props = {
   onSearchOpen?: () => void;
   onPlayGame?: (game: LibraryGame) => void;
   onProfileOpen?: () => void;
-  /** When true, gamepad input is yielded to a higher-priority overlay (e.g. Search) */
   gamepadDisabled?: boolean;
-  /** When true, Quick Menu is open and owns all input */
   quickMenuOpen?: boolean;
+  railGames?: LibraryGame[];
+  railIndex?: number;
+  onNavigateRail?: (dir: "next" | "prev") => void;
 };
 
 /* ── Media helpers ── */
@@ -138,7 +142,7 @@ const REVIEW_COLORS: Record<string, { bg: string; text: string; border: string }
 };
 const DEFAULT_REVIEW_COLOR = { bg: "bg-white/5", text: "text-(--color-muted)", border: "border-white/[0.04]" };
 
-export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen, gamepadDisabled = false, quickMenuOpen = false }: Props) {
+export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen, gamepadDisabled = false, quickMenuOpen = false, railGames, railIndex, onNavigateRail }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
   const { settings: appSettings } = useSettings();
@@ -150,8 +154,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const isRunning = sessionState === "running";
   const isStopping = sessionState === "stopping";
   const hints = useMemo(() => getConsoleInputHints(settings.inputHints), [settings.inputHints]);
+  const gamepadActive = isGamepadDetected();
   const sheetRef = useRef<HTMLDivElement>(null);
-  const leftPanelRef = useRef<HTMLDivElement>(null);
 
   const [phase, setPhase] = useState<"enter" | "visible" | "exit">("enter");
   const reducedMotion = _prefersReducedMotion;
@@ -159,20 +163,53 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   /* ══════════════════════════════════════════
      FOCUS ZONE STATE
      ══════════════════════════════════════════ */
-  const [focusZone, setFocusZone] = useState<FocusZone>("media-preview");
+  const [focusZone, setFocusZone] = useState<FocusZone>("actions");
   const [carouselFocusIndex, setCarouselFocusIndex] = useState<number>(0);
   const [carouselSelectedIndex, setCarouselSelectedIndex] = useState<number>(0);
 
-  /* ── Reset carousel index when game changes ── */
   useEffect(() => {
     setCarouselSelectedIndex(0);
+    setActionsBrowsingMedia(false);
+    setMuted(false);
   }, [game?.appId]);
-  const [infoCardSide, setInfoCardSide] = useState<InfoCardSide>("achievements");
+
+  /* Auto-focus play button on game change (LB/RB navigation or first mount) */
+  useEffect(() => {
+    setFocusZone("actions");
+    setLeftActionSubIndex(0);
+  }, [game?.appId]);
+
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [leftActionSubIndex, setLeftActionSubIndex] = useState(0);
+  const [actionsBrowsingMedia, setActionsBrowsingMedia] = useState(false);
   const [installModalOpen, setInstallModalOpen] = useState(false);
+  const [playHovered, setPlayHovered] = useState(false);
+  const [playPulse, setPlayPulse] = useState(false);
+  const [previewHovered, setPreviewHovered] = useState(false);
+  const playPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const installModalClosedAtRef = useRef(0);
   const BOUNCE_GUARD_MS = 400;
+
+  /* ── Hero zoom: mouse hover OR keyboard focus on Play ── */
+  const showHeroZoom = playHovered || (focusZone === "actions" && !actionsBrowsingMedia && !isRunning && leftActionSubIndex === 0);
+  const heroZoomClass = playPulse ? "scale-[1.06] brightness-125" : showHeroZoom ? "scale-[1.03] brightness-110" : "";
+
+  /* Cleanup pulse timer on unmount */
+  useEffect(() => {
+    return () => { if (playPulseTimerRef.current) clearTimeout(playPulseTimerRef.current); };
+  }, []);
+
+  /* ── Video mute state (controlled from actions zone secondary buttons) ── */
+  const [muted, setMuted] = useState(true);
+  const toggleVideoMute = useCallback(() => {
+    const video = document.querySelector<HTMLVideoElement>(
+      `[data-console-preview-video="${game?.appId}"]`
+    );
+    if (video) {
+      video.muted = !video.muted;
+      setMuted(video.muted);
+    }
+  }, [game?.appId]);
 
   /* ── Multi-source artwork enrichment ── */
   const [artwork, setArtwork] = useState<ConsoleArtwork | null>(null);
@@ -180,7 +217,25 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   useEffect(() => {
     const appId = game?.appId;
-    if (!appId) return;
+    if (!appId) {
+      const cm = (game as { _consoleMedia?: { coverSrc?: string | null; landscapeSrc?: string | null; backgroundSrc?: string | null; logoSrc?: string | null; heroSrc?: string | null } } | null)?._consoleMedia;
+      if (cm && (cm.coverSrc || cm.heroSrc)) {
+        setArtwork({
+          coverSrc: cm.coverSrc ?? null,
+          landscapeSrc: cm.landscapeSrc ?? null,
+          backgroundSrc: cm.backgroundSrc ?? null,
+          logoSrc: cm.logoSrc ?? null,
+          heroSrc: cm.heroSrc ?? cm.coverSrc ?? null,
+          coverSource: "local-cached",
+          heroSource: "local-cached",
+          logoSource: cm.logoSrc ? "local-cached" : "none",
+        });
+      } else {
+        setArtwork(null);
+      }
+      return;
+    }
+
     setArtwork(null);
     _pendingArtworkRef.current = appId;
 
@@ -207,7 +262,6 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     };
   }, [game?.appId]);
 
-  /* ── Normalized media bundle ── */
   const mediaBundle = useMemo(() => {
     if (!game?.appId) return null;
     if (!artwork) return null;
@@ -215,14 +269,13 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game, artwork]);
 
   /* ══════════════════════════════════════════
-     UNIFIED MEDIA: carousel items
+     UNIFIED MEDIA
      ══════════════════════════════════════════ */
   const mediaItems = useMemo<StoreMediaItem[]>(() => {
     if (!game?.metadata) return [];
     return buildStoreMedia(game.metadata);
   }, [game?.metadata]);
 
-  /* ── Selected media item → trailerData / screenshotOverrideUrl ── */
   const currentMedia = mediaItems[carouselSelectedIndex] ?? null;
   const isCurrentTrailer = currentMedia?.type === "trailer";
 
@@ -236,21 +289,27 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     return currentMedia.image;
   }, [currentMedia]);
 
-  /* ── Player mode: "details" for playable trailers, "thumbnail" for screenshots / unsupported ── */
   const playerMode = useMemo<"thumbnail" | "details">(() => {
     if (!isCurrentTrailer || !trailerData) return "thumbnail";
     return trailerData.playableType !== "none" ? "details" : "thumbnail";
   }, [isCurrentTrailer, trailerData]);
 
-  /* ── Is the current trailer playable (not just a thumbnail with no video)? ── */
   const hasPlayableVideo = playerMode === "details" && trailerData?.playableType !== "none";
 
-  /* ── Media identity key — changes on every carousel selection to force clean video remount ── */
+  /* ── Video seek (for LT/RT triggers) ── */
+  const seekVideo = useCallback((delta: number) => {
+    const video = document.querySelector<HTMLVideoElement>(
+      `[data-console-preview-video="${game?.appId}"]`
+    );
+    if (video && hasPlayableVideo) {
+      video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta));
+    }
+  }, [game?.appId, hasPlayableVideo]);
+
   const mediaIdentityKey = useMemo(() => {
     return `${game?.appId ?? "?"}-${carouselSelectedIndex}-${currentMedia?.type ?? "none"}`;
   }, [game?.appId, carouselSelectedIndex, currentMedia?.type]);
 
-  /* ── Enter animation ── */
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       requestAnimationFrame(() => setPhase("visible"));
@@ -258,7 +317,6 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  /* ── Close options overlay on game change ── */
   useEffect(() => {
     setOptionsOpen(false);
   }, [game?.appId]);
@@ -269,10 +327,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     setTimeout(() => onClose(), EXIT_DURATION + 20);
   }, [phase, onClose]);
 
-  /* ── Session action handlers ── */
   const handlePlay = useCallback(() => {
-    if (!game || !game.appId) return;
-    if (isRunning) {
+    if (!game) return;
+    if (isRunning && game.appId) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_STOP] appid=${game.appId}`);
       sessionCtx.stopGameByAppId(game.appId).catch(() => {});
       return;
@@ -280,8 +337,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     if (isLaunching || isStopping) return;
     const action = getLauncherGamePrimaryAction(game);
     if (action !== "play" || !game.isPlayable) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_BLOCKED] appid=${game.appId} action=${action}`);
-      showWarning(getBlockedReason(action), { id: `console-details-blocked-${game.appId}`, duration: 3000 });
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_BLOCKED] appid=${game.appId ?? "manual"} action=${action}`);
+      showWarning(getBlockedReason(action), { id: `console-details-blocked-${game.appId ?? game.id}`, duration: 3000 });
       return;
     }
     onPlayGame?.(game);
@@ -302,9 +359,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     }
   }, [gameSession]);
 
-  /* ── Shared action model — single source of truth ── */
   const actionModel = useMemo<ConsoleGameActionModel | null>(
-    () => (game?.appId ? getConsoleGameActionModel(game) : null),
+    () => (game ? getConsoleGameActionModel(game) : null),
     [game],
   );
   const actionInFlight = game?.appId ? isInFlight(game.appId) : false;
@@ -318,12 +374,18 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, []);
 
   const handlePrimaryAction = useCallback(() => {
-    if (!game || !game.appId || !actionModel) return;
+    if (!game || !actionModel) return;
     const action = actionModel.action;
     if (DEBUG_CONSOLE_DETAILS_ACTION) {
-      console.log(`[CONSOLE_DETAILS_ACTION][RUN] appid=${game.appId} action=${action} enabled=${actionModel.enabled}`);
+      console.log(`[CONSOLE_DETAILS_ACTION][RUN] appid=${game.appId ?? "manual"} action=${action} enabled=${actionModel.enabled}`);
     }
     if (action === "play") {
+      /* Premium play pulse: hero zooms in then returns */
+      if (!playPulse) {
+        setPlayPulse(true);
+        if (playPulseTimerRef.current) clearTimeout(playPulseTimerRef.current);
+        playPulseTimerRef.current = setTimeout(() => setPlayPulse(false), 600);
+      }
       handlePlay();
       return;
     }
@@ -331,6 +393,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       setInstallModalOpen(true);
       return;
     }
+    if (!game.appId) return;
     handleConsolePrimaryAction(game, action, {
       settings: appSettings,
       addJob,
@@ -339,10 +402,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       mountedRef: _mountedRef,
       onPlayGame,
     });
-  }, [game, actionModel, handlePlay, appSettings, addJob, updateJob, libCtx.refresh, onPlayGame]);
+  }, [game, actionModel, handlePlay, appSettings, addJob, updateJob, libCtx.refresh, onPlayGame, playPulse]);
 
   const handleConsoleAction = useCallback((action: ConsolePrimaryAction) => {
-    if (!game || !game.appId) return;
+    if (!game) return;
     if (action === "play") {
       handlePlay();
       return;
@@ -351,7 +414,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       setInstallModalOpen(true);
       return;
     }
-    if (DEBUG_CONSOLE_ACTIONS) {
+    if (DEBUG_CONSOLE_DETAILS_ACTION) {
       console.log(`[CONSOLE_ACTION_CLICK] appid=${game.appId} action=${action} enabled=${actionModel?.enabled ?? false}`);
     }
     handleConsolePrimaryAction(game, action, {
@@ -365,31 +428,30 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game, actionModel, appSettings, addJob, updateJob, libCtx.refresh, handlePlay, onPlayGame]);
 
   const handleFavoriteToggle = useCallback(() => {
-    if (game?.appId) toggleFavorite(game.appId);
+    if (game) toggleFavorite(getFavoriteKey(game) ?? game.id);
   }, [game, toggleFavorite]);
 
-  /* ── Sub-focus activation for left-actions zone ── */
-  /* Index 0 = primary action (Play/Install/Stop), 1 = Return (running) or Favorite, 2 = Favorite (running with pid) */
-  const hasReturn = isRunning && gameSession?.pid != null;
-  const maxSubIndex = hasReturn ? 2 : 1;
+  /* SubIndex layout: isRunning=false → [0=Play, 1=Options, 2=Mute, 3=Favorites]
+     isRunning=true  → [0=Stop, 1=Return, 2=Options, 3=Mute, 4=Favorites] */
+  const maxSubIndex = isRunning ? 4 : 3;
   const activateFocusedLeftAction = useCallback(() => {
     if (DEBUG_CONSOLE_DETAILS_ACTION) {
-      console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex}`);
+      console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex} isRunning=${isRunning}`);
     }
-    if (leftActionSubIndex === 0) {
-      if (isRunning) {
-        handleStop();
-      } else {
-        handlePrimaryAction();
-      }
-    } else if (leftActionSubIndex === 1 && hasReturn) {
-      handleReturn();
+    if (isRunning) {
+      if (leftActionSubIndex === 0) handleStop();
+      else if (leftActionSubIndex === 1) handleReturn();
+      else if (leftActionSubIndex === 2) setOptionsOpen(true);
+      else if (leftActionSubIndex === 3) toggleVideoMute();
+      else if (leftActionSubIndex === 4) handleFavoriteToggle();
     } else {
-      handleFavoriteToggle();
+      if (leftActionSubIndex === 0) handlePrimaryAction();
+      else if (leftActionSubIndex === 1) setOptionsOpen(true);
+      else if (leftActionSubIndex === 2) toggleVideoMute();
+      else if (leftActionSubIndex === 3) handleFavoriteToggle();
     }
-  }, [leftActionSubIndex, handlePrimaryAction, handleFavoriteToggle, handleStop, handleReturn, game?.appId, isRunning, hasReturn]);
+  }, [leftActionSubIndex, handlePrimaryAction, handleFavoriteToggle, handleStop, handleReturn, toggleVideoMute, game?.appId, isRunning]);
 
-  /* ── Install modal confirm ── */
   const handleInstallConfirm = useCallback(() => {
     if (DEBUG_CONSOLE_DETAILS_ACTION) {
       console.log(`[CONSOLE_DETAILS_ACTION][INSTALL_MODAL_CONFIRM] appid=${game?.appId}`);
@@ -407,39 +469,27 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     });
   }, [game, appSettings, addJob, updateJob, libCtx.refresh, onPlayGame]);
 
-  /* ── Ref for quickMenuOpen (avoid deps churn on handler) ── */
   const quickMenuOpenRef = useRef(quickMenuOpen);
   quickMenuOpenRef.current = quickMenuOpen;
 
   /* ══════════════════════════════════════════
-     KEYBOARD NAVIGATION — Focus zone model
+     KEYBOARD NAVIGATION — Focus zone model (mejorado)
      ══════════════════════════════════════════ */
   const handleZoneKeyDown = useCallback((e: KeyboardEvent) => {
     if (DEBUG_CONSOLE_GAMEPAD) {
       console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleGameDetails target=${(e.target as any)?.tagName ?? typeof e.target}`);
     }
-    // Quick Menu owns all input when open
     if (quickMenuOpenRef.current) return;
-
-    // Ignore Alt/Meta — browser/OS synthetic from unmapped controller buttons
     if (e.key === "Alt" || e.key === "Meta") return;
 
-    // O / Menu key opens options overlay (does not close — use B/Escape for that)
+    // O / Menu key opens options
     if (e.key === "o" || e.key === "O" || e.key === "ContextMenu" || e.key === "Apps") {
       e.preventDefault();
       if (!optionsOpen) setOptionsOpen(true);
       return;
     }
-
-    // When options overlay is open, ignore all zone keys (overlay handles its own)
     if (optionsOpen) return;
-
-    // When install modal is open, ignore all zone keys (modal handles its own)
     if (installModalOpen) return;
-
-    // Post-modal close bounce guard: ignore Enter/Space/Escape within 400ms of modal close.
-    // Catches the second Enter dispatched by the gamepad hook transition race
-    // (parent hook re-enables with empty heldButtons while A is still physically held).
     if ((e.key === "Enter" || e.key === " " || e.key === "Escape") && installModalClosedAtRef.current > 0) {
       const elapsed = Date.now() - installModalClosedAtRef.current;
       if (elapsed < BOUNCE_GUARD_MS) {
@@ -455,15 +505,26 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       handlePlay();
       return;
     }
-
-    // Search key: / or Y opens search overlay
-    // V/View opens Profile/Quick Menu
+    // LB/RB (q/e) = navigate rail games from any zone
+    if (onNavigateRail) {
+      if (e.key === "q" || e.key === "Q") {
+        e.preventDefault();
+        onNavigateRail("prev");
+        return;
+      }
+      if (e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        onNavigateRail("next");
+        return;
+      }
+    }
+    // V/View opens Profile
     if (e.key === "v" || e.key === "V") {
       e.preventDefault();
       onProfileOpen?.();
       return;
     }
-
+    // Y or / opens search
     if (e.key === "/" || e.key === "y" || e.key === "Y") {
       e.preventDefault();
       onSearchOpen?.();
@@ -486,73 +547,102 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     if (inInput) return;
 
     switch (focusZone) {
-      /* ── back-button ── */
       case "back-button": {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           handleClose();
         } else if (e.key === "ArrowDown") {
           e.preventDefault();
-          setFocusZone("left-actions");
+          setFocusZone("hero");
+        } else if (e.key === "ArrowLeft" && onNavigateRail) {
+          e.preventDefault();
+          onNavigateRail("prev");
+        } else if (e.key === "ArrowRight" && onNavigateRail) {
+          e.preventDefault();
+          onNavigateRail("next");
         }
         break;
       }
-
-      /* ── left-actions ── */
-      case "left-actions": {
+      case "hero": {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setFocusZone("left-info");
+          setFocusZone("cards");
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
           setFocusZone("back-button");
-        } else if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          setLeftActionSubIndex((i) => (i > 0 ? i - 1 : maxSubIndex));
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
+          setFocusZone("actions");
+        } else if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handlePlay();
+        }
+        break;
+      }
+      case "cards": {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setFocusZone("actions");
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setFocusZone("hero");
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setFocusZone("media-preview");
+        } else if (e.key === "PageUp" || e.key === "PageDown") {
+          const container = document.querySelector('[data-scroll-container]');
+          if (container) {
+            const delta = e.key === "PageUp" ? -80 : 80;
+            container.scrollBy({ top: delta, behavior: 'smooth' });
+          }
+        }
+        break;
+      }
+      case "actions": {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setActionsBrowsingMedia(false);
           setLeftActionSubIndex((i) => (i < maxSubIndex ? i + 1 : 0));
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setActionsBrowsingMedia(false);
+          setLeftActionSubIndex((i) => (i > 0 ? i - 1 : maxSubIndex));
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setActionsBrowsingMedia(true);
+          setCarouselFocusIndex((i) => {
+            const next = Math.max(0, i - 1);
+            setCarouselSelectedIndex(next);
+            return next;
+          });
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setActionsBrowsingMedia(true);
+          setCarouselFocusIndex((i) => {
+            const next = Math.min(mediaItems.length - 1, i + 1);
+            setCarouselSelectedIndex(next);
+            return next;
+          });
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
-          if (DEBUG_CONSOLE_DETAILS_ACTION) {
-            const labels = ["primary", hasReturn ? "return" : "favorite", "favorite"];
-            const actionLabel = labels[leftActionSubIndex] ?? "favorite";
-            console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex} action=${actionLabel}`);
+          if (actionsBrowsingMedia) {
+            const video = document.querySelector<HTMLVideoElement>(
+              `[data-console-preview-video="${game?.appId}"]`
+            );
+            if (video && hasPlayableVideo) {
+              if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
+            }
+          } else {
+            activateFocusedLeftAction();
           }
-          activateFocusedLeftAction();
-          if (DEBUG_CONSOLE_GAMEPAD) {
-            console.log(`[INSTALL_MODAL][OPEN_FROM_ACTION] key=${e.key} stopped=true`);
-          }
+        } else if ((e.key === "PageUp" || e.key === "PageDown") && actionsBrowsingMedia) {
+          e.preventDefault();
+          seekVideo(e.key === "PageUp" ? -10 : 10);
         }
         break;
       }
-
-      /* ── left-info: scrollable info panel ── */
-      case "left-info": {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          if (leftPanelRef.current) {
-            leftPanelRef.current.scrollBy({ top: 120, behavior: "smooth" });
-          } else {
-            setFocusZone("media-preview");
-          }
-        } else if (e.key === "ArrowUp") {
-          e.preventDefault();
-          if (leftPanelRef.current && leftPanelRef.current.scrollTop > 10) {
-            leftPanelRef.current.scrollBy({ top: -120, behavior: "smooth" });
-          } else {
-            setFocusZone("left-actions");
-          }
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setFocusZone("media-preview");
-        }
-        break;
-      }
-
-      /* ── media-preview: Enter toggles play/pause ── */
       case "media-preview": {
         if (e.key === "ArrowDown") {
           e.preventDefault();
@@ -560,41 +650,39 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           setCarouselFocusIndex(carouselSelectedIndex);
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
-          setFocusZone("left-info");
+          setFocusZone("actions");
         } else if (e.key === "ArrowLeft") {
           e.preventDefault();
-          setFocusZone("left-info");
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setFocusZone("media-carousel");
-          setCarouselFocusIndex(carouselSelectedIndex);
+          setFocusZone("cards");
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          // Enter on preview toggles trailer play/pause
           const video = document.querySelector<HTMLVideoElement>(
             `[data-console-preview-video="${game?.appId}"]`
           );
           if (video && hasPlayableVideo) {
-            if (video.paused) {
-              video.play().catch(() => {});
-            } else {
-              video.pause();
-            }
+            if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
           }
+        } else if (e.key === "PageUp" || e.key === "PageDown") {
+          e.preventDefault();
+          seekVideo(e.key === "PageUp" ? -10 : 10);
         }
         break;
       }
-
-      /* ── media-carousel ── */
       case "media-carousel": {
         if (e.key === "ArrowLeft") {
           e.preventDefault();
-          const next = Math.max(0, carouselFocusIndex - 1);
-          setCarouselFocusIndex(next);
+          setCarouselFocusIndex((i) => {
+            const next = Math.max(0, i - 1);
+            setCarouselSelectedIndex(next);
+            return next;
+          });
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
-          const next = Math.min(mediaItems.length - 1, carouselFocusIndex + 1);
-          setCarouselFocusIndex(next);
+          setCarouselFocusIndex((i) => {
+            const next = Math.min(mediaItems.length - 1, i + 1);
+            setCarouselSelectedIndex(next);
+            return next;
+          });
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           setCarouselSelectedIndex(carouselFocusIndex);
@@ -603,79 +691,46 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           setFocusZone("media-preview");
         } else if (e.key === "ArrowDown") {
           e.preventDefault();
-          setFocusZone("info-cards");
-        } else if (e.key === "PageUp" || e.key === "q" || e.key === "Q") {
+          setFocusZone("hints");
+        } else if (e.key === "PageUp" || e.key === "PageDown") {
           e.preventDefault();
-          const next = Math.max(0, carouselFocusIndex - 5);
-          setCarouselFocusIndex(next);
-        } else if (e.key === "PageDown" || e.key === "e" || e.key === "E") {
-          e.preventDefault();
-          const next = Math.min(mediaItems.length - 1, carouselFocusIndex + 5);
-          setCarouselFocusIndex(next);
+          seekVideo(e.key === "PageUp" ? -10 : 10);
         }
         break;
       }
-
-      /* ── info-cards: ArrowLeft/Right switches achievements/reviews ── */
-      case "info-cards": {
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          setInfoCardSide("achievements");
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setInfoCardSide("reviews");
-        } else if (e.key === "ArrowUp") {
+      case "hints": {
+        if (e.key === "ArrowUp") {
           e.preventDefault();
           setFocusZone("media-carousel");
         } else if (e.key === "ArrowDown") {
           e.preventDefault();
-          setFocusZone("footer-actions");
-        }
-        break;
-      }
-
-      /* ── footer-actions ── */
-      case "footer-actions": {
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setFocusZone("info-cards");
-        } else if (e.key === "ArrowDown") {
-          e.preventDefault();
           setFocusZone("back-button");
-        } else if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          setFocusZone("left-info");
         }
         break;
       }
     }
-  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen, installModalOpen, onSearchOpen, handlePlay, leftActionSubIndex, activateFocusedLeftAction, actionModel, maxSubIndex]);
+  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen, installModalOpen, onSearchOpen, handlePlay, leftActionSubIndex, activateFocusedLeftAction, maxSubIndex, onNavigateRail, actionsBrowsingMedia, seekVideo]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleZoneKeyDown);
     return () => window.removeEventListener("keydown", handleZoneKeyDown);
   }, [handleZoneKeyDown]);
 
-  /* ── Sync carousel focus when selected changes ── */
   useEffect(() => {
     setCarouselFocusIndex(carouselSelectedIndex);
   }, [carouselSelectedIndex]);
 
-  /* ── Gamepad input: enabled while visible and no inner overlay active ── */
-  useConsoleGamepadInput(!optionsOpen && !installModalOpen && !gamepadDisabled && !quickMenuOpen);
+  useConsoleGamepadInput(!optionsOpen && !installModalOpen && !gamepadDisabled && !quickMenuOpen, { suppressHeldOnEnable: true });
 
-  /* ── Auto-focus left panel when entering left-info zone ── */
   useEffect(() => {
-    if (focusZone === "left-info" && leftPanelRef.current) {
-      leftPanelRef.current.focus({ preventScroll: false });
-    }
+    const el = document.querySelector(`[data-focus-zone="${focusZone}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [focusZone]);
 
   useEffect(() => {
-    if (DEBUG) {
+    if (DEBUG_CONSOLE_DETAILS_ACTION) {
       console.log(`[CONSOLE][DETAILS] mount appId=${game?.appId} title="${game?.title}"`);
     }
-    sheetRef.current?.focus();
   }, [game?.appId, game?.title]);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
@@ -684,23 +739,51 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   /* ── Derived data ── */
   const heroSrc = mediaBundle?.background?.url ?? getConsoleHeroBackground(game);
+  const { prevSrc, currentSrc: crossfadeSrc } = useCrossfadeSrc(heroSrc);
   const coverSrc = mediaBundle?.cover?.url ?? getConsoleCardSrc(game, "poster");
+  useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
+  const heroTransition = getHeroTransitionSnapshot().id;
+  const consoleHeroClass =
+    heroTransition === "kenburns"
+      ? "animate-hero-kenburns-in"
+      : heroTransition === "focus"
+        ? "animate-hero-focus-in"
+        : "animate-hero-crossfade-in";
+
+  useEffect(() => {
+    if (!crossfadeSrc) return;
+    setAmbientSource("console-details", crossfadeSrc);
+  }, [crossfadeSrc]);
+
+  useEffect(() => {
+    clearAmbientSource("console-details");
+  }, [game?.appId]);
+
+  useEffect(() => {
+    return () => clearAmbientSource("console-details");
+  }, []);
+
   const logoSrc = useMemo(() => {
     const raw = mediaBundle?.logo?.url ?? getConsoleLogoSrc(game);
-    if (!raw || !game.appId) return null;
-    const appIdMatch = raw.match(/steam\/apps\/(\d+)\//);
-    if (appIdMatch && appIdMatch[1] !== game.appId) {
-      if (DEBUG) console.log(`[LOGO_DISPLAY][REJECT] appid=${game.appId} path=${raw} reason=cross-app-steam-url urlAppid=${appIdMatch[1]}`);
-      return null;
+    if (!raw) return null;
+    if (game?.appId) {
+      const appIdMatch = raw.match(/steam\/apps\/(\d+)\//);
+      if (appIdMatch && appIdMatch[1] !== game.appId) {
+        if (DEBUG) console.log(`[LOGO_DISPLAY][REJECT] appid=${game.appId} path=${raw} reason=cross-app-steam-url urlAppid=${appIdMatch[1]}`);
+        return null;
+      }
     }
     return raw;
   }, [mediaBundle?.logo?.url, game]);
-  const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
 
-  const playtimeSeconds = useMemo(
-    () => (game?.appId ? getPlaytimeSecondsForAppId(game.appId) : 0),
-    [game],
-  );
+  const isFav = game ? favoriteIds.has(getFavoriteKey(game) ?? game.id) : false;
+
+  const playtimeSeconds = useMemo(() => {
+    if (!game) return 0;
+    const byAppId = game.appId ? getPlaytimeSecondsForAppId(game.appId) : 0;
+    if (byAppId > 0) return byAppId;
+    return getPlaytimeSecondsByGameKey(resolvePlaytimeKey(game));
+  }, [game]);
   const playtimeDisplay = useMemo(() => {
     const s = formatPlaytime(playtimeSeconds);
     return s ?? "< 1h";
@@ -716,8 +799,13 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     effectiveTotal,
     effectivePercent,
     isPerfected,
-    hasData: _hasAchievements,
   } = useConsoleAchievements(appIdStr);
+
+  const gameStatus = useMemo(() => {
+    if (isPerfected) return { label: "Completed", color: "text-emerald-400", Icon: CircleCheck };
+    if (playtimeSeconds > 0) return { label: "In Progress", color: "text-blue-400", Icon: Clock };
+    return { label: "Never Played", color: "text-white/40", Icon: CircleDashed };
+  }, [playtimeSeconds, isPerfected]);
 
   const releaseYear = useMemo(() => {
     if (!game?.metadata?.release_date) return null;
@@ -737,28 +825,13 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     }
     return deduped.length > 0 ? deduped : null;
   }, [game?.metadata]);
-  const description = game?.metadata?.short_description ?? null;
 
-  /* ══════════════════════════════════════════
-     SCROLLABLE LEFT PANEL — game info sections
-     ══════════════════════════════════════════ */
   const aboutTheGame = useMemo(() => {
     const raw = game?.metadata?.about_the_game || game?.metadata?.detailed_description;
     if (!raw) return null;
     const stripped = stripHtml(raw);
     if (stripped.length < 20) return null;
-    return stripped.length > 500 ? stripped.slice(0, 500) + "…" : stripped;
-  }, [game?.metadata]);
-
-  const categories = useMemo(() => {
-    const raw = game?.metadata?.categories ?? [];
-    const seen = new Set<string>();
-    const deduped: string[] = [];
-    for (const c of raw) {
-      if (!seen.has(c)) { seen.add(c); deduped.push(c); }
-      if (deduped.length >= 6) break;
-    }
-    return deduped.length > 0 ? deduped : null;
+    return stripped.length > 260 ? stripped.slice(0, 260) + "…" : stripped;
   }, [game?.metadata]);
 
   const languagesLabel = useMemo(() => {
@@ -771,25 +844,43 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const dlcCount = game?.metadata?.dlc_count ?? 0;
   const dlcLabel = dlcCount <= 0 ? null : dlcCount === 1 ? "1 DLC Available" : `${dlcCount} DLCs Available`;
 
-  const hasRequirements = !!(game?.metadata?.pc_requirements?.minimum || game?.metadata?.pc_requirements?.recommended);
-
-  /* ── Achievement mini rows (up to 2, compact) ── */
-  const achievementMiniRows = useMemo(() => {
-    const list = achievementsSummary?.achievements;
-    if (!list || list.length === 0) return null;
-    const sorted = [...list].sort((a, b) => (b.unlocked === a.unlocked ? 0 : b.unlocked ? 1 : -1));
-    return sorted.slice(0, 2);
-  }, [achievementsSummary]);
-
   const {
     reviewSummary,
     isLoading: reviewIsLoading,
-    hasData: _hasReviewData,
   } = useConsoleReviews(appIdStr);
 
   const reviewColors = reviewSummary
     ? (REVIEW_COLORS[reviewSummary.review_score_desc] ?? DEFAULT_REVIEW_COLOR)
     : DEFAULT_REVIEW_COLOR;
+
+  /* ── Custom hint labels ── */
+  const browseMediaHint = "[←/→] Browse media";
+  const seekHint = "[LT/RT] Seek video";
+  const playTrailerHint = useMemo(() => {
+    if (gamepadActive) {
+      const isPs = settings.inputHints === "playstation" || (settings.inputHints === "auto" && navigator.platform?.toLowerCase().includes("mac"));
+      return isPs ? "[✕] Play trailer" : "[A] Play trailer";
+    }
+    return "[Enter] Play trailer";
+  }, [gamepadActive, settings.inputHints]);
+
+  /* ── Hints dinámicos según zona ── */
+  const dynamicHints = useMemo(() => {
+    const all = hints;
+    if (focusZone === "actions" && actionsBrowsingMedia) {
+      return ["[←/→] Browse", playTrailerHint, all.navigate, all.back, seekHint];
+    } else if (focusZone === "actions") {
+      return [all.play, all.select, browseMediaHint, all.navigate, all.back, all.options];
+    } else if (focusZone === "media-preview" || focusZone === "media-carousel") {
+      return ["[←/→] Browse", all.select, all.back, all.navigate, seekHint];
+    } else if (focusZone === "cards") {
+      return [all.navigate, all.select, all.back];
+    } else if (focusZone === "hints") {
+      return [all.navigate, all.back];
+    } else {
+      return [all.play, all.select, browseMediaHint, all.navigate, all.back, all.options, all.search, all.profile];
+    }
+  }, [focusZone, actionsBrowsingMedia, hints, playTrailerHint]);
 
   /* ── Animation tokens ── */
   const enterDur = reducedMotion ? 120 : ENTER_DURATION;
@@ -806,8 +897,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     }
     const dur = phase === "exit" ? exitDur : enterDur;
     const easing = phase === "exit" ? EXIT_EASING : ENTER_EASING;
-    const translateY = phase === "exit" ? 60 : phase === "enter" ? 80 : 0;
-    const scale = phase === "exit" ? 0.99 : phase === "enter" ? 0.985 : 1;
+    const translateY = phase === "exit" ? 40 : phase === "enter" ? 56 : 0;
+    const scale = phase === "exit" ? 0.99 : phase === "enter" ? 0.99 : 1;
     return {
       transition: `transform ${dur}ms ${easing}, opacity ${dur}ms ${easing}`,
       transform: `translateY(${translateY}px) scale(${scale})`,
@@ -815,37 +906,33 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     };
   }, [phase, reducedMotion, enterDur, exitDur]);
 
-  /* ── Surface style ── */
   const isSolid = surfaceMode === "solid";
-  const isLiquidGlass = surfaceMode === "liquid-glass";
   const surfaceBg = isSolid
     ? "bg-(--color-surface)"
-    : isLiquidGlass
-      ? "bg-(--color-surface)/40 backdrop-blur-2xl"
-      : "bg-(--color-surface)/85 backdrop-blur-sm";
+    : "lf-surface";
 
   /* ══════════════════════════════════════════
-     FOCUS VISUALS — per-zone focus styling
+     FOCUS VISUALS — con efectos mejorados
      ══════════════════════════════════════════ */
   const zoneFocusClass = (zone: FocusZone): string => {
     if (focusZone !== zone) return "";
     switch (zone) {
       case "back-button":
-        return "ring-2 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/20 scale-[1.02] transition-all duration-150";
-      case "left-actions":
-        return "ring-2 ring-(--color-accent)/40 ring-inset shadow-lg shadow-(--color-accent)/10 transition-all duration-150";
-      case "left-info":
-        return "ring-2 ring-(--color-accent)/30 ring-inset shadow-lg shadow-(--color-accent)/8 transition-all duration-150";
+        return "ring-3 ring-(--color-accent)/70 shadow-[0_0_20px_rgba(var(--color-accent-rgb),0.3)] scale-[1.02] transition-all duration-200";
+      case "hero":
+        return "ring-3 ring-(--color-accent)/60 shadow-[0_0_25px_rgba(var(--color-accent-rgb),0.25)] transition-all duration-200";
+      case "actions":
+        return "ring-3 ring-(--color-accent)/50 ring-inset shadow-[0_0_20px_rgba(var(--color-accent-rgb),0.2)] rounded-xl transition-all duration-200";
       case "media-preview":
-        return "ring-2 ring-(--color-accent)/50 shadow-xl shadow-(--color-accent)/15 transition-all duration-150 scale-[1.005]";
+        return "ring-3 ring-(--color-accent)/60 shadow-[0_0_30px_rgba(var(--color-accent-rgb),0.25)] transition-all duration-200";
       case "media-carousel":
-        return "ring-2 ring-(--color-accent)/40 ring-inset shadow-lg shadow-(--color-accent)/10 rounded-xl transition-all duration-150";
-      case "info-cards":
-        return "ring-2 ring-(--color-accent)/30 ring-inset shadow-lg shadow-(--color-accent)/8 rounded-2xl transition-all duration-150";
-      case "footer-actions":
-        return "ring-2 ring-(--color-accent)/40 shadow-lg shadow-(--color-accent)/10 transition-all duration-150";
+        return "ring-3 ring-(--color-accent)/50 ring-inset shadow-[0_0_20px_rgba(var(--color-accent-rgb),0.2)] rounded-xl transition-all duration-200";
+      case "cards":
+        return "ring-3 ring-(--color-accent)/40 ring-inset shadow-[0_0_20px_rgba(var(--color-accent-rgb),0.15)] rounded-xl transition-all duration-200";
+      case "hints":
+        return "ring-3 ring-(--color-accent)/50 shadow-[0_0_20px_rgba(var(--color-accent-rgb),0.2)] transition-all duration-200";
       default:
-        return "ring-2 ring-(--color-accent)/40 transition-all duration-150";
+        return "ring-3 ring-(--color-accent)/50 transition-all duration-200";
     }
   };
 
@@ -868,7 +955,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg bg-(--color-accent) px-6 py-2.5 text-sm font-medium text-white transition hover:brightness-110"
+              className="rounded-lg bg-(--color-accent) px-6 py-2.5 text-sm font-medium text-(--color-accent-text) transition hover:brightness-110"
             >
               Go Back
             </button>
@@ -884,38 +971,70 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       onClick={handleBackdropClick}
       style={overlayStyle}
     >
-      {/* ── Background hero ── */}
+      {/* ── Background hero with crossfade ── */}
       <div className="absolute inset-0 overflow-hidden">
-        {heroSrc ? (
+        {prevSrc && (
           <img
-            key={game.appId}
-            src={heroSrc}
+            key={`prev-${prevSrc}`}
+            src={prevSrc}
             alt=""
-            className="h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-cover animate-hero-media-out"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        )}
+        {crossfadeSrc ? (
+          <img
+            key={`current-${crossfadeSrc}`}
+            src={crossfadeSrc}
+            alt=""
+            className={`h-full w-full object-cover transition-[transform,filter] duration-300 ease-out ${consoleHeroClass} ${heroZoomClass}`}
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
         ) : (
-          <div className="h-full w-full bg-(--color-bg)" />
+          <div className="h-full w-full bg-(--console-bg)" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
+        {/* Subtle overall dim — pushes hero art back visually */}
+        <div className="absolute inset-0 bg-black/20" />
+        {/* Vignette — cinema spotlight effect, edges darken */}
+        <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.55) 100%)" }} />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-black/10" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-transparent to-transparent" />
       </div>
 
-      <div className="pointer-events-none absolute inset-0 z-[5] bg-black/30" />
-
-      {/* ── Back button (zone: back-button) ── */}
-      <div className="pointer-events-none absolute left-4 top-3 z-30">
+      {/* ── Top bar: Back + counter only ── */}
+      <div className="pointer-events-none absolute left-5 top-4 z-30 flex items-center gap-1.5">
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); handleClose(); }}
           onFocus={() => setFocusZone("back-button")}
-          className={`pointer-events-auto inline-flex items-center gap-1.5 rounded-lg bg-black/30 px-3 py-1.5 text-xs font-medium text-white/70 backdrop-blur-sm transition hover:bg-(--color-accent)/80 hover:text-white outline-none ${zoneFocusClass("back-button")}`}
+          className={`pointer-events-auto inline-flex items-center gap-1.5 rounded-lg bg-black/55 px-3 py-1.5 text-xs font-medium text-white/90 shadow-md shadow-black/30 ring-1 ring-white/10 backdrop-blur-md transition hover:bg-(--color-accent)/80 hover:text-white outline-none ${zoneFocusClass("back-button")}`}
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back
+          {gamepadActive ? (
+            <>
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-white/15 text-[9px] font-bold leading-none">{hints.back.startsWith("[") ? hints.back.split("]")[0].slice(1) : "B"}</span>
+              Back
+            </>
+          ) : (
+            <><ArrowLeft className="h-3.5 w-3.5" /> Back</>
+          )}
         </button>
+        {onNavigateRail && railGames && railIndex != null && railGames.length > 1 && (
+          <span className="inline-flex items-center rounded-md bg-black/55 px-2 py-1 text-[10px] font-bold tabular-nums text-white/70 shadow-md shadow-black/30 ring-1 ring-white/10 backdrop-blur-md">
+            {railIndex + 1} / {railGames.length}
+          </span>
+        )}
       </div>
 
-      {/* ── Bottom sheet ── */}
+      {/* ── Media page counter ── */}
+      {mediaItems.length > 0 && (
+        <div className="pointer-events-none absolute right-5 top-4 z-30">
+          <span className="rounded-md bg-black/55 px-2.5 py-1 text-xs font-bold tabular-nums text-white/90 shadow-md shadow-black/30 ring-1 ring-white/10 backdrop-blur-md">
+            {carouselSelectedIndex + 1}
+          </span>
+        </div>
+      )}
+
+      {/* ── Content ── */}
       <div
         ref={sheetRef}
         tabIndex={-1}
@@ -923,373 +1042,269 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         aria-modal="true"
         aria-label={game.title}
         onClick={(e) => e.stopPropagation()}
-        className="absolute z-10 overflow-hidden rounded-[32px] border border-(--color-border)/30 shadow-2xl shadow-black/50 outline-none"
-        style={{
-          left: "clamp(48px, 5vw, 96px)",
-          right: "clamp(48px, 5vw, 96px)",
-          bottom: "clamp(36px, 5vh, 72px)",
-          height: "clamp(560px, 68vh, 820px)",
-          ...sheetStyle,
-        }}
+        className="absolute inset-0 z-10 flex flex-col outline-none"
+        style={sheetStyle}
       >
-        <div className={`${surfaceBg} absolute inset-0`} />
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+        {/* ═══ Logo / Title ═══ */}
+        <div
+          data-focus-zone="hero"
+          tabIndex={-1}
+          onFocus={() => setFocusZone("hero")}
+          className={`mx-auto mt-8 w-full max-w-[min(1800px,90vw)] cursor-pointer rounded-xl px-[clamp(24px,4vw,64px)] py-1 outline-none md:mt-12 ${zoneFocusClass("hero")}`}
+        >
+          {logoSrc ? (
+            <img
+              src={logoSrc}
+              alt={game.title}
+              className="max-h-[clamp(100px,10vw,160px)] w-auto object-contain drop-shadow-[0_8px_30px_rgba(0,0,0,0.8)]"
+            />
+          ) : (
+            <h1 className="flex h-[clamp(80px,10vw,140px)] items-center text-4xl font-black leading-tight text-white drop-shadow-2xl lg:text-5xl">{game.title}</h1>
+          )}
+        </div>
 
-        {/* ── Content ── */}
-        <div className="relative z-10 flex h-full w-full gap-5 p-6">
-          {/* ════════════════════════════════════════
-             LEFT COLUMN — Mini card + actions + scrollable info
-             ════════════════════════════════════════ */}
-          <div className="relative w-[35%] shrink-0 flex flex-col">
-            {/* ── Compact identity + actions + stats (zone: left-actions) ── */}
-            <div
-              tabIndex={-1}
-              onFocus={() => { setFocusZone("left-actions"); setLeftActionSubIndex(0); }}
-              className={`shrink-0 space-y-2.5 rounded-2xl px-3 pt-3 pb-2 outline-none ${zoneFocusClass("left-actions")}`}
-            >
-              {/* Mini card row: 120px cover + inline title/dev/badges */}
-              <div className="flex gap-3">
-                <div className="w-[120px] shrink-0 overflow-hidden rounded-2xl bg-(--color-surface)/60 shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
-                  {coverSrc ? (
-                    <img
-                      key={game.appId}
-                      src={coverSrc}
-                      alt={game.title}
-                      className="w-full object-cover"
-                      style={{ aspectRatio: "2/3" }}
-                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                    />
-                  ) : (
-                    <div
-                      className="flex w-full items-center justify-center bg-(--color-surface)/40"
-                      style={{ aspectRatio: "2/3" }}
-                    >
-                      <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />
-                    </div>
-                  )}
-                </div>
+        <div className="flex-1 lg:max-h-[220px]" />
 
-                <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5">
-                  {logoSrc ? (
-                    <img
-                      src={logoSrc}
-                      alt={game.title}
-                      className="max-h-[28px] max-w-[180px] object-contain"
-                    />
-                  ) : (
-                    <h2 className="text-sm font-bold leading-tight text-(--color-text)">
-                      {game.title}
-                    </h2>
-                  )}
-                  {releaseYear && (
-                    <p className="text-[11px] text-(--color-muted)">{releaseYear}</p>
-                  )}
-                  {developer && (
-                    <p className="truncate text-[11px] text-(--color-muted)" title={developer}>
-                      {developer}
-                    </p>
-                  )}
-                  {publisher && !developer && (
-                    <p className="truncate text-[11px] text-(--color-muted)" title={publisher}>
-                      {publisher}
-                    </p>
-                  )}
+        {/* ═══ Two-column panel ═══ */}
+        <div className="mx-auto mb-6 flex w-full max-w-[min(1800px,90vw)] flex-col gap-4 px-[clamp(24px,4vw,64px)] md:mb-10 lg:flex-row lg:items-stretch lg:gap-6 lg:mb-[clamp(24px,4vh,56px)]">
 
-                  {/* Badges */}
-                  <div className="flex flex-wrap gap-1">
-                    {game.steamInstalled && (
-                      <span className="rounded-md bg-emerald-500/80 px-1.5 py-0.5 text-[10px] font-medium text-black">
-                        Installed
-                      </span>
-                    )}
-                    {game.isLuaActive && (
-                      <span className="rounded-md bg-violet-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                        Lua
-                      </span>
-                    )}
-                    {isFav && (
-                      <span className="rounded-md bg-rose-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                        Favorite
-                      </span>
-                    )}
+          {/* ── LEFT: info card mejorada ── */}
+          <div className={`${surfaceBg} flex w-full flex-col rounded-2xl p-5 shadow-2xl shadow-black/60 ring-1 ring-white/[0.08] backdrop-blur-md lg:w-[clamp(420px,28vw,600px)] lg:shrink-0 lg:p-[clamp(20px,2vw,32px)]`}>
+            {/* Header row: cover + title/meta */}
+            <div className="flex items-start gap-3 lg:gap-5">
+              <div className="relative h-[clamp(80px,10vw,160px)] w-[clamp(70px,8vw,120px)] shrink-0 overflow-hidden rounded-2xl bg-black/10 ring-1 ring-white/10">
+                {coverSrc ? (
+                  <img src={coverSrc} alt="" className="absolute inset-0 h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                ) : (
+                  <div className="flex h-full w-[100px] items-center justify-center bg-white/5">
+                    <Gamepad2 className="h-8 w-8 text-white/20 lg:h-10 lg:w-10" />
                   </div>
+                )}
+                {/* Badge IN-GAME */}
+                {isRunning && (
+                  <span className="absolute -right-1 -top-1 flex h-3 w-3">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500"></span>
+                  </span>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="truncate text-sm font-bold text-(--color-text) lg:text-lg">{game.title}</h2>
+                <p className="mt-0.5 truncate text-[11px] text-(--color-muted)/70 lg:text-[12px]">
+                  {[releaseYear, developer].filter(Boolean).join("  ·  ")}
+                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-(--color-muted)/60 lg:text-[11px]">
+                  <span className="inline-flex items-center gap-1"><HardDrive className="h-3 w-3" />{getGameDiskSize(game)}</span>
+                  {game.steamInstalled && <span className="rounded bg-emerald-500/80 px-1.5 py-0.5 font-semibold text-black">Installed</span>}
+                  {game.isLuaActive && <span className="rounded bg-violet-500/80 px-1.5 py-0.5 font-semibold text-white">Lua</span>}
+                  {game.source === "debrid" && game.repacker && (
+                    <span className="rounded bg-cyan-500/80 px-1.5 py-0.5 font-semibold text-black">{game.repacker.toUpperCase()}</span>
+                  )}
                 </div>
               </div>
+            </div>
 
-              {/* Action row — large buttons */}
-              <div className="flex items-center gap-2.5">
-                {isRunning ? (
-                  <>
+            {/* Rating + genres (zone: cards) */}
+            <div
+              data-focus-zone="cards"
+              tabIndex={-1}
+              onFocus={() => setFocusZone("cards")}
+              onClick={() => setFocusZone("cards")}
+              className={`mt-3 flex flex-wrap items-center gap-1.5 rounded-lg p-1 outline-none ${zoneFocusClass("cards")}`}
+            >
+              {reviewSummary && reviewSummary.resolved && reviewSummary.total_reviews > 0 && (
+                <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold ${reviewColors.bg} ${reviewColors.text}`}>
+                  <Star className="h-3 w-3 fill-current" />
+                  {reviewSummary.positive_percent != null ? `${Math.round(reviewSummary.positive_percent)}%` : reviewSummary.review_score_desc}
+                </span>
+              )}
+              {!reviewSummary && reviewIsLoading && (
+                <span className="text-[10px] text-(--color-muted)/50">Loading reviews…</span>
+              )}
+              {genres?.map((g) => (
+                <span key={g} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-(--color-muted) ring-1 ring-white/10 lg:text-[11px]">{g}</span>
+              ))}
+            </div>
+
+            {/* Stats: Time Played / Last Played / Status */}
+            <div className="mt-2 grid grid-cols-2 gap-1.5 lg:grid-cols-3">
+              <div className="rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Time Played</span>
+                <span className="block truncate text-[12px] font-semibold text-white/85 lg:text-[13px]">{playtimeDisplay}</span>
+              </div>
+              <div className="rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Last Played</span>
+                <span className="block truncate text-[12px] font-semibold text-white/85 lg:text-[13px]">{lastPlayedStr}</span>
+              </div>
+              <div className="col-span-2 rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06] lg:col-span-1">
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Status</span>
+                <span className={`inline-flex items-center gap-1 text-[12px] font-semibold lg:text-[13px] ${gameStatus.color}`}>
+                  <gameStatus.Icon className="h-3 w-3" />
+                  {gameStatus.label}
+                </span>
+              </div>
+            </div>
+
+            {/* Achievements bar y lista reciente */}
+            {achievementsSummary && effectiveTotal > 0 && (
+              <div className="mt-2 rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-white/60 lg:text-[11px]">
+                    <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
+                    Achievements
+                  </span>
+                  <span className="text-[10px] font-semibold tabular-nums text-white/70 lg:text-[11px]">
+                    {effectiveUnlocked}/{effectiveTotal} ({effectivePercent}%)
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${isPerfected ? "bg-gradient-to-r from-amber-400 to-yellow-300" : "bg-(--color-accent)"}`}
+                    style={{ width: `${effectivePercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Actions row mejorada */}
+            <div
+              data-focus-zone="actions"
+              onFocus={() => { setFocusZone("actions"); setLeftActionSubIndex(0); }}
+              className={`mt-3 rounded-xl p-1 outline-none ${zoneFocusClass("actions")}`}
+            >
+              {isRunning ? (
+                <div className="flex flex-col gap-1.5">
+                  {/* Stop — subIndex 0 */}
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    className={`w-full rounded-xl bg-red-500 py-3 text-sm font-bold text-white shadow-lg transition hover:brightness-110 ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === 0 ? "scale-[1.02] ring-2 ring-(--color-accent) ring-offset-2" : ""}`}
+                  >
+                    <Square className="mr-2 inline h-4 w-4 fill-current" /> Stop
+                  </button>
+                  {/* Return — subIndex 1 */}
+                  {gameSession?.pid != null && (
                     <button
                       type="button"
-                      onClick={() => { handleStop(); }}
-                      tabIndex={0}
-                      onFocus={() => setLeftActionSubIndex(0)}
-                      className={`inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 ${
-                        focusZone === "left-actions" && leftActionSubIndex === 0
-                          ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
-                          : ""
-                      }`}
+                      onClick={handleReturn}
+                      className={`w-full rounded-xl border border-white/20 py-3 text-sm font-medium text-white transition hover:bg-white/10 ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === 1 ? "scale-[1.02] ring-2 ring-(--color-accent) ring-offset-2" : ""}`}
                     >
-                      <Square className="h-4 w-4 fill-current" />
-                      Stop
+                      <Play className="mr-2 inline h-4 w-4" /> Return
                     </button>
-                    {gameSession?.pid != null && (
-                      <button
-                        type="button"
-                        onClick={() => { handleReturn(); }}
-                        tabIndex={0}
-                        onFocus={() => setLeftActionSubIndex(1)}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40 ${
-                          focusZone === "left-actions" && leftActionSubIndex === 1
-                            ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
-                            : "border-(--color-border)/60"
-                        }`}
-                        title="Return to game"
-                      >
-                        <Play className="h-4 w-4" />
-                        Return
-                      </button>
-                    )}
-                  </>
-                ) : isLaunching ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
-                  >
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Launching…
-                  </button>
-                ) : isStopping ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/60 px-5 py-2.5 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
-                  >
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Stopping…
-                  </button>
-                ) : actionInFlight ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/70 px-5 py-2.5 text-sm font-semibold text-white shadow-lg opacity-60 cursor-not-allowed"
-                  >
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    {actionModel?.label ?? "Play"}…
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (DEBUG_CONSOLE_DETAILS_ACTION) {
-                        console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
-                      }
-                      handlePrimaryAction();
-                    }}
-                    disabled={!actionModel?.enabled}
-                    tabIndex={0}
-                    onFocus={() => setLeftActionSubIndex(0)}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition ${
-                      actionModel?.enabled === false
-                        ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed"
-                        : "bg-(--color-accent) shadow-lg shadow-(--color-accent)/25 hover:brightness-110"
-                    } ${
-                      focusZone === "left-actions" && leftActionSubIndex === 0
-                        ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
-                        : ""
-                    }`}
-                  >
-                    <ActionIcon action={actionModel?.action ?? "unavailable"} />
-                    {actionModel?.label ?? "Play"}
-                  </button>
-                )}
+                  )}
+                </div>
+              ) : isLaunching ? (
+                <button type="button" disabled className="w-full rounded-xl bg-(--color-accent) py-3 text-sm font-bold text-(--color-accent-text) shadow-xl shadow-(--color-accent)/25 opacity-50 cursor-not-allowed">
+                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Launching…
+                </button>
+              ) : isStopping ? (
+                <button type="button" disabled className="w-full rounded-xl bg-red-500/60 py-3 text-sm font-bold text-white opacity-50 cursor-not-allowed">
+                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Stopping…
+                </button>
+              ) : actionInFlight ? (
+                <button type="button" disabled className="w-full rounded-xl bg-(--color-accent)/70 py-3 text-sm font-bold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed">
+                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {actionModel?.label ?? "Play"}…
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handlePrimaryAction}
+                  onMouseEnter={() => setPlayHovered(true)}
+                  onMouseLeave={() => setPlayHovered(false)}
+                  disabled={!actionModel?.enabled}
+                  className={`w-full rounded-xl py-3 text-sm font-bold transition-all duration-150 ${
+                    actionModel?.enabled === false
+                      ? "bg-white/20 text-white opacity-50 cursor-not-allowed shadow-none"
+                      : "bg-(--color-accent) text-(--color-accent-text) shadow-lg shadow-(--color-accent)/30 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(var(--color-accent-rgb,59,130,246),0.4)] hover:brightness-110 active:scale-[0.98]"
+                  } ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === 0 ? "scale-[1.02] ring-2 ring-(--color-accent) ring-offset-2" : ""}`}
+                >
+                  <ActionIcon action={actionModel?.action ?? "unavailable"} className="mr-2 inline h-4 w-4" />
+                  {actionModel?.label ?? "Play"}
+                </button>
+              )}
+              {/* Botones secundarios: Options + Mute + Favorites */}
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOptionsOpen(true)}
+                  className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 transition-all duration-150 ${
+                    focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === (isRunning ? 2 : 1)
+                      ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40 text-white"
+                      : "border-white/20 text-white/60 hover:bg-white/10"
+                  }`}
+                  title="More options"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleVideoMute}
+                  className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 transition-all duration-150 ${
+                    focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === (isRunning ? 3 : 2)
+                      ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40 text-white"
+                      : "border-white/20 text-white/60 hover:bg-white/10"
+                  }`}
+                  title={muted ? "Unmute video" : "Mute video"}
+                >
+                  {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </button>
                 <button
                   type="button"
                   onClick={handleFavoriteToggle}
-                  tabIndex={0}
-                  onFocus={() => setLeftActionSubIndex(hasReturn ? 2 : 1)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition hover:bg-(--color-surface)/40 ${
-                    isFav ? "text-rose-400" : "text-(--color-muted)"
-                  } ${
-                    focusZone === "left-actions" && ((hasReturn && leftActionSubIndex === 2) || (!hasReturn && leftActionSubIndex === 1))
-                      ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
-                      : "border-(--color-border)/60"
-                  }`}
+                  className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs transition-all duration-150 ${
+                    isFav ? "text-rose-400" : "text-white/60"
+                  } ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === (isRunning ? 4 : 3) ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40" : "border-white/20 hover:bg-white/10"}`}
                   title={isFav ? "Remove from Favorites" : "Add to Favorites"}
                 >
                   <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
                 </button>
               </div>
-
-              {/* Compact horizontal stats row */}
-              <div className="flex gap-1.5">
-                {[
-                  { icon: Clock, label: "Played", value: playtimeDisplay },
-                  { icon: Clock, label: "Last", value: lastPlayedStr },
-                  { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
-                  {
-                    icon: CheckCircle2,
-                    label: "Status",
-                    value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
-                  },
-                ].map(({ icon: Icon, label, value }) => (
-                  <div
-                    key={label}
-                    className="flex flex-1 items-center gap-1.5 rounded-xl bg-(--color-surface)/40 px-2.5 py-1.5 ring-1 ring-white/[0.04]"
-                  >
-                    <Icon className="h-3 w-3 shrink-0 text-(--color-muted)" />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[9px] font-medium uppercase tracking-wider text-(--color-muted)/60 block">{label}</span>
-                      <span className="text-[11px] font-semibold text-(--color-text) block truncate">{value}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
 
-            {/* ── Scrollable info section (zone: left-info) ── */}
-            <div
-              ref={leftPanelRef}
-              tabIndex={-1}
-              onFocus={() => setFocusZone("left-info")}
-              data-focused={focusZone === "left-info" ? "true" : undefined}
-              className={`relative mt-2 flex-1 overflow-y-auto rounded-2xl bg-(--color-surface)/10 scrollbar-thin scrollbar-thumb-(--color-border)/20 outline-none ${zoneFocusClass("left-info")}`}
-            >
-              {/* Top fade edge */}
-              <div className="pointer-events-none sticky top-0 z-10 h-6 bg-gradient-to-b from-(--color-surface)/40 to-transparent" />
-
-              <div className="space-y-3.5 px-3 pb-6">
-                {/* About the Game */}
-                {settings.spotlightContent.showAboutGame && aboutTheGame && (
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted) mb-1.5">
-                      About the Game
-                    </h3>
-                    <p className="text-xs leading-relaxed text-(--color-muted)/90">
-                      {aboutTheGame}
-                    </p>
-                  </div>
+            {/* About + secondary metadata con scroll container */}
+            <div className="mt-3 flex flex-1 flex-col">
+              <div
+                data-scroll-container
+                className="max-h-[120px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent pr-1 lg:max-h-[160px]"
+              >
+                {aboutTheGame && (
+                  <p className="text-[11px] leading-relaxed text-(--color-muted)/75 lg:text-[12px]">{aboutTheGame}</p>
                 )}
-
-                {/* Short Description (if distinct from About) */}
-                {description && (!aboutTheGame || !aboutTheGame.startsWith(stripHtml(description).slice(0, 60))) && (
-                  <p className="text-xs leading-relaxed text-(--color-muted)/70 italic">
-                    {description}
-                  </p>
-                )}
-
-                {settings.spotlightContent.showMetadata && (<>
-                  {/* Developer / Publisher / Release Date */}
-                  <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                    {developer && (
-                      <div>
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Developer</span>
-                        <p className="text-xs text-(--color-text)">{developer}</p>
-                      </div>
-                    )}
-                    {publisher && publisher !== developer && (
-                      <div>
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Publisher</span>
-                        <p className="text-xs text-(--color-text)">{publisher}</p>
-                      </div>
-                    )}
-                    {game?.metadata?.release_date && (
-                      <div>
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Released</span>
-                        <p className="text-xs text-(--color-text)">{game.metadata.release_date}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Genres */}
-                  {genres && genres.length > 0 && (
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Genres</span>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        {genres.map((g) => (
-                          <span key={g} className="rounded-lg bg-(--color-surface)/60 px-2 py-0.5 text-[11px] font-medium text-(--color-muted) ring-1 ring-(--color-border)/30">
-                            {g}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Features / Categories */}
-                  {categories && categories.length > 0 && (
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Features</span>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        {categories.map((cat) => (
-                          <span key={cat} className="rounded-lg bg-(--color-surface)/40 px-2 py-0.5 text-[10px] text-(--color-muted)/80 ring-1 ring-(--color-border)/20">
-                            {cat}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Languages */}
-                  {languagesLabel && (
-                    <div className="flex items-start gap-2">
-                      <Languages className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
-                      <div>
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Languages</span>
-                        <p className="text-xs text-(--color-muted)/80">{languagesLabel}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* DLC */}
-                  {dlcLabel && (
-                    <div className="flex items-start gap-2">
-                      <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
-                      <div>
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">DLC</span>
-                        <p className="text-xs text-(--color-muted)/80">{dlcLabel}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Requirements */}
-                  {hasRequirements && (
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Requirements</span>
-                      <p className="mt-0.5 text-xs text-(--color-muted)/70">
-                        {game.metadata?.pc_requirements?.minimum ? "Minimum specs available" : "Recommended specs available"}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Platforms */}
-                  {game.metadata?.platforms && game.metadata.platforms.length > 0 && (
-                    <div className="flex gap-1.5">
-                      {game.metadata.platforms.map((p) => (
-                        <span key={p} className="rounded-md bg-(--color-surface)/40 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)/60 ring-1 ring-(--color-border)/20">
-                          {p}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </>)}
               </div>
 
-              {/* Bottom fade */}
-              <div className="pointer-events-none sticky bottom-0 z-10 h-6 bg-gradient-to-t from-(--color-surface)/40 to-transparent" />
+              {(languagesLabel || dlcLabel || (publisher && publisher !== developer)) && (
+                <div className="mt-auto space-y-1 border-t border-white/[0.06] pt-2 text-[10px] text-(--color-muted)/60 lg:text-[11px]">
+                  {publisher && publisher !== developer && (
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="uppercase tracking-wider text-white/35">Pub</span>
+                      <span className="truncate text-right">{publisher}</span>
+                    </div>
+                  )}
+                  {languagesLabel && (
+                    <div className="flex items-start gap-1.5">
+                      <Languages className="mt-0.5 h-3 w-3 shrink-0 text-white/35" />
+                      <span className="truncate">{languagesLabel}</span>
+                    </div>
+                  )}
+                  {dlcLabel && (
+                    <div className="flex items-start gap-1.5">
+                      <Layers className="mt-0.5 h-3 w-3 shrink-0 text-white/35" />
+                      <span>{dlcLabel}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* ════════════════════════════════════════
-             RIGHT COLUMN — Media Frame → Carousel → Info Cards → Hints
-             ════════════════════════════════════════ */}
-          <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {/* ── Media Player Frame (zone: media-preview) ── */}
+          {/* ── RIGHT: media preview + carousel ── */}
+          <div className="flex min-w-0 flex-1 flex-col gap-3">
             <div
-              className={`relative w-full overflow-hidden rounded-2xl bg-black/50 shadow-xl shadow-black/30 ring-1 ring-white/[0.06] outline-none ${zoneFocusClass("media-preview")}`}
-              style={{ aspectRatio: "16/9", maxHeight: "clamp(200px, 32vh, 400px)" }}
+              className={`relative aspect-video w-full overflow-hidden rounded-2xl ${surfaceBg} ring-1 ring-white/[0.08] shadow-2xl shadow-black/50 outline-none ${zoneFocusClass("media-preview")}`}
+              data-focus-zone="media-preview"
               onClick={() => setFocusZone("media-preview")}
+              onMouseEnter={() => setPreviewHovered(true)}
+              onMouseLeave={() => setPreviewHovered(false)}
               tabIndex={-1}
               onFocus={() => setFocusZone("media-preview")}
             >
@@ -1301,14 +1316,15 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 screenshotOverrideUrl={screenshotOverrideUrl}
                 mode={playerMode}
                 autoplay
+                showVideo={previewHovered || actionsBrowsingMedia || isRunning}
                 mediaIdentityKey={mediaIdentityKey}
               />
             </div>
 
-            {/* ── Media Carousel (zone: media-carousel) ── */}
             {settings.spotlightContent.showScreenshots && mediaItems.length > 0 && (
               <div
                 className={`rounded-xl outline-none ${zoneFocusClass("media-carousel")}`}
+                data-focus-zone="media-carousel"
                 onClick={() => { setFocusZone("media-carousel"); setCarouselFocusIndex(carouselSelectedIndex); }}
                 tabIndex={-1}
                 onFocus={() => setFocusZone("media-carousel")}
@@ -1321,178 +1337,50 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 />
               </div>
             )}
-
-            {/* ── Two-column row: Achievements | Reviews (zone: info-cards) ── */}
-            {(
-              settings.spotlightContent.showAchievements ||
-              settings.spotlightContent.showReviews
-            ) && (
-              <div
-                className={`grid gap-3 rounded-2xl p-0.5 outline-none ${
-                  settings.spotlightContent.showAchievements && settings.spotlightContent.showReviews
-                    ? "grid-cols-2"
-                    : "grid-cols-1"
-                } ${zoneFocusClass("info-cards")}`}
-                onClick={() => setFocusZone("info-cards")}
-                tabIndex={-1}
-                onFocus={() => setFocusZone("info-cards")}
-              >
-              {/* ═══ Achievements Card ═══ */}
-              {settings.spotlightContent.showAchievements && (
-              <div className={`rounded-2xl bg-(--color-surface)/40 ring-1 ring-white/[0.04] transition-all duration-150 ${
-                focusZone === "info-cards" && infoCardSide === "achievements"
-                  ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
-                  : ""
-              }`}>
-                {achievementsSummary && effectiveTotal > 0 ? (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <Trophy
-                          className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : "text-(--color-muted)"}`}
-                        />
-                        <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
-                      </div>
-                      <span className={`text-xs font-semibold tabular-nums ${
-                        isPerfected ? "text-amber-400" : "text-(--color-text)"
-                      }`}>
-                        {effectivePercent}%
-                      </span>
-                    </div>
-
-                    <div className="mt-2 flex items-center gap-2">
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isPerfected
-                              ? "bg-gradient-to-r from-amber-400 to-yellow-300"
-                              : "bg-(--color-accent)"
-                          }`}
-                          style={{
-                            width: `${effectivePercent}%`,
-                            boxShadow: isPerfected ? "0 0 8px rgba(251,191,36,0.35)" : undefined,
-                          }}
-                        />
-                      </div>
-                      <span className={`whitespace-nowrap text-[11px] tabular-nums ${
-                        isPerfected ? "font-semibold text-amber-400" : "font-medium text-(--color-muted)"
-                      }`}>
-                        {effectiveUnlocked}/{effectiveTotal}
-                      </span>
-                    </div>
-
-                    {achievementMiniRows && !isPerfected && (
-                      <div className="mt-2 space-y-1 border-t border-(--color-border)/10 pt-2">
-                        {achievementMiniRows.map((ach, i) => (
-                          <div key={ach.apiName ?? i} className="flex items-center gap-2">
-                            <div className={`h-4 w-4 shrink-0 rounded-full ${ach.unlocked ? "bg-(--color-accent)/20" : "bg-white/5"}`}>
-                            {ach.iconUrl ? (
-                              <img src={ach.iconUrl} alt="" className="h-full w-full rounded-full object-cover" />
-                              ) : (
-                                <div className={`flex h-full w-full items-center justify-center rounded-full text-[8px] font-bold ${
-                                  ach.unlocked ? "text-(--color-accent)" : "text-white/20"
-                                }`}>
-                                  {ach.unlocked ? "✓" : "?"}
-                                </div>
-                              )}
-                            </div>
-                            <span className="min-w-0 flex-1 truncate text-[10px] text-(--color-muted)">
-                              {ach.name ?? `Achievement ${i + 1}`}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {isPerfected && (
-                      <div className="mt-2 flex items-center justify-center gap-1 rounded-lg bg-amber-500/10 py-1">
-                        <Trophy className="h-3 w-3 fill-amber-400 text-amber-400" />
-                        <span className="text-[10px] font-semibold text-amber-400">All unlocked</span>
-                      </div>
-                    )}
-                  </div>
-                ) : achievementsSummary && achievementsSummary.achievements.length > 0 ? (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Trophy className="h-3.5 w-3.5 text-(--color-muted)" />
-                      <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-(--color-muted)">Progress unavailable</p>
-                  </div>
-                ) : (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Trophy className="h-3.5 w-3.5 text-(--color-muted)" />
-                      <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-(--color-muted)">No data</p>
-                  </div>
-                )}
-              </div>
-              )}
-
-              {/* ═══ Reviews Card ═══ */}
-              {settings.spotlightContent.showReviews && (
-              <div className={`rounded-2xl ${reviewColors.bg} ${reviewColors.border} ring-1 ring-inset transition-all duration-150 ${
-                focusZone === "info-cards" && infoCardSide === "reviews"
-                  ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
-                  : ""
-              }`}>
-                {reviewSummary && reviewSummary.resolved && reviewSummary.total_reviews > 0 ? (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Star className={`h-3.5 w-3.5 ${reviewColors.text}`} />
-                      <span className="text-xs font-semibold text-(--color-text)">Reviews</span>
-                    </div>
-
-                    <p className={`mt-1.5 text-sm font-bold ${reviewColors.text}`}>
-                      {reviewSummary.review_score_desc}
-                    </p>
-
-                    <p className="mt-0.5 text-[11px] font-medium text-(--color-muted)">
-                      {reviewSummary.positive_percent != null
-                        ? `${Math.round(reviewSummary.positive_percent)}% positive`
-                        : `${reviewSummary.total_positive.toLocaleString()} positive`}
-                    </p>
-
-                    <p className="mt-0.5 text-[10px] text-(--color-muted)/60">
-                      {reviewSummary.total_reviews.toLocaleString()} reviews
-                    </p>
-                  </div>
-                ) : (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Star className="h-3.5 w-3.5 text-(--color-muted)" />
-                      <span className="text-xs font-semibold text-(--color-text)">Reviews</span>
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-(--color-muted)">
-                      {reviewIsLoading ? "Loading review data…" : "No review data"}
-                    </p>
-                  </div>
-                )}
-              </div>
-              )}
-            </div>
-            )}
-
-            {/* ── Action hints (zone: footer-actions) ── */}
-            <div
-              className={`mt-auto flex justify-end gap-x-4 gap-y-1 rounded-xl px-3 py-2 outline-none ${zoneFocusClass("footer-actions")}`}
-              onClick={() => setFocusZone("footer-actions")}
-              tabIndex={-1}
-              onFocus={() => setFocusZone("footer-actions")}
-            >
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.play}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.select}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.back}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.navigate}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.media}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.options}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.search}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.profile}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.page}</HintLabel>
-            </div>
           </div>
+        </div>
+
+        {/* ═══ Side navigation arrows ═══ */}
+        {onNavigateRail && railGames && railGames.length > 1 && (
+          <>
+            {/* Left arrow — prev game (hidden at first) */}
+            {railIndex != null && railIndex > 0 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onNavigateRail("prev"); }}
+                className="pointer-events-auto absolute left-[clamp(8px,2vw,28px)] top-1/2 z-20 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-black/55 px-2 py-3 text-white/80 shadow-xl shadow-black/40 ring-1 ring-white/10 backdrop-blur-md transition-all duration-200 hover:bg-(--color-accent)/80 hover:text-white hover:shadow-(--color-accent)/30 hover:ring-(--color-accent)/40"
+                title="Previous game"
+              >
+                <ChevronLeft className="h-5 w-5" />
+                {gamepadActive && <span className="text-[8px] font-bold tracking-wider text-white/50">LB</span>}
+              </button>
+            )}
+            {/* Right arrow — next game (hidden at last) */}
+            {railIndex != null && railIndex < railGames.length - 1 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onNavigateRail("next"); }}
+                className="pointer-events-auto absolute right-[clamp(8px,2vw,28px)] top-1/2 z-20 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-black/55 px-2 py-3 text-white/80 shadow-xl shadow-black/40 ring-1 ring-white/10 backdrop-blur-md transition-all duration-200 hover:bg-(--color-accent)/80 hover:text-white hover:shadow-(--color-accent)/30 hover:ring-(--color-accent)/40"
+                title="Next game"
+              >
+                <ChevronRight className="h-5 w-5" />
+                {gamepadActive && <span className="text-[8px] font-bold tracking-wider text-white/50">RB</span>}
+              </button>
+            )}
+          </>
+        )}
+
+        {/* ═══ Hints dinámicos ═══ */}
+        <div
+          className={`mx-auto mb-4 flex w-full max-w-[min(1800px,90vw)] flex-wrap justify-center gap-x-4 gap-y-1 rounded-xl px-[clamp(24px,4vw,64px)] py-2 outline-none ${zoneFocusClass("hints")}`}
+          data-focus-zone="hints"
+          onClick={() => setFocusZone("hints")}
+          tabIndex={-1}
+          onFocus={() => setFocusZone("hints")}
+        >
+          {dynamicHints.map((hint, idx) => (
+            <HintLabel key={idx} focus={focusZone === "hints"}>{hint}</HintLabel>
+          ))}
         </div>
       </div>
 
@@ -1504,13 +1392,14 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           onClose={() => setOptionsOpen(false)}
           onOpenSearch={() => { setOptionsOpen(false); onSearchOpen?.(); }}
           onPlayGame={(g) => { setOptionsOpen(false); onPlayGame?.(g); }}
+          onRemoveManual={() => { setOptionsOpen(false); onClose(); }}
           onAction={handleConsoleAction}
           inDetails={true}
           inputHints={settings.inputHints}
         />
       )}
 
-      {/* Install confirmation modal */}
+      {/* Install modal */}
       <ConsoleInstallModal
         game={game}
         open={installModalOpen}
@@ -1550,12 +1439,14 @@ function HintLabel({ children, focus }: { children: string | null; focus?: boole
 
 /* ── Action icon helper ── */
 function ActionIcon({ action, className }: { action: ConsolePrimaryAction; className?: string }) {
-  const cls = `h-4 w-4 ${className ?? ""}`;
+  const cls = className ?? "h-4 w-4";
   switch (action) {
     case "install": return <Download className={cls} />;
     case "update": return <RefreshCw className={cls} />;
     case "check-update": return <Search className={cls} />;
     case "up-to-date": return <CheckCircle2 className={cls} />;
+    case "installing": return <Loader2 className={`${cls} animate-spin`} />;
+    case "select-exe": return <FileSearch className={cls} />;
     default: return <Play className={cls} />;
   }
 }

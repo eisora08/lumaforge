@@ -4,8 +4,9 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground } from "./consoleMedia";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { getGameAchievementSummary } from "./consoleGameStats";
+import { getFavoriteKey } from "../../services/gameCacheService";
+import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { getGameAchievementSummary, getGameLastPlayedTimestamp } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleHomeRail from "./ConsoleHomeRail";
 import ConsoleTopHud from "./ConsoleTopHud";
@@ -78,7 +79,7 @@ export default function ConsoleSpotlightLayout({
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
-  const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
+  const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
 
@@ -87,7 +88,10 @@ export default function ConsoleSpotlightLayout({
   const sectionLabel = SECTION_LABELS[railTitle] ?? railTitle;
 
   const playtimeSeconds = useMemo(() => {
-    return focusedGame?.appId ? getPlaytimeSecondsForAppId(focusedGame.appId) : 0;
+    if (!focusedGame) return 0;
+    const byAppId = focusedGame.appId ? getPlaytimeSecondsForAppId(focusedGame.appId) : 0;
+    if (byAppId > 0) return byAppId;
+    return getPlaytimeSecondsByGameKey(resolvePlaytimeKey(focusedGame));
   }, [focusedGame]);
 
   const playtimeDisplay = useMemo(() => formatPlaytime(playtimeSeconds), [playtimeSeconds]);
@@ -98,7 +102,7 @@ export default function ConsoleSpotlightLayout({
 
   const lastPlayedStr = useMemo(() => {
     if (!focusedGame) return null;
-    const ts = focusedGame.localLastPlayedAt ?? focusedGame.steamLastPlayedAt;
+    const ts = getGameLastPlayedTimestamp(focusedGame);
     return ts ? formatRelativeTime(ts) : null;
   }, [focusedGame]);
 
@@ -118,7 +122,7 @@ export default function ConsoleSpotlightLayout({
   }, [focusedGame]);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg)">
+    <div className="relative h-screen w-screen overflow-hidden bg-(--console-bg)">
 
       {/* ── Layer 1: Hero background — z-[0] ── */}
       <div className="absolute inset-0 z-[0] overflow-hidden">

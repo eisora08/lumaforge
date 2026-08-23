@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, AlertCircle, Info, CheckCircle } from "lucide-react";
+import { isConsoleMode, isGamepadDetected, getConsoleInputHints } from "../../features/console/consoleInputHints";
 
 export type ConfirmVariant = "danger" | "warning" | "info" | "success";
 
@@ -17,6 +18,9 @@ type Props = {
   secondaryLabel?: string;
   onSecondary?: () => void;
   secondaryVariant?: ConfirmVariant;
+  tertiaryLabel?: string;
+  onTertiary?: () => void;
+  tertiaryVariant?: ConfirmVariant;
   extraActions?: React.ReactNode;
 };
 
@@ -81,6 +85,9 @@ export default function ConfirmModal({
   secondaryLabel,
   onSecondary,
   secondaryVariant,
+  tertiaryLabel,
+  onTertiary,
+  tertiaryVariant,
   extraActions,
 }: Props) {
   const [focusedButton, setFocusedButton] = useState<"cancel" | "confirm">("cancel");
@@ -195,7 +202,7 @@ export default function ConfirmModal({
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-md lf-modal-overlay"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
     >
       <div
         ref={panelRef}
@@ -217,7 +224,7 @@ export default function ConfirmModal({
         </p>
 
         <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-          {(extraActions || (secondaryLabel && onSecondary)) && (
+          {(extraActions || (secondaryLabel && onSecondary) || (tertiaryLabel && onTertiary)) && (
             <div className="flex flex-wrap items-center gap-3 mr-auto">
               {extraActions}
               {secondaryLabel && onSecondary && (
@@ -230,6 +237,18 @@ export default function ConfirmModal({
                     }`}
                 >
                   {secondaryLabel}
+                </button>
+              )}
+              {tertiaryLabel && onTertiary && (
+                <button
+                  type="button"
+                  onClick={() => { onTertiary(); }}
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${tertiaryVariant
+                      ? variantConfig[tertiaryVariant].btnClass
+                      : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+                    }`}
+                >
+                  {tertiaryLabel}
                 </button>
               )}
             </div>
@@ -262,13 +281,20 @@ export default function ConfirmModal({
           </div>
         </div>
 
-        <div className="mt-4 flex items-center justify-center gap-1 text-xs text-(--color-muted)/50">
-          <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">A</kbd>
-          <span>Select</span>
-          <span className="mx-1">·</span>
-          <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">B</kbd>
-          <span>Back</span>
-        </div>
+        {isConsoleMode() && isGamepadDetected() && (() => {
+          const hints = getConsoleInputHints();
+          const selectKey = hints.select.match(/\[(.+?)\]/)?.[1] ?? "A";
+          const backKey = hints.back.match(/\[(.+?)\]/)?.[1] ?? "B";
+          return (
+            <div className="mt-4 flex items-center justify-center gap-1 text-xs text-(--color-muted)/50">
+              <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">{selectKey}</kbd>
+              <span>Select</span>
+              <span className="mx-1">·</span>
+              <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">{backKey}</kbd>
+              <span>Back</span>
+            </div>
+          );
+        })()}
       </div>
     </div>,
     document.body

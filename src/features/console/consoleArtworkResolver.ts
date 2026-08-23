@@ -250,7 +250,7 @@ export async function resolveConsoleDetailsArtwork(
       try {
         const igdbData = await fetchIgdbArtworkDeduped({
           clientId: options.igdbClientId,
-          accessToken: options.igdbClientSecret ?? "",
+          clientSecret: options.igdbClientSecret ?? "",
           appId,
         });
         if (igdbData?.igdbCoverUrl || igdbData?.igdbArtworkUrl) {

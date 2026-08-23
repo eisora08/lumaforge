@@ -1,0 +1,13 @@
+{
+  "name": "repack-index-builder",
+  "version": "1.0.0",
+  "description": "Offline builder for the LumaForge repack catalog index (Hydra-compatible repack metadata)",
+  "main": "generate.cjs",
+  "scripts": {
+    "generate": "node generate.cjs",
+    "build": "node generate.cjs"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "id": "achievement-watcher",
+  "name": "achievement-watcher",
+  "displayName": "Achievement Watcher",
+  "description": "Real-time Steam achievement tracking and notification system",
+  "longDescription": "# Achievement Watcher\n\nAchievement Watcher monitors your Steam games in real-time and notifies you when you unlock achievements.\n\n## Features\n\n- Real-time achievement detection\n- Desktop notifications\n- Achievement statistics and progress\n- Per-game achievement guides\n- Custom notification sounds",
+  "summary": "Real-time Steam achievement tracking",
+  "version": "1.5.0",
+  "minimumLauncherVersion": "1.0.0",
+  "author": "LumaForge Team",
+  "homepage": "https://github.com/lumaforge/achievement-watcher",
+  "license": "MIT",
+  "icon": "icon.png",
+  "categories": ["steam", "notifications"],
+  "tags": ["achievements", "tracking", "notifications", "stats"],
+  "managedFiles": [
+    {
+      "path": "achievement-watcher.dll",
+      "isExecutable": true,
+      "replaceStrategy": "if-different",
+      "backupStrategy": "rename",
+      "validationStrategy": "checksum",
+      "checksum": "sha256-b2c3d4e5f6a7..."
+    },
+    {
+      "path": "sounds/unlock.mp3",
+      "required": false,
+      "replaceStrategy": "never",
+      "backupStrategy": "none",
+      "validationStrategy": "exists"
+    },
+    {
+      "path": "config.json",
+      "required": true,
+      "replaceStrategy": "if-newer",
+      "backupStrategy": "copy"
+    }
+  ],
+  "permissions": [
+    { "id": "filesystem.read", "reason": "Read Steam achievement data files" },
+    { "id": "steam.appdata", "reason": "Access Steam achievement storage" },
+    { "id": "system.processes", "reason": "Detect running Steam games" },
+    { "id": "ui.notifications", "reason": "Show achievement unlock notifications" }
+  ],
+  "capabilities": [
+    {
+      "id": "achievement-provider",
+      "version": "1.0",
+      "description": "Provides real-time achievement tracking and notifications"
+    },
+    {
+      "id": "launcher-integration",
+      "version": "1.0",
+      "description": "Adds achievement statistics to game details"
+    }
+  ],
+  "installStrategy": {
+    "type": "transaction-copy"
+  },
+  "toggleStrategy": {
+    "type": "rename",
+    "config": {
+      "targetFiles": ["achievement-watcher.dll"],
+      "enabledExtension": ".dll",
+      "disabledExtension": ".dll.bak"
+    }
+  },
+  "updateStrategy": {
+    "type": "replace",
+    "autoCheck": true,
+    "autoInstall": false
+  },
+  "releaseProvider": {
+    "provider": "github",
+    "config": {
+      "owner": "lumaforge",
+      "repo": "achievement-watcher",
+      "tagPattern": "v*",
+      "assetPattern": "*.zip"
+    }
+  },
+  "behavior": {
+    "luaOwnershipOverride": false,
+    "injectsDll": false,
+    "modifiesStorePage": false,
+    "addsGameEntries": false
+  },
+  "validation": {
+    "requiredFiles": ["achievement-watcher.dll", "config.json"],
+    "maxTotalSize": 5242880
+  }
+}

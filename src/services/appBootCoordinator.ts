@@ -7,6 +7,8 @@ import type { AppSettings } from "../types/settings";
 import type { SteamGameIndexEntry } from "./fullSteamGameIndex";
 import { initPerfCounters, setBootPhaseLabel } from "./perfCounters";
 import { reportLibraryProgress } from "./libraryProgressService";
+import { isIntegrationScanOnStartup, isIntegrationEnabled } from "./integrationSettingsService";
+import { DEBRID_LIBRARY_ENABLED } from "../features/debrid/debridFeatureFlag";
 
 export type BootStatus =
   | "booting"
@@ -18,14 +20,18 @@ export type BootTaskId =
   | "load-settings"
   | "migrate-portable-paths"
   | "load-startup-snapshot"
+  | "load-manual-games"
+  | "load-debrid-games"
   | "enrich-snapshot-titles"
   | "load-local-game-index"
   | "reconcile-lua-games"
   | "load-achievement-summaries"
+  | "load-nonsteam-achievements"
   | "load-cached-media-index"
   | "start-achievement-watcher"
   | "start-background-job-queue"
   | "load-playtime-store"
+  | "import-catalogs"
   | "schedule-background-repair"
   | "confirm-mounted";
 
@@ -169,6 +175,16 @@ export async function runBootTasks(): Promise<void> {
               console.warn("[BOOT] settings load failed:", String(err));
             }
             logBoot("load settings end");
+
+            // Register Lua backup settings accessor — reads current settings from
+            // localStorage on each call, so runtime settings updates are always visible.
+            try {
+              const { registerLuaBackupSettingsAccessor } = await import("./steamLuaBackupService");
+              registerLuaBackupSettingsAccessor(() => loadSettings() as Record<string, unknown>);
+              logBoot("lua backup settings accessor registered");
+            } catch {
+              // Non-critical — Lua backup gracefully returns empty when accessor is missing
+            }
           });
 
           // Stage 2: Migrate portable paths (safe, non-blocking)
@@ -243,14 +259,47 @@ export async function runBootTasks(): Promise<void> {
           setBootPhaseLabel("critical-done");
           logBoot("phase=critical-done");
 
+          // Stage 3.25: Load manual games from AppData JSON (migrate from localStorage if needed)
+          await track("load-manual-games", async () => {
+            if (!isIntegrationEnabled("manual")) {
+              logBoot("manual games skip: integration disabled");
+              return;
+            }
+            logBoot("load manual games start");
+            try {
+              const { loadManualGamesFromJson } = await import("./manualGameStore");
+              const manualGames = await loadManualGamesFromJson();
+              logBoot(`manual games loaded: ${manualGames.length} entries from JSON`);
+            } catch (e) {
+              console.error("[BOOT][MANUAL_GAMES] load failed:", e);
+            }
+            logBoot("load manual games end");
+          });
+
+          // Stage 3.35: Load Debrid games install state from disk
+          await track("load-debrid-games", async () => {
+            if (!DEBRID_LIBRARY_ENABLED) {
+              logBoot("debrid games skip: feature disabled");
+              return;
+            }
+            logBoot("load debrid games start");
+            try {
+              const { loadDebridGamesFromDisk } = await import("./debridGameStore");
+              const entries = await loadDebridGamesFromDisk();
+              logBoot(`debrid games loaded: ${entries.length} entries from JSON`);
+            } catch (e) {
+              console.error("[BOOT][DEBRID_GAMES] load failed:", e);
+            }
+            logBoot("load debrid games end");
+          });
+
           // Stage 3.5: Enrich snapshot game titles (resolve placeholders via metadata/store)
           await track("enrich-snapshot-titles", async () => {
             logBoot("enrich snapshot titles start");
             if (_snapshotLoaded?.library?.games) {
-              const { isPlaceholderSteamTitle, updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
-              const { getStoreDetails } = await import("./tauri");
+              const { isPlaceholderSteamTitle } = await import("./gameCacheService");
+              const { getStoreDetails, batchUpdateGameNames } = await import("./tauri");
               const { resolveGameMetadata } = await import("./gameMetadataResolver");
-              const { getCachedBootAppInfos } = await import("./startupSnapshotService");
               const placeholderGames = _snapshotLoaded.library.games.filter(
                 (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
               );
@@ -263,57 +312,55 @@ export async function runBootTasks(): Promise<void> {
                     metadataResolution = await resolveGameMetadata(numIds);
                   } catch { /* non-critical */ }
                 }
+                const batchNames: [string, string | null][] = [];
                 let enrichedCount = 0;
+                // First pass: resolve from metadata (instant, already batch-resolved)
+                const storeDetailGames: typeof placeholderGames = [];
                 for (const game of placeholderGames) {
                   if (!game.appId) continue;
                   const meta = metadataResolution[Number(game.appId)];
                   if (meta?.name && !isPlaceholderSteamTitle(meta.name, game.appId)) {
                     game.title = meta.name;
                     enrichedCount++;
-                    logBoot(`enriched title: appid=${game.appId} name=${meta.name} source=metadata`);
-                      _enrichedTitleAppIds.set(game.appId, meta.name);
-                    console.log(`[BOOT][TITLE_ENRICHED] stage=3.5 appid=${game.appId} source=metadata`);
-                    // Persist canonical name to appinfo (preserving existing media)
-                    try {
-                      const bootCache = getCachedBootAppInfos();
-                      const bootEntry = bootCache?.[game.appId] as { media?: Record<string, string | null> } | undefined;
-                      const m = bootEntry?.media ?? {} as Record<string, string | null>;
-                      await updateGameAppinfoMediaIfChanged(
-                        game.appId, meta.name,
-                        { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
-                        null, undefined, "bootStage35Enrichment",
-                      ).catch(() => {});
-                      console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=metadata`);
-                    } catch { /* non-critical */ }
-                    continue;
+                    _enrichedTitleAppIds.set(game.appId, meta.name);
+                    batchNames.push([game.appId, meta.name]);
+                  } else {
+                    storeDetailGames.push(game);
                   }
-                  try {
-                    const sd = await getStoreDetails(game.appId).catch(() => null);
-                    const sdData = sd?.data as { name?: string } | null;
-                    if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
-                      game.title = sdData.name;
-                      enrichedCount++;
-                      logBoot(`enriched title: appid=${game.appId} name=${sdData.name} source=store`);
-                      _enrichedTitleAppIds.set(game.appId, sdData.name);
-                      console.log(`[BOOT][TITLE_ENRICHED] stage=3.5 appid=${game.appId} source=store`);
-                      // Persist canonical name to appinfo (preserving existing media)
-                      try {
-                        const bootCache = getCachedBootAppInfos();
-                        const bootEntry = bootCache?.[game.appId] as { media?: Record<string, string | null> } | undefined;
-                        const m = bootEntry?.media ?? {} as Record<string, string | null>;
-                        await updateGameAppinfoMediaIfChanged(
-                          game.appId, sdData.name,
-                          { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
-                          null, undefined, "bootStage35Enrichment",
-                        ).catch(() => {});
-                        console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=store`);
-                      } catch { /* non-critical */ }
+                }
+                // Second pass: batch getStoreDetails for remaining games (parallel, batches of 10)
+                if (storeDetailGames.length > 0) {
+                  const BATCH_SIZE_SD = 10;
+                  for (let i = 0; i < storeDetailGames.length; i += BATCH_SIZE_SD) {
+                    const batch = storeDetailGames.slice(i, i + BATCH_SIZE_SD);
+                    const results = await Promise.allSettled(
+                      batch.map((g) => getStoreDetails(g.appId!).catch(() => null)),
+                    );
+                    for (let j = 0; j < batch.length; j++) {
+                      const game = batch[j];
+                      if (!game.appId) continue;
+                      const r = results[j];
+                      const sd = r.status === "fulfilled" ? r.value : null;
+                      const sdData = (sd as any)?.data as { name?: string } | null;
+                      if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
+                        game.title = sdData.name;
+                        enrichedCount++;
+                        _enrichedTitleAppIds.set(game.appId, sdData.name);
+                        batchNames.push([game.appId, sdData.name]);
+                      }
                     }
-                  } catch { /* ignore */ }
+                  }
+                }
+                // Single batch write instead of N per-game writes
+                if (batchNames.length > 0) {
+                  try {
+                    await batchUpdateGameNames(batchNames);
+                    console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length}`);
+                  } catch { /* non-critical */ }
                 }
                 if (enrichedCount > 0) {
                   const { saveStartupSnapshot } = await import("./startupSnapshotService");
-                  await saveStartupSnapshot(_snapshotLoaded).catch(() => {});
+                  await saveStartupSnapshot(_snapshotLoaded).catch((err) => console.warn(err));
                   logBoot(`enriched ${enrichedCount}/${placeholderGames.length} snapshot titles`);
                 }
               }
@@ -352,7 +399,9 @@ export async function runBootTasks(): Promise<void> {
 
                 // Use TTL-guarded steam scan to avoid repeated scans on boot re-runs
                 let steamGames: Awaited<ReturnType<typeof scanSteamInstalledGames>> = [];
-                if (checkSteamScanAllowed()) {
+                if (!isIntegrationScanOnStartup("steam")) {
+                  console.log("[steam-scan][SKIP] reason=integration-disabled");
+                } else if (checkSteamScanAllowed()) {
                   steamGames = await scanSteamInstalledGames({
                     steamPath: settings.steamRoot || undefined,
                     luaPath: settings.luaPath || undefined,
@@ -365,7 +414,9 @@ export async function runBootTasks(): Promise<void> {
                 }
 
                 const [luaScripts, sqliteCache] = await Promise.all([
-                  settings.luaPath ? scanInstalledLuaScripts(settings.luaPath).catch(() => []) : Promise.resolve([]),
+                  (settings.luaPath && isIntegrationScanOnStartup("lua"))
+                    ? scanInstalledLuaScripts(settings.luaPath).catch(() => [])
+                    : Promise.resolve([]),
                   loadCachedGames().catch(() => null),
                 ]);
 
@@ -418,7 +469,7 @@ export async function runBootTasks(): Promise<void> {
                   // Persist reconciled list to SQLite cache so next boot is instant
                   if (result.games.length > 0) {
                     const { saveCachedGames } = await import("./gameDetectionCache");
-                    await saveCachedGames(result.games, result.warnings).catch(() => {});
+                    await saveCachedGames(result.games, result.warnings).catch((err) => console.warn(err));
                     logBoot(`saved reconciled games to cache`);
 
                     // Also queue background SQLite upsert for the games table
@@ -437,7 +488,7 @@ export async function runBootTasks(): Promise<void> {
                             updatedAt: Math.floor(Date.now() / 1000),
                           }));
                         if (entries.length > 0) {
-                          await batchUpsertGames(entries).catch(() => {});
+                          await batchUpsertGames(entries).catch((err) => console.warn(err));
                           logBoot(`sqlite upserted ${entries.length} games in background`);
                         }
                       } catch { /* non-critical */ }
@@ -493,6 +544,43 @@ export async function runBootTasks(): Promise<void> {
                       reconciledGames = index.map((e) => indexEntryToLibraryGame(e, luaOverlay));
                     }
                   }
+                  // [LUA_IDENTITY] Lua-only games (script present, not a Steam install)
+                  // keep a single identity across boot paths. Cold boot stores them as
+                  // `lua-<appId>` (source "lua"); warm boot must produce the same shape so
+                  // dedupeLibraryGames' "appId:source" key collapses them into one row
+                  // instead of rendering a duplicate `steam-<appId>` alongside `lua-<appId>`.
+                  if (reconciledGames && reconciledGames.length > 0) {
+                    const luaOnlyAppIds = new Set<string>();
+                    for (const id of luaAppIds) {
+                      if (!steamAppIds.has(id)) luaOnlyAppIds.add(id);
+                    }
+                    if (luaOnlyAppIds.size > 0) {
+                      const scriptsByAppId = new Map<string, Awaited<ReturnType<typeof scanInstalledLuaScripts>>>();
+                      for (const s of luaScripts) {
+                        const key = String(s.app_id);
+                        const arr = scriptsByAppId.get(key);
+                        if (arr) arr.push(s);
+                        else scriptsByAppId.set(key, [s]);
+                      }
+                      reconciledGames = reconciledGames.map((g) => {
+                        if (g.appId && luaOnlyAppIds.has(g.appId)) {
+                          const scripts = scriptsByAppId.get(g.appId) ?? [];
+                          return {
+                            ...g,
+                            id: `lua-${g.appId}`,
+                            source: "lua" as const,
+                            steamInstalled: false,
+                            luaScripts: scripts,
+                            hasLua: true,
+                            isLuaActive: scripts.some((s) => !s.is_disabled),
+                            isLuaDisabled: scripts.every((s) => s.is_disabled),
+                          };
+                        }
+                        return g;
+                      });
+                      console.log(`[BOOT][LUA_IDENTITY] converted lua-only games=${luaOnlyAppIds.size}`);
+                    }
+                  }
                   // Persist to gameStore so validateStartupCacheHealth shows correct count
                   // Always call setReconciledGames; empty-overwrite guard in gameStore prevents wipe
                   if (reconciledGames) {
@@ -516,7 +604,6 @@ export async function runBootTasks(): Promise<void> {
                 if (reconciledGames && reconciledGames.length > 0) {
                   const { isPlaceholderSteamTitle } = await import("./gameCacheService");
                   const { readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
-                  const { updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
                   const { resolveGameMetadata } = await import("./gameMetadataResolver");
                   const emptyTitleGames = reconciledGames.filter(
                     (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
@@ -553,60 +640,59 @@ export async function runBootTasks(): Promise<void> {
                     if (numIds.length > 0) {
                       try { metadataResolution = await resolveGameMetadata(numIds); } catch { /* non-critical */ }
                     }
+                    const batchNames: [string, string | null][] = [];
+                    // First pass: resolve from appinfo/metadata (instant)
+                    const storeDetailGames: typeof emptyTitleGames = [];
                     for (const game of emptyTitleGames) {
                       if (!game.appId) continue;
-                      // Skip if Stage 3.5 already enriched this game
                       if (_enrichedTitleAppIds.has(game.appId)) {
                         const realName = _enrichedTitleAppIds.get(game.appId);
-                        if (realName) {
-                          game.title = realName;
-                          console.log(`[BOOT][TITLE_ENRICH_SKIP] stage=4.5 appid=${game.appId} reason=already-enriched`);
-                        }
+                        if (realName) game.title = realName;
                         continue;
                       }
                       const appinfo = appinfos[game.appId];
                       const meta = metadataResolution[Number(game.appId)];
                       let resolvedName: string | null = null;
-                      let source = "";
                       if (appinfo?.name && !isPlaceholderSteamTitle(appinfo.name, game.appId)) {
                         resolvedName = appinfo.name;
-                        source = "appinfo";
                       } else if (meta?.name && !isPlaceholderSteamTitle(meta.name, game.appId)) {
                         resolvedName = meta.name;
-                        source = "metadata";
-                      }
-                      if (!resolvedName) {
-                        try {
-                          const sd = await getStoreDetails(game.appId).catch(() => null);
-                          const sdData = sd?.data as { name?: string } | null;
-                          if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
-                            resolvedName = sdData.name;
-                            source = "store-details";
-                          }
-                        } catch { /* ignore */ }
                       }
                       if (resolvedName) {
-                        console.log(`[NAME][CANONICAL_WRITE] appid=${game.appId} name=${resolvedName} source=${source}`);
                         game.title = resolvedName;
-                        // Read existing appinfo to preserve media paths (only update name)
-                        const existingForName = appinfos[game.appId];
-                        const existingMedia = existingForName?.media ?? {};
-                        updateGameAppinfoMediaIfChanged(
-                          game.appId, resolvedName,
-                          {
-                            coverPath: existingMedia.coverPath ?? null,
-                            backgroundPath: existingMedia.backgroundPath ?? null,
-                            logoPath: existingMedia.logoPath ?? null,
-                            iconPath: existingMedia.iconPath ?? null,
-                            landscapePath: existingMedia.landscapePath ?? null,
-                          },
-                          null,
-                          undefined,
-                          "bootStage45Enrichment",
-                        ).catch(() => {});
+                        batchNames.push([game.appId, resolvedName]);
                       } else {
-                        console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
+                        storeDetailGames.push(game);
                       }
+                    }
+                    // Second pass: batch getStoreDetails for remaining games (parallel, batches of 10)
+                    if (storeDetailGames.length > 0) {
+                      const BATCH_SIZE_SD = 10;
+                      for (let i = 0; i < storeDetailGames.length; i += BATCH_SIZE_SD) {
+                        const batch = storeDetailGames.slice(i, i + BATCH_SIZE_SD);
+                        const results = await Promise.allSettled(
+                          batch.map((g) => getStoreDetails(g.appId!).catch(() => null)),
+                        );
+                        for (let j = 0; j < batch.length; j++) {
+                          const game = batch[j];
+                          if (!game.appId) continue;
+                          const r = results[j];
+                          const sd = r.status === "fulfilled" ? r.value : null;
+                          const sdData = (sd as any)?.data as { name?: string } | null;
+                          if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
+                            game.title = sdData.name;
+                            batchNames.push([game.appId, sdData.name]);
+                          }
+                        }
+                      }
+                    }
+                    // Single batch write instead of N per-game writes
+                    if (batchNames.length > 0) {
+                      try {
+                        const { batchUpdateGameNames } = await import("./tauri");
+                        await batchUpdateGameNames(batchNames);
+                        console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length} stage=4.5`);
+                      } catch { /* non-critical */ }
                     }
                     setReconciledGames(reconciledGames);
 
@@ -625,7 +711,7 @@ export async function runBootTasks(): Promise<void> {
                         }
                       }
                       if (snapChanged) {
-                        await saveStartupSnapshot(cachedSnap).catch(() => {});
+                        await saveStartupSnapshot(cachedSnap).catch((err) => console.warn(err));
                         logBoot(`snapshot titles updated count=${emptyTitleGames.filter(g => g.appId && !isPlaceholderSteamTitle(g.title, g.appId)).length}`);
                       }
                     }
@@ -642,7 +728,7 @@ export async function runBootTasks(): Promise<void> {
             logBoot("reconcile lua games end");
           });
 
-          // Stage 5: Load cached achievement summaries into store (only if auto-enabled)
+          // Stage 5: Load ALL cached achievement summaries into store from SQLite
           await track("load-achievement-summaries", async () => {
             logBoot("load achievement summaries start");
             try {
@@ -650,49 +736,30 @@ export async function runBootTasks(): Promise<void> {
               if (!ACHIEVEMENT_READ_CACHE_ON_BOOT) {
                 logCacheReadBootSkipOnce();
               } else {
-                  const { achievementStore } = await import("./achievementStore");
-                  const { readAchievementCache } = await import("./tauri");
-                  if (_snapshotLoaded) {
-                    const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
-                    let loaded = 0;
-                    // Load up to 20 summaries during splash — enough for instant UI
-                    // Batch with Promise.all for concurrent Tauri invokes
-                    const batch = appIds.slice(0, 20);
-                    const results = await Promise.allSettled(
-                      batch.map((appId) => readAchievementCache(Number(appId)))
-                    );
-                    for (let i = 0; i < batch.length; i++) {
-                      const appId = batch[i];
-                      const result = results[i];
-                      if (result.status === "fulfilled") {
-                        const cache = result.value;
-                        if (cache) {
-                        const summary = {
-                          appId,
-                          total: cache.achievements.length,
-                          unlocked: cache.achievements.filter((a: { unlocked: boolean }) => a.unlocked).length,
-                          progressAvailable: cache.summary.progress_available,
-                          achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; rarity_level?: string | null }) => ({
-                            apiName: a.api_name,
-                            name: a.name,
-                            description: a.description ?? "",
-                            iconUrl: a.icon ?? a.icon_url ?? null,
-                            iconGrayUrl: a.icon_gray ?? a.icon_gray_url ?? null,
-                            unlocked: a.unlocked,
-                            unlockTime: a.unlock_time ?? null,
-                            rarityPercent: a.rarity_percent ?? null,
-                            rarityLevel: a.rarity_level ?? null,
-                          })),
-                          newlyUnlocked: [],
-                        };
-                        achievementStore.setSummary(appId, summary as any);
-                        loaded++;
-                      }
-                    }
-                  }
-                  if (loaded > 0) {
-                    logBoot(`loaded ${loaded} achievement summaries into store`);
-                  }
+                const { achievementStore } = await import("./achievementStore");
+                const { getAllAchievementSummaries } = await import("./tauri");
+                // Load ALL summaries from SQLite in a single query — no limit
+                const rows = await getAllAchievementSummaries();
+                let loaded = 0;
+                for (const row of rows) {
+                  if (!row.appId) continue;
+                  const summary = {
+                    appId: row.appId,
+                    total: row.total,
+                    unlocked: row.unlocked,
+                    progressAvailable: row.progressAvailable ?? (row.total > 0),
+                    achievements: [],
+                    newlyUnlocked: [],
+                    source: row.source || "steam-official",
+                    updatedAt: row.updatedAt,
+                  };
+                  // Use platform from SQLite; infer from source when missing
+                  const platform = row.platform || (row.source === "crack" ? "steam" : "steam-official");
+                  achievementStore.setSummary(row.appId, summary as any, platform, { skipUnlockDetection: true });
+                  loaded++;
+                }
+                if (loaded > 0) {
+                  logBoot(`loaded ${loaded} achievement summaries into store (all from SQLite)`);
                 }
               }
             } catch (err) {
@@ -753,6 +820,7 @@ export async function runBootTasks(): Promise<void> {
                 await achievementWatcherService.start(
                   _cachedSettings.steamRoot,
                   _cachedSettings.steamAccountId,
+                  _cachedSettings.steamWebApiKey,
                 );
                 logBoot("achievement watcher started");
               } else {
@@ -787,7 +855,8 @@ export async function runBootTasks(): Promise<void> {
 
                 // Emergency stabilization: achievement migration disabled
                 if (_snapshotLoaded) {
-                  const { ACHIEVEMENT_SCHEMA_MIGRATION_AUTO, ACHIEVEMENT_IMAGE_MIGRATION_AUTO } = await import("./achievementStore");
+                  const { ACHIEVEMENT_SCHEMA_MIGRATION_AUTO } = await import("./achievementStore");
+                  const { ACHIEVEMENT_IMAGE_MIGRATION_AUTO } = await import("./achievementAutoFlags");
                   const { achievementStore } = await import("./achievementStore");
                   const appIds = _snapshotLoaded.library.games
                     .filter((g) => g.appId && g.source === "steam")
@@ -874,6 +943,35 @@ export async function runBootTasks(): Promise<void> {
             setBootPhaseLabel("post-shell-done");
           });
 
+          // Stage 11: Pre-import catalogs (Steam + repack) — DEFERRED to post-boot
+          scheduleAfterMain(async () => {
+            try {
+              const { ensureCatalogImported } = await import("./steamCatalogService");
+              const [steamOk] = await Promise.all([
+                ensureCatalogImported(),
+                (async () => {
+                  try {
+                    const { isIntegrationEnabled } = await import("./integrationSettingsService");
+                    if (isIntegrationEnabled("debrid")) {
+                      const { ensureRepackCatalogImported } = await import("./repackCatalogService");
+                      const ok = await ensureRepackCatalogImported();
+                      if (ok) logBoot(`repack catalog imported`);
+                      else logBoot(`repack catalog unavailable`);
+                    } else {
+                      logBoot("repack catalog skipped (debrid integration disabled)");
+                    }
+                  } catch {
+                    logBoot("repack catalog check failed");
+                  }
+                })(),
+              ]);
+              if (steamOk) logBoot("steam catalog imported");
+              else logBoot("steam catalog unavailable");
+            } catch (err) {
+              logBoot(`catalog import failed: ${String(err)}`);
+            }
+          }, 5000);
+
           // Performance summary: aggregate metrics from boot stages
           setBootPhaseLabel("idle-ready");
           const perfSummary = {
@@ -888,22 +986,32 @@ export async function runBootTasks(): Promise<void> {
           backgroundJobQueue.setBootCompleted(true);
           logBoot("phase=idle-ready");
 
-          // Evaluate launcher achievements after boot
+          // Evaluate launcher achievements after boot (initialize from SQLite first)
           setTimeout(() => {
-            import("../features/activity/achievements/achievementEngine").then(({ evaluateAchievements }) => {
-              import("../features/activity/stats/statsService").then(({ buildEvalContext }) => {
-                import("./gameStore").then(({ getReconciledGames }) => {
-                  const games = getReconciledGames();
-                  if (games.length > 0) {
-                    const ctx = buildEvalContext(games);
-                    const result = evaluateAchievements(ctx);
-                    if (result.newlyUnlocked.length > 0) {
-                      console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
-                      import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
-                        showAchievementToasts(result.newlyUnlocked);
+            import("../features/activity/achievements/achievementStore").then(({ initLauncherAchievementStore }) => {
+              initLauncherAchievementStore().then(() => {
+                import("../features/activity/achievements/achievementEngine").then(({ evaluateAchievements }) => {
+                  import("../features/activity/stats/statsService").then(({ buildEvalContext }) => {
+                    import("./gameStore").then(({ getReconciledGames }) => {
+                      import("./manualGameStore").then(({ getAllManualGames }) => {
+                        import("./manualGameLibraryMapper").then(({ manualGameToLibraryGame }) => {
+                          const steamGames = getReconciledGames();
+                          const manualGames = getAllManualGames().map(manualGameToLibraryGame);
+                          const games = [...steamGames, ...manualGames];
+                          if (games.length > 0) {
+                            const ctx = buildEvalContext(games);
+                            const result = evaluateAchievements(ctx);
+                            if (result.newlyUnlocked.length > 0) {
+                              console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
+                              import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
+                                showAchievementToasts(result.newlyUnlocked);
+                              });
+                            }
+                          }
+                        });
                       });
-                    }
-                  }
+                    });
+                  });
                 });
               });
             });
@@ -913,7 +1021,9 @@ export async function runBootTasks(): Promise<void> {
           const { logBootPerfSummary } = await import("./perfCounters");
           setTimeout(() => logBootPerfSummary(), 100);
 
-          // Deferred installed Lua scanner — runs after UI is interactive
+          // Deferred installed Lua scanner — runs after UI is interactive.
+          // Waits for the installed-appIds filter to be populated so non-installed
+          // Lua files are never remote-verified. Skips entirely on timeout.
           if (_cachedSettings?.luaPath) {
             setTimeout(() => {
               const luaDir = _cachedSettings!.luaPath!;
@@ -921,10 +1031,37 @@ export async function runBootTasks(): Promise<void> {
               const hubcapConfig = hubcapSettings?.enabled && hubcapSettings?.baseUrl && hubcapSettings?.apiKey
                 ? { baseUrl: hubcapSettings.baseUrl, apiKey: hubcapSettings.apiKey }
                 : undefined;
-              import("./installedLuaScanner").then(({ runInstalledLuaScan }) => {
-                runInstalledLuaScan({ luaDir, hubcapConfig }).catch((err: unknown) => {
-                  console.warn("[PACKAGE_SCAN][ERROR]", String(err));
+
+              const importScanner = () =>
+                import("./installedLuaScanner").then(({ runInstalledLuaScan }) => {
+                  runInstalledLuaScan({ luaDir, hubcapConfig }).catch((err: unknown) => {
+                    console.warn("[PACKAGE_SCAN][ERROR]", String(err));
+                  });
                 });
+
+              const waitForFilter = async (): Promise<void> => {
+                const { isInstalledFilterReady } = await import("./installedLuaScanner");
+                if (isInstalledFilterReady()) {
+                  await importScanner();
+                  return;
+                }
+                console.log("[PACKAGE_SCAN][WAIT_FILTER] waiting for installed filter");
+                const maxWaitMs = 10_000;
+                const pollMs = 500;
+                let waited = 0;
+                while (!isInstalledFilterReady() && waited < maxWaitMs) {
+                  await new Promise((resolve) => setTimeout(resolve, pollMs));
+                  waited += pollMs;
+                }
+                if (isInstalledFilterReady()) {
+                  await importScanner();
+                } else {
+                  console.warn(`[PACKAGE_SCAN][TIMEOUT_SKIP] filter not ready after ${waited}ms; skipping boot scan`);
+                }
+              };
+
+              waitForFilter().catch((err: unknown) => {
+                console.warn("[PACKAGE_SCAN][ERROR]", String(err));
               });
             }, 2000);
           }

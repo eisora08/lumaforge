@@ -94,7 +94,7 @@ export default function StoreGameProviderPanel({
                     type="button"
                     disabled={!source.available || !onDownloadSource}
                     onClick={() => onDownloadSource?.(source)}
-                    className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Download className="h-3.5 w-3.5" />
                     Download

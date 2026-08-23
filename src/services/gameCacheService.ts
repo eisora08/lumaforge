@@ -3,6 +3,7 @@ import {
   saveGameAppInfo,
   getStoreDetails,
   saveStoreDetails,
+  updateGameMetadataJson,
   getGameArtwork,
   saveGameArtwork,
   cacheLandscapeImage,
@@ -21,7 +22,14 @@ import {
   readMediaManifest as readMediaManifestTauri,
   getMediaManifestsBatch,
   saveGameMediaFile as saveGameMediaFileTauri,
+  listProviderMediaFiles,
 } from "./tauri";
+import type { ProviderMediaFileEntry } from "./tauri";
+import {
+  parseProviderMediaComponents,
+  ROLE_EXTENSION_CANDIDATES,
+} from "./providerMediaPaths";
+import type { MediaRole } from "./providerMediaPaths";
 import { invalidateCanonicalMediaCache, notifyMediaUpdated } from "./startupSnapshotService";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
@@ -322,6 +330,82 @@ export function deduplicateByAppId<T extends { appId?: string | undefined | null
   return out;
 }
 
+/**
+ * Returns a stable unique identifier for any LibraryGame.
+ * Priority: libraryId > steam:appId > id.
+ * Manual games use `manual:<uuid>`, Steam games use `steam:<appId>`.
+ */
+export function getLibraryGameStableId(game: { libraryId?: string; appId?: string; id: string }): string {
+  if (game.libraryId) return game.libraryId;
+  if (game.appId) return `steam:${game.appId}`;
+  return game.id;
+}
+
+/**
+ * Returns the stable key used by FavoritesContext for any game type.
+ * For Steam games: appId (e.g. "480").
+ * For manual games: libraryId (e.g. "manual:<uuid>").
+ * Consistent with `LibraryGameDetails.tsx` which uses `game.appId || game.id`.
+ */
+export function getFavoriteKey(game: { appId?: string | null; libraryId?: string | null; id?: string; source?: string }): string | null {
+  // Manual games always use their stable libraryId so the key never changes when appId is set later
+  if (game.source === "manual" && game.libraryId) return game.libraryId;
+  if (game.appId) return game.appId;
+  if (game.libraryId) return game.libraryId;
+  if (game.id) return game.id;
+  return null;
+}
+
+const FAVORITES_STORAGE_KEY = "lumaforge-favorites-v1";
+
+/**
+ * Delete-only reconciler for manual-game favorite keys.
+ *
+ * When a manual game later gains a Steam appId (e.g. flows that set
+ * `entry.appId`), favorite entries stored under the numeric appId would
+ * double-display next to the canonical `manual:<uuid>` key. Rule: if BOTH
+ * the appId AND the libraryId are favorited, delete the appId key. The
+ * "appId-only" case is ambiguous (could be a real Steam favorite) and is
+ * never touched. Idempotent — safe to call repeatedly.
+ */
+export function reconcileManualFavoriteKeys(manualGames: { libraryId?: string | null; appId?: string | null }[]): boolean {
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return false;
+    const ids = new Set<string>(parsed.filter((x): x is string => typeof x === "string"));
+    let changed = false;
+    for (const game of manualGames) {
+      if (!game.libraryId || !game.appId) continue;
+      if (ids.has(game.appId) && ids.has(game.libraryId)) {
+        ids.delete(game.appId);
+        changed = true;
+      }
+    }
+    if (changed) {
+      localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+      window.dispatchEvent(new CustomEvent("lumaforge-data-changed", { detail: { key: FAVORITES_STORAGE_KEY } }));
+    }
+    return changed;
+  } catch {
+    return false;
+  }
+}
+
+/** Deduplicate an array of LibraryGame by stable identity, keeping first occurrence. */
+export function deduplicateByStableId<T extends { libraryId?: string; appId?: string; id: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = getLibraryGameStableId(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 /** Known media filenames that map to media roles. */
 const KNOWN_MEDIA_FILENAMES = new Set([
   "cover.jpg", "cover.png",
@@ -402,7 +486,7 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
   const steamInstalled = game.steamInstalled === true;
 
   const localInstalled =
-    game.source === "local" &&
+    (game.source === "local" || game.source === "manual") &&
     typeof game.executablePath === "string" &&
     game.executablePath.length > 0;
 
@@ -413,11 +497,18 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
 
   const luaActive = hasActiveInstalledLuaScript(game);
 
+  // Provider-neutral installed check: Epic/GOG/Debrid (and future providers)
+  // set isInstalled=true when the game exists on disk from any source.
+  const providerNeutralInstalled =
+    (game.source === "epic" || game.source === "gog" || game.source === "debrid") &&
+    game.isInstalled === true;
+
   const included = Boolean(
     steamInstalled ||
     localInstalled ||
     explicitInstalledStatus ||
-    luaActive
+    luaActive ||
+    providerNeutralInstalled
   );
 
   if (DEBUG_SIDEBAR_FILTER && game.appId) {
@@ -443,7 +534,7 @@ export function getSidebarLabel(game: LibraryGame): string {
   const steamInstalled = game.steamInstalled === true;
 
   const localInstalled =
-    game.source === "local" &&
+    (game.source === "local" || game.source === "manual") &&
     typeof game.executablePath === "string" &&
     game.executablePath.length > 0;
 
@@ -454,10 +545,20 @@ export function getSidebarLabel(game: LibraryGame): string {
 
   const luaActive = hasActiveInstalledLuaScript(game);
 
+  // Provider-neutral installed check for Epic/GOG/Debrid
+  const providerNeutralInstalled =
+    (game.source === "epic" || game.source === "gog" || game.source === "debrid") &&
+    game.isInstalled === true;
+
   if (steamInstalled && luaActive) return "Steam + Lua";
   if (steamInstalled) return "Steam";
   if (luaActive) return "Lua";
-  if (localInstalled) return "Local";
+  if (providerNeutralInstalled) {
+    if (game.source === "epic") return "Epic";
+    if (game.source === "debrid") return "Debrid";
+    return "GOG";
+  }
+  if (localInstalled) return game.source === "manual" ? "Manual" : "Local";
   if (explicitInstalledStatus) return "Installed";
 
   return "Not installed";
@@ -465,28 +566,37 @@ export function getSidebarLabel(game: LibraryGame): string {
 export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
   if (games.length <= 1) return games;
   const before = games.length;
-  const byAppId = new Map<string, LibraryGame>();
+  // Composite key: "appId:source" — entries with same appId but DIFFERENT source
+  // are kept as separate entries (Steam, Debrid, Manual, Epic all coexist).
+  // Merge only happens when both appId AND source match (e.g. Steam + Lua).
+  const byKey = new Map<string, LibraryGame>();
   const noAppId: LibraryGame[] = [];
 
+  function dedupKey(game: LibraryGame): string {
+    return game.appId ? `${game.appId}:${game.source || "unknown"}` : "";
+  }
+
   for (const game of games) {
-    if (!game.appId) {
+    const key = dedupKey(game);
+    if (!key) {
       // Games without appId — keep as-is but dedup by id
       if (!noAppId.find((g) => g.id === game.id)) {
         noAppId.push(game);
       }
       continue;
     }
-    const existing = byAppId.get(game.appId);
+    const existing = byKey.get(key);
     if (!existing) {
-      byAppId.set(game.appId, { ...game });
+      byKey.set(key, { ...game });
       continue;
     }
-    // Merge: Steam + Lua for same appId into one richer object
+    // Merge happens only for same appId AND same source (Steam + Lua, etc.)
     const merged = { ...existing };
 
     // Boolean flags: true wins
     merged.steamInstalled = existing.steamInstalled || game.steamInstalled;
     merged.isPlayable = existing.isPlayable || game.isPlayable;
+    merged.isInstalled = existing.isInstalled || game.isInstalled;
     merged.isInstallable = existing.isInstallable || game.isInstallable;
     merged.hasLua = existing.hasLua || game.hasLua;
     merged.isLuaActive = existing.isLuaActive || game.isLuaActive;
@@ -504,18 +614,18 @@ export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
     const seenScripts = new Set(existing.luaScripts.map((s) => `${s.app_id}:${s.path}:${s.file_name}`));
     merged.luaScripts = [...existing.luaScripts];
     for (const s of game.luaScripts || []) {
-      const key = `${s.app_id}:${s.path}:${s.file_name}`;
-      if (!seenScripts.has(key)) {
-        seenScripts.add(key);
+      const scriptKey = `${s.app_id}:${s.path}:${s.file_name}`;
+      if (!seenScripts.has(scriptKey)) {
+        seenScripts.add(scriptKey);
         merged.luaScripts.push(s);
       }
     }
     const seenSources = new Set(existing.sources.map((s) => `${s.providerId}:${s.fileType}:${s.downloadUrl}`));
     merged.sources = [...existing.sources];
     for (const s of game.sources || []) {
-      const key = `${s.providerId}:${s.fileType}:${s.downloadUrl}`;
-      if (!seenSources.has(key)) {
-        seenSources.add(key);
+      const sourceKey = `${s.providerId}:${s.fileType}:${s.downloadUrl}`;
+      if (!seenSources.has(sourceKey)) {
+        seenSources.add(sourceKey);
         merged.sources.push(s);
       }
     }
@@ -569,10 +679,10 @@ export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
     if (!merged.sizeOnDisk && game.sizeOnDisk) merged.sizeOnDisk = game.sizeOnDisk;
     if (!merged.lastUpdated && game.lastUpdated) merged.lastUpdated = game.lastUpdated;
 
-    byAppId.set(game.appId, merged);
+    byKey.set(key, merged);
   }
 
-  const result = [...byAppId.values(), ...noAppId].sort((a, b) =>
+  const result = [...byKey.values(), ...noAppId].sort((a, b) =>
     a.title.localeCompare(b.title),
   );
   const after = result.length;
@@ -1172,6 +1282,10 @@ export function invalidateResolvedMediaCache(appId: string): void {
   // resolvedSrcCache keys are raw filesystem paths (not appIds), so we must
   // clear the entire cache. convertFileSrc() is cheap so this is safe.
   resolvedSrcCache.clear();
+  // Also clear AsyncImage's global load cache for this app's images
+  import("../components/common/AsyncImage").then(({ invalidateImageLoadCacheForApp }) => {
+    invalidateImageLoadCacheForApp(appId);
+  }).catch(() => {});
   if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log(`[MEDIA][SRC_CACHE_CLEAR] reason=media-invalidated appid=${appId}`);
 }
 
@@ -1203,6 +1317,10 @@ export async function loadStoreDetails(appId: string): Promise<GameStoreDetails 
 
 export async function persistStoreDetails(appId: string, entry: GameStoreDetails): Promise<void> {
   await saveStoreDetails(appId, entry);
+  if (entry.data) {
+    const metadataJson = typeof entry.data === "string" ? entry.data : JSON.stringify(entry.data);
+    updateGameMetadataJson(appId, metadataJson);
+  }
 }
 
 export async function loadGameArtwork(appId: string): Promise<GameArtwork | null> {
@@ -1330,8 +1448,11 @@ export async function cacheMediaForGame(
       existing?.mediaSources ?? null,
       "cacheAppInfoMedia",
     );
-    // Update media_manifest.json to reflect current files on disk
-    generateMediaManifest(appId, mergedMedia).catch(() => {});
+    // During boot, skip manifest generation — background repair handles it later.
+    const { isBootReady } = await import("./appBootCoordinator");
+    if (isBootReady()) {
+      generateMediaManifest(appId, mergedMedia).catch(() => {});
+    }
   } catch {
     // non-critical
   }
@@ -1564,7 +1685,11 @@ export type MediaRepairSource =
   | "visible-details"
   | "refresh-artwork"
   | "global"
-  | "boot";
+  | "boot"
+  // Library grid auto-download
+  | "library-visible"
+  // Post-boot idle bulk download
+  | "idle-bulk";
 
 // ── Source alias helpers ──
 const DISPLAY_ONLY_SOURCES = new Set([
@@ -1573,7 +1698,7 @@ const DISPLAY_ONLY_SOURCES = new Set([
 
 const MANUAL_ARTWORK_SOURCES = new Set(["manual-refresh-artwork", "refresh-artwork"]);
 
-const VISIBLE_REPAIR_SOURCES = new Set(["game-details-visible-repair", "visible-details"]);
+const VISIBLE_REPAIR_SOURCES = new Set(["game-details-visible-repair", "visible-details", "library-visible", "idle-bulk"]);
 
 const GLOBAL_REPAIR_SOURCES = new Set(["global", "boot", "boot-hydration", "local-media-repair"]);
 
@@ -1690,14 +1815,15 @@ export function getUninstallPendingScanTtl(): number {
 
 export async function detectAndQueueMissingMedia(appId: string, source: MediaRepairSource = "visible-details"): Promise<string[]> {
   // No-source-url cooldown — skip repair if recently found no source URLs.
-  // Must be at the very top to prevent repeated disk scans and AUTO_REPAIR_SCAN logs.
-  if (isNoSourceCooldown(appId)) {
+  // idle-bulk bypasses cooldown — it runs during idle and should always retry.
+  if (source !== "idle-bulk" && isNoSourceCooldown(appId)) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_COOLDOWN] appid=${appId} reason=no-source-url`);
     return [];
   }
 
   // Phase 10: Defer media repair during active interaction (scroll/click/nav)
-  if (isInteractionBusy()) {
+  // idle-bulk bypasses interaction guard — it only runs when app is truly idle
+  if (source !== "idle-bulk" && isInteractionBusy()) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_DEFER] appid=${appId} reason=interaction-busy`);
     return [];
   }
@@ -2060,8 +2186,25 @@ export async function resolveRelativeAchievementImagePath(
 
   const base = await getAppDataBase();
   if (!base) return relativePath;
-  const abs = `${base}\\achievements\\${provider}\\${appId}\\${relativePath.replace(/\//g, "\\")}`;
-  return abs;
+
+  const rel = relativePath.replace(/\//g, "\\");
+
+  // Try new format first: achievements/schema/steam-official/<appId>/
+  const newPath = `${base}\\achievements\\schema\\steam-official\\${appId}\\${rel}`;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (await invoke<boolean>("file_exists", { path: newPath })) return newPath;
+  } catch { /* ignore */ }
+
+  // Fallback: achievements/schema/steam/<appId>/
+  const altPath = `${base}\\achievements\\schema\\steam\\${appId}\\${rel}`;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (await invoke<boolean>("file_exists", { path: altPath })) return altPath;
+  } catch { /* ignore */ }
+
+  // Legacy: achievements/steam/<appId>/
+  return `${base}\\achievements\\${provider}\\${appId}\\${rel}`;
 }
 
 /** Resolve all media paths in a GameMediaPaths object from relative to absolute. */
@@ -2156,6 +2299,289 @@ export async function resolveGameMediaUrl(
     return url;
   }
   return localPathToUrl(path);
+}
+
+/**
+ * Resolve a provider-relative media path (e.g. "games/manual/<id>/media/cover.jpg")
+ * to an asset:// URL suitable for <img src>.
+ *
+ * The input is a path relative to the app data root — it is NOT a path relative
+ * to the game directory (that's what resolveRelativeMediaPath handles).
+ *
+ * Returns null when the path is empty, already an HTTP URL, or cannot be resolved.
+ */
+
+// ---------------------------------------------------------------------------
+// Extension-aware provider media file resolution
+// ---------------------------------------------------------------------------
+
+const DEBUG_EPIC_SURFACES = false;
+
+/** Module-level cache for directory listing results. Maps provider+game → files. */
+const _mediaDirCache = new Map<string, { files: ProviderMediaFileEntry[]; ts: number }>();
+const MEDIA_DIR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Module-level cache for resolved absolute paths. Maps relative path → absolute or null. */
+const _roleFileResolveCache = new Map<string, { abs: string | null; ts: number }>();
+const ROLE_FILE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * List all files in a provider+game media directory via a single batched IPC call.
+ * Caches results for 5 minutes.
+ */
+async function listMediaDirFiles(
+  providerId: string,
+  providerGameId: string,
+): Promise<ProviderMediaFileEntry[]> {
+  const key = `${providerId}:${providerGameId}`;
+  const cached = _mediaDirCache.get(key);
+  if (cached && Date.now() - cached.ts < MEDIA_DIR_CACHE_TTL_MS) {
+    return cached.files;
+  }
+  try {
+    const files = await listProviderMediaFiles(providerId, providerGameId);
+    _mediaDirCache.set(key, { files, ts: Date.now() });
+    return files;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Invalidate the media directory cache for a specific game.
+ */
+export function invalidateMediaDirCache(providerId?: string, providerGameId?: string): void {
+  if (!providerId || !providerGameId) {
+    _mediaDirCache.clear();
+    return;
+  }
+  _mediaDirCache.delete(`${providerId}:${providerGameId}`);
+}
+
+/**
+ * Select the best file for a given role from a list of directory entries.
+ *
+ * Deterministic priority:
+ * 1. Stored override path (if provided and valid — file exists on disk)
+ * 2. Last successful saved path from override store
+ * 3. Newest valid candidate (by modification time, largest size wins ties)
+ * 4. Stable extension fallback (png > jpg > jpeg > webp)
+ *
+ * Filters out: zero-byte files, .tmp files, non-image extensions.
+ */
+function selectBestRoleFile(
+  role: string,
+  files: ProviderMediaFileEntry[],
+  storedPath?: string | null,
+): ProviderMediaFileEntry | null {
+  const roleFiles = files.filter(
+    (f) =>
+      f.role === role &&
+      f.sizeBytes > 0 &&
+      !f.filename.endsWith(".tmp") &&
+      ROLE_EXTENSION_CANDIDATES.includes(f.extension),
+  );
+  if (roleFiles.length === 0) return null;
+
+  // Priority 1: stored override path — exact match
+  if (storedPath) {
+    const storedFilename = storedPath.replace(/\\/g, "/").split("/").pop();
+    const storedMatch = roleFiles.find((f) => f.filename === storedFilename);
+    if (storedMatch) return storedMatch;
+    // Also try with extension stripped (in case stored path has wrong ext)
+    const storedBase = storedFilename?.replace(/\.[^.]+$/, "");
+    if (storedBase) {
+      const baseMatch = roleFiles.find((f) => f.filename.startsWith(storedBase + "."));
+      if (baseMatch) return baseMatch;
+    }
+  }
+
+  // Priority 2+3: newest by modification time, largest wins ties
+  const sorted = [...roleFiles].sort((a, b) => {
+    const aTime = a.modifiedAt ?? 0;
+    const bTime = b.modifiedAt ?? 0;
+    if (aTime !== bTime) return bTime - aTime; // newest first
+    return b.sizeBytes - a.sizeBytes; // largest first for same timestamp
+  });
+
+  // Priority 4: extension fallback order (png > jpg > jpeg > webp)
+  for (const ext of ROLE_EXTENSION_CANDIDATES) {
+    const match = sorted.find((f) => f.extension === ext);
+    if (match) return match;
+  }
+
+  return sorted[0] ?? null;
+}
+
+/**
+ * Resolve a provider media role file with extension-aware filesystem scanning.
+ *
+ * Given a relative path like "games/epic/.../media/landscape.png":
+ * 1. If the exact file exists on disk → return its absolute path
+ * 2. If not, scan the media directory for alternate extensions
+ * 3. Select the best match deterministically
+ * 4. Return the absolute path of the resolved file, or null
+ *
+ * When the stored path is valid (file exists), it always wins.
+ * Scans only happen when the stored path is missing, stale, empty, or undecodable.
+ */
+export async function resolveProviderMediaRoleFile(
+  relativePath: string | null | undefined,
+): Promise<string | null> {
+  if (!relativePath) return null;
+  if (isHttpUrl(relativePath)) return relativePath;
+  if (relativePath.startsWith("asset://") || relativePath.startsWith("data:") || relativePath.startsWith("file://")) return relativePath;
+
+  // Already absolute
+  if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) {
+    return localPathToUrl(relativePath) ?? relativePath;
+  }
+
+  // Parse the path to get provider + game info
+  const parsed = parseProviderMediaComponents(relativePath);
+  if (!parsed) {
+    // Can't parse — fall through to raw path construction
+    return null;
+  }
+
+  // Check resolve cache
+  const cached = _roleFileResolveCache.get(relativePath);
+  if (cached && Date.now() - cached.ts < ROLE_FILE_CACHE_TTL_MS) {
+    return cached.abs;
+  }
+
+  const base = await getAppDataBase();
+  if (!base) return null;
+  const sep = base.includes("\\") ? "\\" : "/";
+  const toAbsolute = (rel: string) =>
+    `${base}${base.endsWith(sep) ? "" : sep}${rel.replace(/\//g, sep)}`;
+
+  // Priority 1: check if the exact stored path exists on disk
+  const exactAbs = toAbsolute(relativePath);
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const exists = await invoke<boolean>("file_exists", { path: exactAbs });
+    if (exists) {
+      _roleFileResolveCache.set(relativePath, { abs: exactAbs, ts: Date.now() });
+      if (DEBUG_EPIC_SURFACES) {
+        console.debug("[MEDIA][ROLE_FILE] exact path exists", { relativePath, abs: exactAbs });
+      }
+      return exactAbs;
+    }
+  } catch {
+    // Fall through to directory scan
+  }
+
+  // Priority 2: scan directory for alternate extensions
+  const files = await listMediaDirFiles(parsed.providerId, parsed.providerGameId);
+  if (files.length === 0) {
+    _roleFileResolveCache.set(relativePath, { abs: null, ts: Date.now() });
+    return null;
+  }
+
+  const role = parsed.role;
+  if (!role) {
+    _roleFileResolveCache.set(relativePath, { abs: null, ts: Date.now() });
+    return null;
+  }
+
+  const best = selectBestRoleFile(role, files, relativePath);
+  if (!best) {
+    _roleFileResolveCache.set(relativePath, { abs: null, ts: Date.now() });
+    return null;
+  }
+
+  const resolvedAbs = toAbsolute(best.relativePath);
+  _roleFileResolveCache.set(relativePath, { abs: resolvedAbs, ts: Date.now() });
+  if (DEBUG_EPIC_SURFACES) {
+    console.debug("[MEDIA][ROLE_FILE] resolved via scan", {
+      input: relativePath,
+      resolved: best.relativePath,
+      role: best.role,
+      ext: best.extension,
+      size: best.sizeBytes,
+    });
+  }
+  return resolvedAbs;
+}
+
+/**
+ * Resolve a provider media role file when NO stored path exists.
+ * Scans the media directory for any file matching the role.
+ *
+ * Used for auto-discovery when an override doesn't exist yet.
+ * Returns the relative path from app data root, or null.
+ */
+export async function discoverProviderMediaRoleFile(
+  providerId: string,
+  providerGameId: string,
+  role: MediaRole,
+): Promise<string | null> {
+  const files = await listMediaDirFiles(providerId, providerGameId);
+  if (files.length === 0) return null;
+
+  const best = selectBestRoleFile(role, files, null);
+  if (!best) return null;
+
+  if (DEBUG_EPIC_SURFACES) {
+    console.debug("[MEDIA][DISCOVER]", {
+      provider: providerId,
+      game: providerGameId,
+      role,
+      found: best.relativePath,
+      ext: best.extension,
+      size: best.sizeBytes,
+    });
+  }
+  return best.relativePath;
+}
+
+/**
+ * Discover all 5 media roles for a provider+game in one batch.
+ * Returns a record mapping each role to its relative path (or null).
+ * Used by auto-discovery to populate overrides from existing disk files.
+ */
+export async function discoverAllProviderMediaRoles(
+  providerId: string,
+  providerGameId: string,
+): Promise<Partial<Record<MediaRole, string>>> {
+  const files = await listMediaDirFiles(providerId, providerGameId);
+  if (files.length === 0) return {};
+
+  const roles: MediaRole[] = ["cover", "landscape", "background", "logo", "icon"];
+  const result: Partial<Record<MediaRole, string>> = {};
+
+  for (const role of roles) {
+    const best = selectBestRoleFile(role, files, null);
+    if (best) {
+      result[role] = best.relativePath;
+    }
+  }
+  return result;
+}
+
+export async function resolveProviderMediaPreviewUrl(
+  relativePath: string | null | undefined,
+): Promise<string | null> {
+  if (!relativePath) return null;
+  if (isHttpUrl(relativePath)) return relativePath;
+  if (relativePath.startsWith("asset://") || relativePath.startsWith("data:") || relativePath.startsWith("file://")) return relativePath;
+  // Already absolute?
+  if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) {
+    return localPathToUrl(relativePath);
+  }
+  // Extension-aware resolution: check exact path, scan alternate extensions
+  const resolved = await resolveProviderMediaRoleFile(relativePath);
+  if (resolved && resolved !== relativePath) {
+    // File found at a different path (different extension)
+    return localPathToUrl(resolved);
+  }
+  // Exact path didn't resolve to a different file — try raw construction
+  const base = await getAppDataBase();
+  if (!base) return null;
+  const sep = base.includes("\\") ? "\\" : "/";
+  const abs = `${base}${base.endsWith(sep) ? "" : sep}${relativePath.replace(/\//g, sep)}`;
+  return localPathToUrl(abs);
 }
 
 // ---------------------------------------------------------------------------
@@ -2274,9 +2700,9 @@ export async function generateMediaManifest(
 
   // Part 2: In-flight dedup — if a write for this appId is already running, await it
   const existingInFlight = _mediaManifestWriteInFlight.get(appId);
-  if (existingInFlight) {
-    console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=in-flight`);
-    await existingInFlight;
+    if (existingInFlight) {
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=in-flight`);
+      await existingInFlight;
     return;
   }
 
@@ -2295,7 +2721,7 @@ export async function generateMediaManifest(
     const sameLogo = existing.files.logo.path === manifest.files.logo.path && existing.files.logo.exists === manifest.files.logo.exists;
     const sameIcon = existing.files.icon.path === manifest.files.icon.path && existing.files.icon.exists === manifest.files.icon.exists;
     if (sameProvider && sameCover && sameLandscape && sameBackground && sameLogo && sameIcon) {
-      console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=no-content-change`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=no-content-change`);
       return;
     }
   }
@@ -2432,14 +2858,14 @@ export async function hydrateMediaOnStartup(
         (k) => (normalizedMerged as any)[k] !== (existingNormalized as any)[k],
       );
       if (!hasChange) {
-        console.log(`[MEDIA_HYDRATE][SKIP] appid=${appId} reason=already-synced`);
+        if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA_HYDRATE][SKIP] appid=${appId} reason=already-synced`);
         continue;
       }
 
       const changedFields = Object.keys(normalizedMerged).filter(
         (k) => (normalizedMerged as any)[k] !== (existingNormalized as any)[k],
       ).length;
-      console.log(`[MEDIA_HYDRATE][WRITE] appid=${appId} changedFields=${changedFields}`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA_HYDRATE][WRITE] appid=${appId} changedFields=${changedFields}`);
 
       // Preserve existing name, remote, and mediaSources
       await updateGameAppinfoMediaIfChanged(
@@ -2455,8 +2881,10 @@ export async function hydrateMediaOnStartup(
       if (merged.iconPath) withIcon++;
       if (merged.logoPath) withLogo++;
       updatedAppInfos++;
-      console.log(`[MEDIA][HYDRATE] appid=${appId} found background=${!!diskPaths.backgroundPath} cover=${!!diskPaths.coverPath} icon=${!!diskPaths.iconPath} landscape=${!!diskPaths.landscapePath} logo=${!!diskPaths.logoPath}`);
-      console.log(`[MEDIA][HYDRATE] appid=${appId} updatedFields=${Object.values(merged).filter(Boolean).length}`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
+        console.log(`[MEDIA][HYDRATE] appid=${appId} found background=${!!diskPaths.backgroundPath} cover=${!!diskPaths.coverPath} icon=${!!diskPaths.iconPath} landscape=${!!diskPaths.landscapePath} logo=${!!diskPaths.logoPath}`);
+        console.log(`[MEDIA][HYDRATE] appid=${appId} updatedFields=${Object.values(merged).filter(Boolean).length}`);
+      }
       // Update MediaIndex
       const entry = getMediaEntry(appId);
       if (entry) {
@@ -2624,7 +3052,7 @@ function fromCachedSource(cached: MediaSourcesCache | undefined | null, kind: Ga
 
 const DEBUG_MEDIA_ROLE_MAP = false;
 
-function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "capsule" | "cover"): string | null {
+export function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "capsule" | "cover"): string | null {
   const id = parseInt(appId, 10);
   if (!id || isNaN(id) || id <= 0) return null;
   const base = `https://steamcdn-a.akamaihd.net/steam/apps/${id}`;
@@ -2823,7 +3251,7 @@ export function resolveMediaByPriority(inputs: MediaResolutionInputs): ResolvedG
 const _NETWORK_IN_FLIGHT = new Set<string>();
 const _DEBUG_LIBRARY_MEDIA_FALLBACK = false;
 const _DEBUG_MEDIA_APPID = "4717430";
-const _DEBUG_MEDIA_APPID_ENABLED = true;
+const _DEBUG_MEDIA_APPID_ENABLED = false;
 
 function _isDebugAppId(appId: string): boolean {
   return _DEBUG_MEDIA_APPID_ENABLED && appId === _DEBUG_MEDIA_APPID;
@@ -2985,7 +3413,7 @@ export async function refreshGameDetailsArtwork(
     if (shouldCallIgdb) {
       try {
         const { fetchIgdbArtworkDeduped } = await import("./storeArtworkResolver");
-        igdbData = await fetchIgdbArtworkDeduped({ clientId: options.igdbClientId!, accessToken: options.igdbClientSecret!, appId });
+        igdbData = await fetchIgdbArtworkDeduped({ clientId: options.igdbClientId!, clientSecret: options.igdbClientSecret!, appId });
         _debugLog(appId, "IGDB", `resultBackground=${(igdbData as any)?.igdbArtworkUrl ?? "(null)"} resultCover=${(igdbData as any)?.igdbCoverUrl ?? "(null)"}`);
       } catch (e) { _debugLog(appId, "IGDB", `error=${e}`); }
     } else {

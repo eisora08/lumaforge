@@ -2,19 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { countRender, logRenderSummary, startRenderSession, markNavigation } from "./services/perfCounters";
 
 import AppLayout from "./components/layout/AppLayout";
+import SettingsOverlay from "./components/settings/SettingsOverlay";
+import Settings from "./pages/Settings";
 
 import Home from "./pages/Home";
 import Library from "./pages/Library";
 import Store from "./pages/Store";
 import Games from "./pages/Games";
 import GlobalSearchResults from "./pages/GlobalSearchResults";
-import Downloads from "./pages/Downloads";
 import Achievements from "./pages/Achievements";
 import ActivityStats from "./pages/ActivityStats";
 import LauncherAchievements from "./pages/LauncherAchievements";
 import Verification from "./pages/Verification";
-import Tools from "./pages/Tools";
-import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
 import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
 import ConsoleModePage from "./features/console/ConsoleModePage";
@@ -26,25 +25,39 @@ import { showSessionOverlay, isSessionOverlayEnabled } from "./services/sessionO
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AchievementToastViewport } from "./components/activity/AchievementToast";
 import { AppPage } from "./types/navigation";
-import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
+
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
+import FixProgressListener from "./components/fixes/FixProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
 import ModeSwitchSplash from "./components/splash/ModeSwitchSplash";
 import type { ModeSwitchMode } from "./components/splash/ModeSwitchSplash";
 import LibraryLoadProgressCard from "./components/loading/LibraryLoadProgressCard";
 import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
-import BackgroundJobDebugPanel from "./components/common/BackgroundJobDebugPanel";
+import DebridCompletionModal from "./components/common/DebridCompletionModal";
+
 import { runBootTasks } from "./services/appBootCoordinator";
 import AppRouteTransition from "./components/common/AppRouteTransition";
 import { ConfirmProvider } from "./services/confirmService";
 import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
 import { setAppFullscreen, toggleAppFullscreen } from "./services/windowModeService";
+import { useSettings } from "./context/SettingsContext";
+import { setConsoleMode } from "./features/console/consoleInputHints";
+import { bootstrapExtensions } from "./extensions/bootstrap";
+import { useGameDetails } from "./context/GameDetailsContext";
+import { setPageContextSource } from "./services/ambientBackgroundStore";
+import { getBootSnapshot } from "./services/appBootCoordinator";
+import { localPathToUrl, isLocalPath } from "./services/gameCacheService";
+import { initDataChangeBus } from "./services/dataChangeBus";
+import { pushToHistory } from "./services/navigationHistory";
+import { readStartupConfig } from "./services/tauri";
+import { listen } from "@tauri-apps/api/event";
+import { checkForUpdate } from "./services/appUpdateStore";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
-  "home", "library", "games", "store", "downloads",
-  "achievements", "activity", "verification", "tools",
-  "settings", "game-details", "library-game-detail", "global-search", "console",
+  "home", "library", "games", "store",
+  "achievements", "activity", "verification",
+  "game-details", "library-game-detail", "global-search", "console",
   "launcher-achievements",
 ]);
 
@@ -52,21 +65,16 @@ function restoreActivePage(): AppPage {
   try {
     const stored = localStorage.getItem(ACTIVE_PAGE_KEY);
     if (stored && KNOWN_PAGES.has(stored as AppPage)) {
-      // Phase: If last route was Store but no complete cache, start on Home instead
-      if (stored === "store") {
-        const cached = getCachedStoreDiscover();
-        if (!isCacheComplete(cached)) {
-          console.log(`[ROUTE][RESTORE_FALLBACK] from=store to=home reason=no-complete-store-cache`);
-          return "home";
-        }
-      }
+      // Store handles its own partial cache gracefully via allStoreSections fallback.
+      // No longer redirect Store → Home on incomplete cache — let Store render
+      // with whatever cached data is available (partial sections, ranked catalog, etc.).
       return stored as AppPage;
     }
   } catch { /* ignore */ }
   return "home";
 }
 
-const NAV_PERF_ENABLED = true;
+const NAV_PERF_ENABLED = false;
 const DEBUG_ROUTE_RENDER = false;
 const DEBUG_ROUTE_SHELL = false;
 
@@ -109,16 +117,57 @@ function SessionOverlayWrapper() {
   return <GameSessionOverlay event={overlayEvent} onDismiss={clearOverlay} />;
 }
 
+// Navigation-level ambient fallback. On every page change it feeds the ambient store
+// with a "page-context" background so transitions never show the previous page's stale
+// art nor a blank backdrop on pages without a dedicated feed. Detail pages (dashboard
+// hero, library details, console details) override it with their own scope while mounted;
+// when they unmount the store falls back to this context automatically.
+function AmbientNavFallback({ activePage }: { activePage: AppPage }) {
+  const { selectedGame } = useGameDetails();
+
+  useEffect(() => {
+    const selectedUrl = selectedGame?.imageUrl;
+    if (selectedUrl) {
+      setPageContextSource(selectedUrl);
+      return;
+    }
+    const snapshot = getBootSnapshot();
+    const hero =
+      snapshot?.library?.games?.find((g) => g.media?.backgroundPath)
+      ?? snapshot?.library?.games?.find((g) => g.media?.landscapePath)
+      ?? snapshot?.library?.games?.find((g) => g.media?.coverPath)
+      ?? snapshot?.library?.games?.[0]
+      ?? null;
+    const heroPath = hero?.media?.backgroundPath ?? hero?.media?.landscapePath ?? hero?.media?.coverPath ?? null;
+    if (
+      heroPath &&
+      !heroPath.startsWith("media/") &&
+      !heroPath.startsWith("img/") &&
+      !heroPath.startsWith("games/")
+    ) {
+      const url = isLocalPath(heroPath) ? (localPathToUrl(heroPath) ?? undefined) : heroPath;
+      setPageContextSource(url ?? null);
+    } else {
+      setPageContextSource(null);
+    }
+  }, [activePage, selectedGame?.imageUrl]);
+
+  return null;
+}
+
 function App() {
   countRender("App");
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
-  const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
   const [bootStarted, setBootStarted] = useState(false);
   const [showModeSwitch, setShowModeSwitch] = useState(false);
   const [modeSwitchMode, setModeSwitchMode] = useState<ModeSwitchMode>("enter-console");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSectionLabel, setSettingsSectionLabel] = useState<string>("General");
   const modeSwitchKeyRef = useRef(0);
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
+  const activePageRef = useRef(activePage);
+  const { settings } = useSettings();
 
   // Start boot coordinator once on mount
   useEffect(() => {
@@ -127,7 +176,128 @@ function App() {
     runBootTasks();
   }, [bootStarted]);
 
+  // Push to navigation history when Store sub-views are opened inline
   useEffect(() => {
+    const handler = (e: Event) => {
+      const tag = (e as CustomEvent).detail?.tag as string | undefined;
+      pushToHistory("store", tag);
+    };
+    window.addEventListener("lumaforge-store-push-history", handler);
+    return () => window.removeEventListener("lumaforge-store-push-history", handler);
+  }, []);
+
+  // Bootstrap extensions at app startup (built-in + repository)
+  useEffect(() => {
+    bootstrapExtensions().then((result) => {
+      console.log(`[App] Extensions bootstrapped: ${result.registered} registered, ${result.skipped} skipped, ${result.errors.length} errors`);
+    }).catch((err) => {
+      console.error("[App] Extension bootstrap failed:", err);
+    });
+  }, []);
+
+  // ── Auto-update: silent check on startup (respects disableAutoUpdates) ──
+  useEffect(() => {
+    if (settings.disableAutoUpdates) return;
+    const timer = setTimeout(() => {
+      checkForUpdate(true);
+    }, 8000); // 8s delay — let boot finish and UI settle
+    return () => clearTimeout(timer);
+  }, [settings.disableAutoUpdates]);
+
+  // ── Launch mode: read startup-config.json and override initial page ──
+  useEffect(() => {
+    readStartupConfig().then((cfg) => {
+      const mode = cfg.launch_mode || "last-used";
+      if (mode === "console") {
+        console.log("[App] launchMode=console → navigating to Console Mode");
+        setActivePage("console");
+      } else if (mode === "desktop") {
+        // Force home page — don't restore last-used
+        const current = localStorage.getItem(ACTIVE_PAGE_KEY);
+        if (current && current !== "home") {
+          console.log(`[App] launchMode=desktop → overriding "${current}" → "home"`);
+          setActivePage("home");
+        }
+      }
+      // "last-used" → keep restoreActivePage() default (no-op)
+    }).catch((err) => {
+      console.warn("[App] Failed to read startup config for launch mode:", err);
+    });
+  }, []);
+
+  // ── Tray icon event listeners (system tray menu actions) ──
+  useEffect(() => {
+    const unlisteners: Array<() => void> = [];
+
+    // "Open LumaForge" from tray → show + focus
+    listen("lumaforge-tray-open", () => {
+      console.log("[App] Tray: open requested");
+    }).then((unlisten) => unlisteners.push(unlisten));
+
+    // "Switch to Console/Desktop Mode" from tray — toggles between modes
+    listen("lumaforge-tray-switch-mode", () => {
+      const current = activePageRef.current;
+      if (current === "console") {
+        console.log("[App] Tray: switch to desktop mode");
+        setAppFullscreen(false);
+        setActivePage("home");
+      } else {
+        console.log("[App] Tray: switch to console mode");
+        setAppFullscreen(true);
+        setActivePage("console");
+      }
+    }).then((unlisten) => unlisteners.push(unlisten));
+
+    // "Open recent game" from tray
+    listen<{ app_id: string }>("lumaforge-tray-open-game", (event) => {
+      const appId = event.payload?.app_id;
+      if (appId) {
+        console.log(`[App] Tray: open game appId=${appId}`);
+        // Navigate to library-game-detail with this game
+        const snapshot = getBootSnapshot();
+        const game = snapshot?.library?.games?.find(
+          (g: { appId?: string }) => g.appId === appId
+        );
+        if (game) {
+          setActivePage("library-game-detail");
+          // Dispatch to GameDetailsContext
+          window.dispatchEvent(
+            new CustomEvent("lumaforge-select-game", { detail: { game } })
+          );
+        }
+      }
+    }).then((unlisten) => unlisteners.push(unlisten));
+
+    return () => unlisteners.forEach((fn) => fn());
+  }, []);
+
+  // Init SQLite data change bus — listens for Rust-side data mutations
+  useEffect(() => {
+    const unlisten = initDataChangeBus();
+    return () => unlisten?.();
+  }, []);
+
+  // Init catalog orchestrator at app level — loads disk cache, provides canonical sections to Home and Store
+  useEffect(() => {
+    (async () => {
+      const { initCatalogOrchestrator } = await import("./services/storeCatalogOrchestrator");
+      await initCatalogOrchestrator({
+        rawgApiKey: settings.rawgApiKey,
+        igdbClientId: settings.igdbClientId,
+        igdbClientSecret: settings.igdbClientSecret,
+      });
+    })();
+  }, [settings.rawgApiKey, settings.igdbClientId, settings.igdbClientSecret]);
+
+  useEffect(() => {
+    setConsoleMode(activePage === "console");
+    activePageRef.current = activePage;
+    // Notify Rust tray menu to rebuild with correct switch-mode label
+    try {
+      import("@tauri-apps/api/event").then(({ emit }) => {
+        emit("lumaforge-mode-changed", activePage === "console" ? "console" : "desktop");
+      }).catch(() => {});
+    } catch { /* ignore */ }
     if (initialRender.current) {
       initialRender.current = false;
       return;
@@ -136,7 +306,9 @@ function App() {
       localStorage.setItem(ACTIVE_PAGE_KEY, activePage);
     } catch { /* ignore */ }
     // Phase 1: Mount audit — confirm only the active route's page is mounted
-    console.log(`[ROUTE][MOUNT_AUDIT] active=${activePage} mountedPages=[${activePage}]`);
+    if (DEBUG_ROUTE_RENDER && import.meta.env.DEV) {
+      console.log(`[ROUTE][MOUNT_AUDIT] active=${activePage} mountedPages=[${activePage}]`);
+    }
     // Log render summary on route change
     logRenderSummary(`previousRoute=${prevPageRef.current} nextRoute=${activePage}`);
     startRenderSession();
@@ -155,12 +327,27 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activePage]);
 
-  function handleNavigate(page: AppPage) {
+  function handleNavigate(page: AppPage, fromHistory = false) {
+    // Settings opens as overlay — don't navigate
+    if (page === "settings") {
+      setSettingsOpen(true);
+      return;
+    }
+    // When ← pressed and already on the target page (tagged sub-view), dispatch back event
+    if (page === activePage && fromHistory) {
+      window.dispatchEvent(new CustomEvent("lumaforge-store-detail-back"));
+      return;
+    }
     if (page === activePage) return;
     const startTime = NAV_PERF_ENABLED ? performance.now() : 0;
 
     // Phase 9: Mark navigation timestamp so services can defer background work
     markNavigation();
+
+    // Push to navigation history only for normal navigation (not ← →)
+    if (!fromHistory) {
+      pushToHistory(page);
+    }
 
     const isEnteringConsole = page === "console";
     const isLeavingConsole = activePage === "console" && !isEnteringConsole;
@@ -176,10 +363,6 @@ function App() {
       setAppFullscreen(true);
     } else if (isLeavingConsole) {
       setAppFullscreen(false);
-    }
-
-    if (page === "game-details") {
-      setGameDetailsPrevPage(activePage);
     }
 
     pauseBackgroundFill();
@@ -217,13 +400,10 @@ function App() {
         pageComponent = <Games />;
         break;
       case "store":
-        pageComponent = <Store />;
+        pageComponent = <Store onNavigate={handleNavigate} />;
         break;
       case "global-search":
         pageComponent = <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
-        break;
-      case "downloads":
-        pageComponent = <Downloads onNavigate={handleNavigate} />;
         break;
       case "achievements":
         pageComponent = <Achievements />;
@@ -237,17 +417,11 @@ function App() {
       case "verification":
         pageComponent = <Verification />;
         break;
-      case "tools":
-        pageComponent = <Tools />;
-        break;
-      case "settings":
-        pageComponent = <Settings />;
-        break;
       case "game-details":
-        pageComponent = <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
+        pageComponent = <GameDetailsPage onNavigate={handleNavigate} />;
         break;
       case "library-game-detail":
-        pageComponent = <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
+        pageComponent = <LibraryGameDetailPage onNavigate={handleNavigate} />;
         break;
       case "console":
         pageComponent = <ConsoleModePage onNavigate={handleNavigate} />;
@@ -267,9 +441,11 @@ function App() {
     <ConfirmProvider>
       <GameSessionProvider>
       <SessionOverlayWrapper />
+      <DebridCompletionModal onNavigateToLibrary={() => handleNavigate("library")} />
       <AchievementWatcherInit />
       <GameDetailsProvider>
-        <GameSessionHUD onNavigate={handleNavigate} />
+        {settings.gameSessionHudEnabled !== false && <GameSessionHUD onNavigate={handleNavigate} />}
+        <AmbientNavFallback activePage={activePage} />
         <AppLayout activePage={activePage} onNavigate={handleNavigate} isConsoleMode={activePage === "console"}>
           <AppRouteTransition routeKey={activePage}>
             {renderPage() ?? (
@@ -283,9 +459,9 @@ function App() {
       </GameDetailsProvider>
       </GameSessionProvider>
       <InstallerProgressListener />
+      <FixProgressListener />
       <GameToastViewport />
       <AchievementToastViewport />
-      {import.meta.env.DEV && <BackgroundJobDebugPanel />}
       {/* Mode switch splash — covers Desktop ↔ Console transitions */}
       {showModeSwitch && (
         <ModeSwitchSplash
@@ -298,6 +474,15 @@ function App() {
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
       <LibraryLoadProgressCard />
+
+      {/* Settings overlay — renders on top of everything */}
+      <SettingsOverlay
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        activeSectionLabel={settingsSectionLabel}
+      >
+        <Settings onSectionChange={setSettingsSectionLabel} />
+      </SettingsOverlay>
     </ConfirmProvider>
   );
 

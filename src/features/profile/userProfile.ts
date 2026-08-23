@@ -117,6 +117,18 @@ export function useUserProfile(): [UserProfile, (patch: Partial<UserProfile>) =>
     setProfile((prev) => ({ ...prev, ...patch, updatedAt: Date.now() }));
   }, []);
 
+  // Listen for external restore writes and reload profile from localStorage
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.key === STORAGE_KEY) {
+        setProfile(loadUserProfile());
+      }
+    };
+    window.addEventListener("lumaforge-data-changed", handler);
+    return () => window.removeEventListener("lumaforge-data-changed", handler);
+  }, []);
+
   return [profile, patchProfile];
 }
 

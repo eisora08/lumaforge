@@ -1,4 +1,6 @@
 import type { LibraryGame } from "../../types/libraryGame";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { achievementStore } from "../../services/achievementStore";
 
 export function formatBytes(bytes?: number): string {
   if (!bytes || bytes === 0) return "Unknown";
@@ -34,6 +36,14 @@ export function getGameDiskSize(game: LibraryGame): string {
 }
 
 export function getGameLastPlayedTimestamp(game: LibraryGame): number | null {
+  // Source-specific key FIRST for manual/debrid (libraryId), not appId
+  // (matches desktop GameHero's manualPlaytime map priority)
+  const byKey = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game))?.lastPlayedAt;
+  if (byKey) return byKey;
+  // Then canonical app-{appId} for Steam/Lua
+  const byAppId = game.appId ? getPlaytimeEntryByAppId(game.appId)?.lastPlayedAt : null;
+  if (byAppId) return byAppId;
+  // Fallback to snapshot/game fields
   const ts = game.localLastPlayedAt ?? game.steamLastPlayedAt;
   return ts ?? null;
 }
@@ -43,8 +53,18 @@ export function getGameAchievementSummary(game: LibraryGame): {
   total: number;
   percent: number;
 } | null {
-  const unlocked = game.achievementUnlocked;
-  const total = game.achievementTotal;
+  let unlocked = game.achievementUnlocked;
+  let total = game.achievementTotal;
+
+  // Fallback: read from achievement store for games with appId but missing fields
+  if ((typeof unlocked !== "number" || typeof total !== "number" || total <= 0) && game.appId) {
+    const storeSummary = achievementStore.getSummary(game.appId);
+    if (storeSummary && storeSummary.total > 0) {
+      unlocked = storeSummary.unlocked ?? 0;
+      total = storeSummary.total;
+    }
+  }
+
   if (typeof unlocked !== "number" || typeof total !== "number" || total <= 0) return null;
   return {
     unlocked,
@@ -62,4 +82,35 @@ export function getGameCompletionStatus(game: LibraryGame, playtimeSeconds: numb
     return "In Progress";
   }
   return "Played";
+}
+
+export type EffectiveCompletionStatus = "completed" | "in-progress" | "not-played" | "played";
+
+/**
+ * Get the effective completion status for a game.
+ * Checks for a user-set override first (from GameEditDialog dropdown),
+ * then falls back to auto-computation from playtime + achievements.
+ */
+export function getEffectiveCompletionStatus(
+  game: LibraryGame,
+  userOverride?: string,
+): EffectiveCompletionStatus | null {
+  // User-set manual overrides take priority
+  if (userOverride === "completed") return "completed";
+  if (userOverride === "in-progress") return "in-progress";
+  if (userOverride === "not-played") return "not-played";
+
+  // Auto-compute from playtime + achievements
+  // Dual-tier: try appId first, then fall back to source-specific gameKey
+  let ptEntry = game.appId ? getPlaytimeEntryByAppId(game.appId) : null;
+  if (!ptEntry) {
+    ptEntry = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+  }
+  const seconds = ptEntry?.totalPlaytimeSeconds ?? 0;
+  const raw = getGameCompletionStatus(game, seconds);
+  if (raw === "Completed") return "completed";
+  if (raw === "In Progress") return "in-progress";
+  if (raw === "Not Played") return "not-played";
+  if (raw === "Played") return "played";
+  return null;
 }

@@ -1,22 +1,43 @@
-// Debug flag for achievement-related details logs (noisy per-navigation logs)
+﻿// Debug flag for achievement-related details logs (noisy per-navigation logs)
 const DEBUG_ACH_DETAILS = false;
 const DEBUG_LAUNCH_BUTTON_RENDER = false;
+const DEBUG_MANUAL_REMOVE = false;
+// Debug flag for hero layer composition (blur backdrop vs sharp foreground)
+const DEBUG_HERO_LAYERS = false;
+const SHOW_ACH_DEBUG_BUTTONS = false;
+
+// Compares two media URLs/paths by normalized basename (case-insensitive, ignores query/hash).
+// The snapshot stores relative paths (media/background.jpg) while canonicalAppInfo resolves
+// to absolute paths — both point to the same file. Keeping the same string avoids the
+// <img key={imageUrl}> remount (and its opacity-0 gap) when only the path format changed.
+function sameHeroFile(a: string, b: string): boolean {
+  const base = (s: string) => {
+    const clean = s.split(/[?#]/)[0] ?? s;
+    const parts = clean.split(/[\\/]/);
+    const name = parts[parts.length - 1] ?? clean;
+    return name.toLowerCase();
+  };
+  const na = base(a);
+  const nb = base(b);
+  return na.length > 0 && na === nb;
+}
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
 import {
-  ArrowLeft,
   BookMarked,
   BookOpen,
   Calendar,
   Cloud,
-  Clock,
+  CalendarClock,
+  ClockFading,
   Database,
   Download,
   ExternalLink,
   FileCode2,
+  FileSearch,
   FolderOpen,
-  Gamepad2,
   HardDrive,
   LifeBuoy,
   Loader2,
@@ -34,8 +55,11 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
-import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
-import { showInfo } from "../toast/GameToast";
+import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
+import { setAmbientSource, clearAmbientSource, rememberLibraryDetails } from "../../services/ambientBackgroundStore";
+import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
+import { showInfo, showSuccess, showError } from "../toast/GameToast";
+import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -48,11 +72,14 @@ import {
   getSteamDbUrl,
 } from "../../utils/steamLinks";
 import toast from "react-hot-toast";
+import { open } from "@tauri-apps/plugin-dialog";
+import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
 
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
 
 import { useInstallTracker } from "../../hooks/useInstallTracker";
+import { useGrowOnMount } from "../../hooks/useGrowOnMount";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { useGameActivity } from "../../context/GameActivityContext";
 import {
@@ -62,7 +89,7 @@ import {
 import type { ResolvedGameMediaBundle } from "../../types/gameMedia";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
-import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel, subscribePlaytimeStore } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, subscribePlaytimeStore } from "../../services/playtimeService";
 import type { SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
@@ -73,8 +100,9 @@ import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedA
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
 import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
+import { ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS } from "../../services/achievementAutoFlags";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
-import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSnapshotService";
+import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import GameEditDialog from "../games/GameEditDialog";
@@ -93,6 +121,7 @@ type LibraryGameDetailsProps = {
   localDetailsData?: unknown;
   fallbackBundle?: ResolvedGameMediaBundle | null;
   loading?: boolean;
+  canonicalLoaded?: boolean;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
   onSync?: (game: LibraryGame) => void;
@@ -103,6 +132,7 @@ type LibraryGameDetailsProps = {
   onOpenSourceSelector?: (game: LibraryGame) => void;
   onBack: () => void;
   onRefreshArtwork?: () => void;
+  onOpenTools?: (game: LibraryGame) => void;
   onNavigate?: (page: AppPage) => void;
   launchInfo?: GameLaunchInfo;
   onCancelLaunch?: () => void;
@@ -118,15 +148,24 @@ function logDetailsCanonical(appId: string, msg: string): void {
 }
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null, fallbackBundle?: ResolvedGameMediaBundle | null): string | undefined {
-  // Priority: local disk → metadata primary → fallbackBundle background → metadata secondary → fallbackBundle L/C → imageUrl → placeholder
+  // Priority: snapshot/canonical local disk paths first so the sharp hero targets the
+  // same high-res asset the blurred backdrop shows from frame 1 (no visible swap when
+  // remote sources like appInfoEntry/SGDB/fallbackBundle resolve later) → mediaEntry →
+  // materialized fallbackBundle localPath → Steam metadata primary → Steam header →
+  // SGDB → fallbackBundle remote URL → metadata secondary → imageUrl → placeholder.
   if (canonicalAppInfo?.media?.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`); return canonicalAppInfo.media.backgroundPath; }
+  if (game.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.backgroundPath path=${game.backgroundPath}`); return game.backgroundPath; }
   if (canonicalAppInfo?.media?.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`); return canonicalAppInfo.media.landscapePath; }
+  if (game.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.landscapePath path=${game.landscapePath}`); return game.landscapePath; }
   if (canonicalAppInfo?.media?.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=cover path=${canonicalAppInfo.media.coverPath}`); return canonicalAppInfo.media.coverPath; }
+  if (game.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.coverPath path=${game.coverPath}`); return game.coverPath; }
   if (mediaEntry?.hero_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.hero_path`); return mediaEntry.hero_path; }
   if (mediaEntry?.grid_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.grid_path`); return mediaEntry.grid_path; }
-  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image`); return appInfoEntry.header_image; }
-  if (artwork?.sgdbHeroUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
-  if (artwork?.sgdbGridUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
+  // FallbackBundle: resolved by multi-provider chain (steam-appdetails metadata → cached → SGDB → IGDB → RAWG)
+  // Prefer localPath (materialized on disk) before remote URL
+  if (fallbackBundle?.background?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background.localPath path=${fallbackBundle.background.localPath}`); return fallbackBundle.background.localPath; }
+  if (fallbackBundle?.landscape?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape.localPath path=${fallbackBundle.landscape.localPath}`); return fallbackBundle.landscape.localPath; }
+  if (fallbackBundle?.cover?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover.localPath path=${fallbackBundle.cover.localPath}`); return fallbackBundle.cover.localPath; }
   // Metadata primary background fields
   const metaPrimary = game.metadata?.background_image
     || (game.metadata as any)?.background
@@ -134,11 +173,9 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.library_hero_image
     || game.metadata?.hero_image;
   if (metaPrimary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataPrimary`); return metaPrimary; }
-  // FallbackBundle: resolved by multi-provider chain (steam-appdetails metadata → cached → SGDB → IGDB → RAWG)
-  // Prefer localPath (materialized on disk) before remote URL
-  if (fallbackBundle?.background?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background.localPath path=${fallbackBundle.background.localPath}`); return fallbackBundle.background.localPath; }
-  if (fallbackBundle?.landscape?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape.localPath path=${fallbackBundle.landscape.localPath}`); return fallbackBundle.landscape.localPath; }
-  if (fallbackBundle?.cover?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover.localPath path=${fallbackBundle.cover.localPath}`); return fallbackBundle.cover.localPath; }
+  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image`); return appInfoEntry.header_image; }
+  if (artwork?.sgdbHeroUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
+  if (artwork?.sgdbGridUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
   if (fallbackBundle?.background?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background source=${fallbackBundle.background.source}`); return fallbackBundle.background.url; }
   if (fallbackBundle?.landscape?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape source=${fallbackBundle.landscape.source}`); return fallbackBundle.landscape.url; }
   if (fallbackBundle?.cover?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover source=${fallbackBundle.cover.source}`); return fallbackBundle.cover.url; }
@@ -220,6 +257,7 @@ export default function LibraryGameDetails({
   canonicalDiskFallback,
   localDetailsData,
   loading = false,
+  canonicalLoaded = true,
   onPlay,
   onInstall,
   onDeleteScript,
@@ -227,6 +265,7 @@ export default function LibraryGameDetails({
   onOpenSteamDb,
   onBack,
   onRefreshArtwork,
+  onOpenTools,
   onNavigate,
   launchInfo,
   onCancelLaunch,
@@ -240,10 +279,25 @@ export default function LibraryGameDetails({
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDialogTab, setEditDialogTab] = useState<"details" | "media">("details");
   const [heroImgError, setHeroImgError] = useState(false);
+  const [loadedHeroUrl, setLoadedHeroUrl] = useState<string | undefined>(undefined);
+  const [placeholderUrl, setPlaceholderUrl] = useState<string | undefined>(undefined);
+  const [backdropLayers, setBackdropLayers] = useState<string[]>([]);
   const { isFavorite, toggleFavorite } = useFavorites();
-  const favorite = game.appId ? isFavorite(game.appId) : false;
+  const favoriteId = getFavoriteKey(game) ?? game.id;
+  const favorite = isFavorite(favoriteId);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const stickyActionsBtnRef = useRef<HTMLButtonElement>(null);
+  const dropdownMenuRef = useRef<HTMLDivElement>(null);
+  const [anchorRect, setAnchorRect] = useState<{ top: number; right: number } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const stickyHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showStickyBar, setShowStickyBar] = useState(false);
+  const isManualGame = game.source === "manual";
+  const isEpicGame = game.source === "epic";
+  const linkedSteamAppId = isManualGame ? ((localDetailsData as any)?.linkedSteamAppId ?? null) : null;
 
   const detailTitle = resolveCanonicalDisplayTitle(
     game.appId ?? "",
@@ -261,17 +315,21 @@ export default function LibraryGameDetails({
 
   const { settings } = useSettings();
   const { sessions: gameSessions } = useGameSession();
+  const gameSessionKey = game.id;
+  const isManualRunning = game.source === "manual" && !!(gameSessions[gameSessionKey]?.state === "running" || gameSessions[gameSessionKey]?.state === "launching");
   const appIdStr = game.appId;
+  const snapshotHydratedRef = useRef(false);
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
     if (!appIdStr) return null;
     // 1. Check in-memory store first
-    const fromStore = achievementStore.getSummary(appIdStr);
+    const fromStore = achievementStore.getSummary(appIdStr, "steam-official");
     if (fromStore) return fromStore;
     // 2. Fallback to snapshot's achievementSummary (updated by full rebuild after refresh)
     const snap = getCachedSnapshot();
     const snapGame = snap?.library?.games?.find(g => g.appId === appIdStr);
     if (snapGame?.achievementSummary && snapGame.achievementSummary.total > 0) {
       const a = snapGame.achievementSummary;
+      if (!a.unlocked || a.unlocked === 0) snapshotHydratedRef.current = true;
       return {
         appId: appIdStr,
         source: "local-cache" as const,
@@ -285,11 +343,106 @@ export default function LibraryGameDetails({
     }
     return null;
   });
-  const [achievementsLoading, setAchievementsLoading] = useState(false);
+  // When the initial state came from the snapshot (stale, achievements: []),
+  // the effect below will async-load the real disk cache — show a loading state
+  // so the UI doesn't flash stale numbers.
+  const [achievementsLoading, setAchievementsLoading] = useState(() => snapshotHydratedRef.current);
   const [achievementsRefreshing, setAchievementsRefreshing] = useState(false);
   const achievementsSyncing = achievementsSummary != null && achievementsLoading;
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
   const [localAchSupportFound, setLocalAchSupportFound] = useState(false);
+  // Lazy initializer: read persisted choice synchronously so the FIRST resolve uses the correct
+  // platform (avoids writing to steam-official/ before async detectCrackType completes).
+  // Also checks installDir for known crack folder patterns to avoid the race.
+  const [achSource, setAchSource] = useState<"steam-official" | "steam">(() => {
+    if (!appIdStr) return "steam-official";
+    const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
+    if (saved) return saved;
+    if (game?.isStandalone) return "steam";
+    if (game?.source === "debrid" || game?.source === "manual") return "steam";
+    // Sync heuristic: if installDir contains a known crack folder name, treat as crack
+    const dir = (game?.installDir ?? "").toLowerCase();
+    if (dir && (dir.includes("tenoke") || dir.includes("rune") || dir.includes("codex")
+      || dir.includes("goldberg") || dir.includes("onlinefix") || dir.includes("empress")
+      || dir.includes("gse_") || dir.includes("goldberg_emu"))) return "steam";
+    return "steam-official";
+  });
+  const [hasCrackSave, setHasCrackSave] = useState(false);
+
+  // Gate auto-sync watcher: don't start until crack detection completes.
+  // Prevents writing to steam-official/ before async detectCrackType sets the correct platform.
+  const [crackDetectDone, setCrackDetectDone] = useState(false);
+
+  // Auto-detect crack source on mount — only auto-select when user has no persisted choice.
+  // The cancelled flag prevents the async callback from overwriting a manual user switch.
+  useEffect(() => {
+    if (!appIdStr) return;
+    userSwitchedSourceRef.current = false;
+    setCrackDetectDone(false);
+    let cancelled = false;
+    const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
+    import("../../services/achievementConfigService").then(({ detectCrackType }) => {
+      detectCrackType(appIdStr, game?.installDir).then((result: any) => {
+        if (cancelled) return;
+        setCrackDetectDone(true);
+        const hasCrack = !!result?.savePath;
+        setHasCrackSave(hasCrack);
+        if (saved) {
+          // Always apply from localStorage — the lazy initializer may have run before
+          // standalone was activated, leaving achSource as "steam-official" while
+          // handleToggleStandalone already wrote "steam" to localStorage.
+          setAchSource(saved);
+          console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} loaded from localStorage=${saved} hasCrack=${hasCrack}`);
+        } else if (game?.isStandalone || hasCrack || game?.source === "debrid" || game?.source === "manual") {
+          setAchSource("steam");
+          console.log(`[ACH][SOURCE_DETECT] appid=${appIdStr} source=${game?.source} detected crack=${hasCrack} save=${result?.savePath} type=${result?.crackType}`);
+        } else {
+          setAchSource("steam-official");
+        }
+      }).catch(() => { setCrackDetectDone(true); });
+    }).catch(() => { setCrackDetectDone(true); });
+    return () => { cancelled = true; };
+  }, [appIdStr, game?.installDir, game?.isStandalone]);
+
+  // Re-resolve achievements when source changes — always re-resolve, even without summary
+  const achSourceRef = useRef<string | null>(achSource); // initialized with achSource → only fires on actual platform switch
+  const userSwitchedSourceRef = useRef(false);
+  useEffect(() => {
+    if (!appIdStr) return;
+    if (achSourceRef.current === achSource) return;
+    achSourceRef.current = achSource;
+    userSwitchedSourceRef.current = true; // block disk cache effect during resolve
+    // Trigger refresh with new source
+    (async () => {
+      const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+      setAchievementsLoading(true);
+      try {
+        const gameSource = achSource === "steam" ? "debrid" : "steam";
+        const s = await resolveSteamAchievements({
+          appId: appIdStr,
+          steamWebApiKey: settings.steamWebApiKey || undefined,
+          steamId64: settings.steamId64 || undefined,
+          accountId: settings.steamAccountId || undefined,
+          steamPath: settings.steamRoot || undefined,
+          forceRefresh: true,
+          steamAchievementsEnabled: settings.steamAchievementsEnabled,
+          achievementSchemaPath: settings.achievementSchemaPath || undefined,
+          gameSource,
+          platform: achSource,
+          installDir: game.installDir,
+        });
+        if (appIdStr && s && s.achievements?.length > 0) {
+          setAchievementsSummary(s);
+          achievementStore.setSummary(appIdStr, s, achSource);
+          console.log(`[ACH][SOURCE_CHANGED] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${s.unlocked}/${s.total}`);
+        }
+      } catch (err) {
+        console.warn(`[ACH][SOURCE_CHANGED] failed appid=${appIdStr} reason=${err}`);
+      } finally {
+        setAchievementsLoading(false);
+      }
+    })();
+  }, [achSource]);
   const supportCheckDoneRef = useRef(false);
 
   useEffect(() => {
@@ -318,10 +471,34 @@ export default function LibraryGameDetails({
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback, fallbackBundle);
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
 
-  // Reset hero image error when a new URL is resolved
+  // Reset hero image states when a new URL is resolved
+  // Clear error on candidate changes, but keep the last good hero visible (crossfade).
+  // Only reset the loaded hero when switching to a different game.
+  const prevHeroAppIdRef = useRef(game.appId);
   useEffect(() => {
     setHeroImgError(false);
   }, [rawImageUrl]);
+
+  useEffect(() => {
+    if (prevHeroAppIdRef.current !== game.appId) {
+      prevHeroAppIdRef.current = game.appId;
+      setLoadedHeroUrl(undefined);
+      setHeroImgError(false);
+      setBackdropLayers([]);
+    }
+  }, [game.appId]);
+
+  const backdropSrc = loadedHeroUrl ?? placeholderUrl;
+  useEffect(() => {
+    if (!backdropSrc) return;
+    setBackdropLayers((prev) => (prev[prev.length - 1] === backdropSrc ? prev : [...prev.slice(-1), backdropSrc]));
+  }, [backdropSrc]);
+
+  useEffect(() => {
+    if (backdropLayers.length < 2) return;
+    const t = setTimeout(() => setBackdropLayers((prev) => prev.slice(-1)), 600);
+    return () => clearTimeout(t);
+  }, [backdropLayers]);
 
   useEffect(() => {
     if (!rawImageUrl) {
@@ -333,6 +510,9 @@ export default function LibraryGameDetails({
       if (rawImageUrl.startsWith("media/") || rawImageUrl.startsWith("img/")) {
         const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
         resolved = await resolveRelativeMediaPath(game.appId ?? "", rawImageUrl).catch(() => rawImageUrl);
+      } else if (rawImageUrl.startsWith("games/")) {
+        const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+        resolved = await resolveProviderMediaPreviewUrl(rawImageUrl).catch(() => rawImageUrl) ?? rawImageUrl;
       }
       // Block cross-appid paths
       if (isLocalPath(resolved) && game.appId) {
@@ -345,13 +525,73 @@ export default function LibraryGameDetails({
       }
       const isLocal = isLocalPath(resolved);
       const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
-      setImageUrl(url);
+      // Keep the current string when the resolved URL points to the same file (basename match).
+      // Snapshot paths are relative (media/background.jpg) while canonicalAppInfo resolves to
+      // absolute paths; same file → same key={imageUrl} → no <img> remount → no opacity-0 gap.
+      setImageUrl((prev) => (prev && url && sameHeroFile(prev, url) ? prev : url));
       if (game.appId === "4717430") {
         console.log(`[LIB_MEDIA_DEBUG][HERO_FINAL] appid=4717430 url=${url ?? "(null)"} rawUrl=${rawImageUrl} fallbackBundle=${!!fallbackBundle} fbBg=${fallbackBundle?.background?.url ?? "(null)"} canonicalBg=${canonicalAppInfo?.media?.backgroundPath ?? "(null)"} metaBg=${game.metadata?.background_image ?? "(null)"}`);
       }
     };
     resolve();
   }, [rawImageUrl, game.appId, fallbackBundle, canonicalAppInfo, game.metadata?.background_image]);
+
+  // ─── Ambient background: feed hero art synchronously from in-memory snapshot media
+  // (first paint, no async), then upgrade to the resolved imageUrl. On game change/unmount
+  // the store falls back to the navigation-level page-context so the background never
+  // goes stale or blank during the canonical-resolution window. ──
+  useEffect(() => {
+    if (imageUrl) {
+      setAmbientSource("library-details", imageUrl);
+      rememberLibraryDetails(imageUrl);
+      return;
+    }
+    const syncPath = game.backgroundPath || game.landscapePath || game.coverPath;
+    if (
+      syncPath &&
+      !syncPath.startsWith("media/") &&
+      !syncPath.startsWith("img/") &&
+      !syncPath.startsWith("games/")
+    ) {
+      const url = isLocalPath(syncPath) ? (localPathToUrl(syncPath) ?? undefined) : syncPath;
+      if (url) {
+        setAmbientSource("library-details", url);
+        rememberLibraryDetails(url);
+      }
+    }
+  }, [imageUrl, game.appId, game.backgroundPath, game.landscapePath, game.coverPath]);
+
+  useEffect(() => {
+    clearAmbientSource("library-details");
+  }, [game.appId]);
+
+  useEffect(() => {
+    return () => clearAmbientSource("library-details");
+  }, []);
+
+  // Resolve a fast colorful placeholder (snapshot media) so the hero never flashes black
+  // while canonicalAppInfo/imageUrl load asynchronously for Steam/Lua games.
+  const rawPlaceholder = game.backgroundPath || game.landscapePath || game.coverPath;
+  useEffect(() => {
+    if (!rawPlaceholder) {
+      setPlaceholderUrl(undefined);
+      return;
+    }
+    const resolve = async () => {
+      let resolved = rawPlaceholder;
+      if (resolved.startsWith("media/") || resolved.startsWith("img/")) {
+        const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
+        resolved = await resolveRelativeMediaPath(game.appId ?? "", resolved).catch(() => rawPlaceholder);
+      } else if (resolved.startsWith("games/")) {
+        const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+        resolved = await resolveProviderMediaPreviewUrl(resolved).catch(() => rawPlaceholder) ?? rawPlaceholder;
+      }
+      const isLocal = isLocalPath(resolved);
+      const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
+      setPlaceholderUrl(url);
+    };
+    resolve();
+  }, [rawPlaceholder, game.appId]);
 
   const rawLogoUrl = (() => {
     const fallbackLogoSrc = fallbackBundle?.logo?.url;
@@ -382,9 +622,62 @@ export default function LibraryGameDetails({
     }
     return rawLogoUrl;
   })();
-  const logoUrl = _validatedLogoSrc && isLocalPath(_validatedLogoSrc)
-    ? (localPathToUrl(_validatedLogoSrc) ?? undefined)
-    : _validatedLogoSrc;
+  const [resolvedRelativeLogoUrl, setResolvedRelativeLogoUrl] = useState<string | undefined>(undefined);
+  const [logoNaturalHeight, setLogoNaturalHeight] = useState<number | null>(null);
+  const handleLogoLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    setLogoNaturalHeight(e.currentTarget.naturalHeight);
+  }, []);
+  // Resolve the logo URL synchronously during render when possible (absolute/local/http
+  // paths) so the first render after canonicalLoaded already shows the logo — no title flash.
+  // Only relative paths (games/, media/, img/) need the async resolution below.
+  const resolvedLogoSync = useMemo(() => {
+    if (!_validatedLogoSrc) return undefined;
+    if (_validatedLogoSrc.startsWith("games/") || _validatedLogoSrc.startsWith("media/") || _validatedLogoSrc.startsWith("img/")) {
+      return undefined;
+    }
+    return isLocalPath(_validatedLogoSrc) ? (localPathToUrl(_validatedLogoSrc) ?? undefined) : _validatedLogoSrc;
+  }, [_validatedLogoSrc]);
+  useEffect(() => {
+    if (!_validatedLogoSrc || resolvedLogoSync) { setResolvedRelativeLogoUrl(undefined); return; }
+    const resolveLogo = async () => {
+      let resolved: string | null = _validatedLogoSrc;
+      if (_validatedLogoSrc.startsWith("games/")) {
+        const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+        resolved = await resolveProviderMediaPreviewUrl(_validatedLogoSrc).catch(() => _validatedLogoSrc);
+      } else {
+        const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
+        resolved = await resolveRelativeMediaPath(game.appId ?? "", _validatedLogoSrc).catch(() => _validatedLogoSrc);
+      }
+      setResolvedRelativeLogoUrl(resolved ?? undefined);
+    };
+    resolveLogo();
+  }, [_validatedLogoSrc, resolvedLogoSync, game.appId]);
+  const logoUrl = resolvedLogoSync ?? resolvedRelativeLogoUrl;
+  useEffect(() => { setLogoNaturalHeight(null); }, [logoUrl]);
+
+  // Sticky bar — shows when the action row scrolls out of view (with hysteresis to prevent flicker)
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) {
+          if (stickyHideTimerRef.current) { clearTimeout(stickyHideTimerRef.current); stickyHideTimerRef.current = null; }
+          setShowStickyBar(true);
+        } else {
+          stickyHideTimerRef.current = setTimeout(() => { stickyHideTimerRef.current = null; setShowStickyBar(false); }, 80);
+        }
+      },
+      { root: null, threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => { observer.disconnect(); if (stickyHideTimerRef.current) { clearTimeout(stickyHideTimerRef.current); stickyHideTimerRef.current = null; } };
+  }, [loading, game?.appId]);
+  // Responsive logo sizing: width scales with the viewport, height stays proportional to the
+  // logo's intrinsic aspect ratio once loaded. max-height caps extreme ratios.
+  const logoWidth = "clamp(160px, 44vw, 540px)";
+  const logoHeightFallback = "clamp(80px, 14vh, 200px)";
+  const logoMaxHeight = "clamp(80px, 18vh, 240px)";
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
   const { installState, dismiss } = useInstallTracker(game.appId);
@@ -395,20 +688,36 @@ export default function LibraryGameDetails({
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
+  // Subscribe to the selectable hero/background transition (Settings → Animaciones)
+  useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
+  const heroTransition = getHeroTransitionSnapshot().id;
+  // Sharp-image animation per transition: crossfade (default, soft two-layer
+  // fade), focus (current blur→sharp reveal) or kenburns (continuous zoom).
+  const sharpHeroClass =
+    heroTransition === "kenburns"
+      ? "animate-hero-kenburns-in"
+      : heroTransition === "focus"
+        ? "animate-hero-focus-in"
+        : "animate-hero-crossfade-in";
   const effectiveAction = hasPendingUninstall
     ? "uninstalling"
     : hasActiveInstall
-    ? "installing"
-    : installState.status === "timeout"
-      ? "timeout"
-      : action;
+      ? "installing"
+      : installState.status === "timeout"
+        ? "timeout"
+        : action;
   if (DEBUG_LAUNCH_BUTTON_RENDER) {
     console.log(`[GAME_ACTION_RENDER] appid=${game.appId} location=gamedetails uninstallPending=${hasPendingUninstall} baseAction=${action} effectiveAction=${effectiveAction} renderedPrimary=${hasPendingUninstall ? "Uninstalling" : effectiveAction === "play" ? "Play" : effectiveAction === "install" ? "Install" : effectiveAction}`);
   }
 
-  const rawShort = game.metadata?.short_description;
-  const rawAbout = game.metadata?.about_the_game;
-  const rawDetailed = game.metadata?.detailed_description;
+  const rawShort = game.metadata?.short_description || (localDetailsData as any)?.shortDescription;
+  const rawAbout = game.metadata?.about_the_game || (localDetailsData as any)?.description;
+  const rawDetailed = game.metadata?.detailed_description || (localDetailsData as any)?.description;
+
+  if ((window as any).__DEBUG_META_TRACE) {
+    const _id = game.appId || game.id;
+    console.log(`[META_TRACE][DETAILS] appId=${_id} src=${game.source} game.meta=${!!game.metadata} resolved=${game.metadata?.resolved} rawShort=${!!rawShort} rawAbout=${!!rawAbout} rawDetailed=${!!rawDetailed} localDetails=${!!localDetailsData} canonicalLoaded=${canonicalLoaded}`);
+  }
 
   const aboutText = rawAbout ? stripHtml(rawAbout) : "";
   const detailedText = rawDetailed ? stripHtml(rawDetailed) : "";
@@ -422,12 +731,12 @@ export default function LibraryGameDetails({
     : longDescText;
 
   const genres = useMemo(
-    () => uniqueLabels(game.metadata?.genres || []),
-    [game.id, game.metadata?.genres]
+    () => uniqueLabels(game.metadata?.genres || (localDetailsData as any)?.genres || []),
+    [game.id, game.metadata?.genres, (localDetailsData as any)?.genres]
   );
   const categories = useMemo(
-    () => uniqueLabels(game.metadata?.categories || []),
-    [game.id, game.metadata?.categories]
+    () => uniqueLabels(game.metadata?.categories || (localDetailsData as any)?.categories || []),
+    [game.id, game.metadata?.categories, (localDetailsData as any)?.categories]
   );
 
   const appIdNum = game.appId ? Number(game.appId) : null;
@@ -447,11 +756,25 @@ export default function LibraryGameDetails({
     return unsub;
   }, []);
 
-  // Phase 1: Audit Activity playtime
-  const ptEntry = getPlaytimeEntryByAppId(game.appId);
+  // Phase 1: Audit Activity playtime — use provider-aware key FIRST, then appId fallback
+  const ptEntry = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game))
+    ?? (game.appId ? getPlaytimeEntryByAppId(game.appId) : null);
   const totalSeconds = ptEntry ? computeTotalPlaytime(ptEntry) : 0;
-  const sourceLabel = getPlaytimeSourceLabel(game.appId);
-  const lastPlayedFromActivity = getLastSessionEndForAppId(game.appId);
+  const sourceLabel = ptEntry ? (ptEntry.playtimeSource ?? ptEntry.provider ?? "unknown") : "unknown";
+  const lastPlayedFromActivity = (() => {
+    // Try provider-aware key first (debrid/manual/epic), then appId fallback
+    if (ptEntry) {
+      if (ptEntry.lastPlayedAt) return ptEntry.lastPlayedAt;
+      if (ptEntry.sessions.length > 0) {
+        const sorted = [...ptEntry.sessions].sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
+        return sorted[0].endedAt ?? sorted[0].startedAt;
+      }
+    }
+    // Fallback: try appId-specific lookup (for cases where ptEntry was found via a different key)
+    const byAppId = getLastSessionEndForAppId(game.appId);
+    if (byAppId) return byAppId;
+    return null;
+  })();
   if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][PLAYTIME_AUDIT] appid=${game.appId} activityFound=${!!ptEntry} key=${ptEntry?.gameKey ?? null} totalSeconds=${totalSeconds} lastPlayedAt=${ptEntry?.lastPlayedAt ?? null} uiPlaytime=${formatPlaytimeSeconds(totalSeconds || 0)} uiLastPlayed=${lastPlayedFromActivity ?? "Never"}`);
 
   // Phase 3: Display Activity totalPlaytimeSeconds (overrides Steam/local fallback)
@@ -473,12 +796,14 @@ export default function LibraryGameDetails({
   }
 
   // Phase 4: Last played — prefer Activity (updated on launch), fallback to Steam/local
-  const lastPlayedSource = lastPlayedFromActivity ?? game.localLastPlayedAt ?? game.steamLastPlayedAt ?? 0;
+  // playtime store stores Unix SECONDS; formatTimestamp expects MILLISECONDS → multiply by 1000
+  const lastPlayedFromActivityMs = lastPlayedFromActivity ? lastPlayedFromActivity * 1000 : 0;
+  const lastPlayedSource = lastPlayedFromActivityMs || game.localLastPlayedAt || game.steamLastPlayedAt || 0;
   const lastPlayed = lastPlayedSource > 0
     ? (() => {
-        if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][LAST_PLAYED_DISPLAY] appid=${game.appId} value=${lastPlayedSource} source=${lastPlayedFromActivity ? "activity" : (game.localLastPlayedAt ? "local" : "steam")}`);
-        return formatTimestamp(lastPlayedSource);
-      })()
+      if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][LAST_PLAYED_DISPLAY] appid=${game.appId} value=${lastPlayedSource} source=${lastPlayedFromActivity ? "activity" : (game.localLastPlayedAt ? "local" : "steam")}`);
+      return formatTimestamp(lastPlayedSource);
+    })()
     : "Never";
 
   // Trace achievement render source for Cuphead debugging
@@ -552,7 +877,8 @@ export default function LibraryGameDetails({
       setAchievementsSummary(null);
       return;
     }
-    const stored = achievementStore.getSummary(appIdStr) ?? null;
+    if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
+    const stored = achievementStore.getSummary(appIdStr, achSource) ?? null;
     if (stored) {
       if (DEBUG_ACH_DETAILS) console.log(`[ACH][STATE_PRESERVE] appid=${appIdStr} reason=route-change unlocked=${stored.unlocked}/${stored.total}`);
     }
@@ -560,20 +886,22 @@ export default function LibraryGameDetails({
       if (prev?.appId === stored?.appId && prev?.source === stored?.source && prev?.unlocked === stored?.unlocked && prev?.total === stored?.total) return prev;
       return stored;
     });
-  }, [appIdStr]);
+  }, [appIdStr, achSource]);
 
-  // Load achievements — only on explicit refresh, NOT on mount (auto-disabled)
+  // Load achievements on mount when auto-load is enabled, or on explicit refresh
   // Safe: reads existing disk cache for current visible appId only.
   // No stats/schema scan, no migration, no cache write, no full library scan.
-  const shouldAutoLoadAchievements = false; // ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS — hard-disabled
+  const shouldAutoLoadAchievements = ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS;
   const ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP = true;
   const diskCacheRef = useRef<{ updatedAt: number } | null>(null);
+  const isInitialAchMountRef = useRef(true); // only skip resolver on first mount (not settings change)
   useEffect(() => {
     if (!appIdStr) return;
+    if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
     if (!shouldAutoLoadAchievements) {
       let cancelled = false;
       // 1. Check in-memory store first
-      const stored = achievementStore.getSummary(appIdStr);
+      const stored = achievementStore.getSummary(appIdStr, achSource);
       if (stored) {
         setAchievementsSummary(stored);
         if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${stored.unlocked} total=${stored.total} progressAvailable=${stored.progressAvailable} source=${stored.source}`);
@@ -584,88 +912,91 @@ export default function LibraryGameDetails({
         const appIdNum = Number(appIdStr);
         if (Number.isFinite(appIdNum)) {
           import("../../services/tauri").then(({ readAchievementCache }) => {
+            if (cancelled) return;
+            readAchievementCache(appIdNum, achSource).then((diskCache) => {
               if (cancelled) return;
-              readAchievementCache(appIdNum).then((diskCache) => {
-                if (cancelled) return;
-                const diskUpdatedAt = diskCache?.summary?.updated_at ?? 0;
-                const storeUpdatedAt = achievementStore.getSummary(appIdStr)?.updatedAt ?? 0;
-                const lastSeenAt = diskCacheRef.current?.updatedAt ?? 0;
-                if (!diskCache || !diskCache.achievements?.length) {
-                  if (appIdStr === "1167630") console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=no-disk-cache`);
-                  if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false`);
-                  if (!stored) setAchievementsLoading(false);
-                  return;
-                }
-                // Apply if disk is newer than what we last saw, or newer than store
-                const shouldApply = diskUpdatedAt > lastSeenAt || diskUpdatedAt > storeUpdatedAt;
-                if (!shouldApply) {
-                  if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=false diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
-                  if (!stored) setAchievementsLoading(false);
-                  return;
-                }
-                diskCacheRef.current = { updatedAt: diskUpdatedAt };
-                const total = diskCache.summary?.total ?? diskCache.achievements.length;
-                const unlocked = diskCache.summary?.unlocked ?? diskCache.achievements.filter((a: any) => a.unlocked).length;
-                const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
-                const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
-                const summary = {
+              const diskUpdatedAt = diskCache?.summary?.updated_at ?? 0;
+              const storeUpdatedAt = achievementStore.getSummary(appIdStr, achSource)?.updatedAt ?? 0;
+              const lastSeenAt = diskCacheRef.current?.updatedAt ?? 0;
+              if (!diskCache || !diskCache.achievements?.length) {
+                if (appIdStr === "1167630") console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=no-disk-cache`);
+                if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false`);
+                if (!stored) setAchievementsLoading(false);
+                return;
+              }
+              // Apply if disk is newer than what we last saw, or newer than store
+              const shouldApply = diskUpdatedAt > lastSeenAt || diskUpdatedAt > storeUpdatedAt;
+              if (!shouldApply) {
+                if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=false diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
+                if (!stored) setAchievementsLoading(false);
+                return;
+              }
+              diskCacheRef.current = { updatedAt: diskUpdatedAt };
+              const total = diskCache.summary?.total ?? diskCache.achievements.length;
+              const unlocked = diskCache.summary?.unlocked ?? diskCache.achievements.filter((a: any) => a.unlocked).length;
+              const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
+              const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
+              const summary = {
+                appId: appIdStr,
+                source: "local-cache" as const,
+                total,
+                unlocked,
+                percent,
+                progressAvailable: hasRealProgress,
+                updatedAt: diskCache.summary?.updated_at ?? Date.now(),
+                achievements: diskCache.achievements.map((a: any) => ({
+                  id: a.api_name ?? a.id ?? "",
+                  apiName: a.api_name ?? a.name ?? "",
+                  name: a.display_name ?? a.name ?? a.api_name ?? "",
+                  description: a.description ?? "",
+                  iconUrl: a.icon_url ?? a.icon ?? undefined,
+                  iconGrayUrl: a.icon_gray_url ?? a.icon_gray ?? undefined,
+                  unlocked: !!a.unlocked,
+                  unlockTime: a.unlock_time ?? undefined,
+                  progress: a.progress ?? undefined,
+                  progressMax: a.progress_max ?? undefined,
+                  rarityPercent: a.rarity_percent ?? undefined,
+                })),
+              };
+              console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=true diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
+              console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${unlocked}/${total} reason=newer-local-cache`);
+              if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=${hasRealProgress} source=local-cache`);
+              achievementStore.setSummary(appIdStr, summary, achSource);
+              setAchievementsSummary(summary);
+              setAchievementsLoading(false);
+              // ── Fallback: schema-only disk cache → try resolver for librarycache progress ──
+              if (!hasRealProgress && total > 0 && appIdStr) {
+                if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=false source=local-cache`);
+                console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=${appIdStr} reason=disk-cache-schema-only triggering-resolver-fallback`);
+                resolveSteamAchievements({
                   appId: appIdStr,
-                  source: "local-cache" as const,
-                  total,
-                  unlocked,
-                  percent,
-                  progressAvailable: hasRealProgress,
-                  updatedAt: diskCache.summary?.updated_at ?? Date.now(),
-                  achievements: diskCache.achievements.map((a: any) => ({
-                    id: a.api_name ?? a.id ?? "",
-                    apiName: a.api_name ?? a.name ?? "",
-                    name: a.display_name ?? a.name ?? a.api_name ?? "",
-                    description: a.description ?? "",
-                    iconUrl: a.icon_url ?? a.icon ?? undefined,
-                    iconGrayUrl: a.icon_gray_url ?? a.icon_gray ?? undefined,
-                    unlocked: !!a.unlocked,
-                    unlockTime: a.unlock_time ?? undefined,
-                    progress: a.progress ?? undefined,
-                    progressMax: a.progress_max ?? undefined,
-                    rarityPercent: a.rarity_percent ?? undefined,
-                  })),
-                };
-                console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=true diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
-                console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${unlocked}/${total} reason=newer-local-cache`);
-                if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=${hasRealProgress} source=local-cache`);
-                achievementStore.setSummary(appIdStr, summary);
-                setAchievementsSummary(summary);
+                  steamWebApiKey: settings.steamWebApiKey || undefined,
+                  steamId64: settings.steamId64 || undefined,
+                  accountId: settings.steamAccountId || undefined,
+                  steamPath: settings.steamRoot || undefined,
+                  steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                  achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                  gameSource: game.source,
+                  platform: achSource,
+                  installDir: game.installDir,
+                }).then((resolved) => {
+                  if (cancelled || !resolved.progressAvailable) {
+                    if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
+                    return;
+                  }
+                  const stored = achievementStore.getSummary(appIdStr, achSource);
+                  if (stored && !isSourceNewerOrEqual(resolved.source, resolved.updatedAt, stored.source, stored.updatedAt)) return;
+                  achievementStore.setSummary(appIdStr, resolved, achSource);
+                  setAchievementsSummary(resolved);
+                  console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${resolved.unlocked}/${resolved.total} reason=resolver-librarycache-fallback`);
+                }).catch(() => { });
+              }
+            }).catch(() => {
+              if (!cancelled && !stored) {
+                if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false reason=disk-read-failed`);
                 setAchievementsLoading(false);
-                // ── Fallback: schema-only disk cache → try resolver for librarycache progress ──
-                if (!hasRealProgress && total > 0 && appIdStr) {
-                  if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=false source=local-cache`);
-                  console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=${appIdStr} reason=disk-cache-schema-only triggering-resolver-fallback`);
-                  resolveSteamAchievements({
-                    appId: appIdStr,
-                    steamWebApiKey: settings.steamWebApiKey || undefined,
-                    steamId64: settings.steamId64 || undefined,
-                    accountId: settings.steamAccountId || undefined,
-                    steamPath: settings.steamRoot || undefined,
-                    steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                    achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                  }).then((resolved) => {
-                    if (cancelled || !resolved.progressAvailable) {
-                      if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
-                      return;
-                    }
-                    const stored = achievementStore.getSummary(appIdStr);
-                    if (stored && !isSourceNewerOrEqual(resolved.source, resolved.updatedAt, stored.source, stored.updatedAt)) return;
-                    achievementStore.setSummary(appIdStr, resolved);
-                    setAchievementsSummary(resolved);
-                    console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${resolved.unlocked}/${resolved.total} reason=resolver-librarycache-fallback`);
-                  }).catch(() => {});
-                }
-              }).catch(() => {
-                if (!cancelled && !stored) {
-                  if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false reason=disk-read-failed`);
-                  setAchievementsLoading(false);
-                }
-              });
+              }
+            });
           });
         } else {
           if (!stored) setAchievementsLoading(false);
@@ -674,6 +1005,15 @@ export default function LibraryGameDetails({
       }
       setAchievementsLoading(false);
       return;
+    }
+    // On first mount: if store already has data (from previous mount or auto-sync), skip full resolve
+    if (isInitialAchMountRef.current) {
+      isInitialAchMountRef.current = false;
+      const existing = achievementStore.getSummary(appIdStr, achSource);
+      if (existing && existing.progressAvailable) {
+        setAchievementsLoading(false);
+        return;
+      }
     }
     let cancelled = false;
     setAchievementsLoading(true);
@@ -685,11 +1025,15 @@ export default function LibraryGameDetails({
       steamPath: settings.steamRoot || undefined,
       steamAchievementsEnabled: settings.steamAchievementsEnabled,
       achievementSchemaPath: settings.achievementSchemaPath || undefined,
+      gameSource: game.source,
+      platform: achSource,
+      installDir: game.installDir,
     })
       .then((summary) => {
         if (!cancelled) {
+          if (userSwitchedSourceRef.current) return; // user already switched — this resolve is stale
           // Only update local state if resolver result is fresher than store
-          const stored = achievementStore.getSummary(appIdStr);
+          const stored = achievementStore.getSummary(appIdStr, achSource);
           if (stored && stored.source !== summary.source) {
             if (!isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt)) {
               console.debug(`[ACH][DETAILS] skip-set-from-resolver reason=store-newer source=${stored.source} updatedAt=${stored.updatedAt}`);
@@ -697,9 +1041,14 @@ export default function LibraryGameDetails({
               return;
             }
           }
+          achievementStore.deleteSummary(appIdStr, achSource);
           setAchievementsSummary(summary);
-          achievementStore.setSummary(appIdStr, summary);
+          achievementStore.setSummary(appIdStr, summary, achSource);
           setAchievementsLoading(false);
+          // Enqueue image downloads for this game (fire-and-forget)
+          import("../../services/backgroundJobQueue").then(({ enqueueAchievementImageJobs }) => {
+            enqueueAchievementImageJobs([appIdStr], "normal", achSource);
+          }).catch(() => { });
           if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${summary.unlocked} total=${summary.total} progressAvailable=${summary.progressAvailable} source=${summary.source}`);
           console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
           console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
@@ -716,11 +1065,13 @@ export default function LibraryGameDetails({
   }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
   // Auto-sync: subscribe to auto-sync events to update achievements state
+  // NOTE: refresh() already writes to achievementStore. The store subscription (below) picks that up
+  // and calls setAchievementsSummary. We only need the subscriber for the initial push from
+  // performLocalCacheRefresh which writes directly to the store.
   useEffect(() => {
     const unsub = achievementAutoSyncService.subscribe((event) => {
       if (event.appId !== appIdStr) return;
       setAchievementsSummary(event.summary);
-      achievementStore.setSummary(event.appId, event.summary);
     });
     return unsub;
   }, [appIdStr]);
@@ -744,25 +1095,29 @@ export default function LibraryGameDetails({
       progressAvailable: true,
     };
     if (DEBUG_ACH_DETAILS) console.log(`[ACH][SUMMARY_DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
-    achievementStore.setSummary(appIdStr, patched);
+    if (userSwitchedSourceRef.current) return;
+    achievementStore.setSummary(appIdStr, patched, achSource);
     setAchievementsSummary(patched);
-  }, [appIdStr, achievementsSummary]);
+  }, [appIdStr, achievementsSummary, achSource]);
 
   // Store: subscribe to central store for fast patches from watcher
   useEffect(() => {
-    const unsub = achievementStore.subscribe((appId, summary) => {
+    const unsub = achievementStore.subscribe((appId, summary, subPlatform) => {
       if (appId !== appIdStr) return;
+      if (subPlatform && subPlatform !== achSource) return; // platform filter already guards cross-platform
       setAchievementsSummary(summary);
     });
     return unsub;
-  }, [appIdStr]);
+  }, [appIdStr, achSource]);
 
   // Auto-sync: start/stop watching based on appId + settings
+  // Gate: don't start until crack detection completes to prevent writing to steam-official/
   useEffect(() => {
     if (!appIdStr || !settings.achievementAutoSyncEnabled) {
       if (appIdStr) achievementAutoSyncService.stopWatching(appIdStr);
       return;
     }
+    if (!crackDetectDone) return;
     achievementAutoSyncService.setEnabled(settings.achievementAutoSyncEnabled);
     achievementAutoSyncService.setIntervalSeconds(settings.achievementAutoSyncIntervalSeconds);
     achievementAutoSyncService.startWatching({
@@ -773,13 +1128,14 @@ export default function LibraryGameDetails({
       steamPath: settings.steamRoot || undefined,
       steamAchievementsEnabled: settings.steamAchievementsEnabled,
       achievementSchemaPath: settings.achievementSchemaPath || undefined,
+      platform: achSource,
     });
     return () => {
       achievementAutoSyncService.stopWatching(appIdStr);
     };
-  }, [appIdStr, settings.achievementAutoSyncEnabled, settings.achievementAutoSyncIntervalSeconds,
-      settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot,
-      settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
+  }, [appIdStr, achSource, crackDetectDone, settings.achievementAutoSyncEnabled, settings.achievementAutoSyncIntervalSeconds,
+    settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot,
+    settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
   // Auto-sync: game stop detection — when a session for our appId is removed
   const prevSessionsRef = useRef(gameSessions);
@@ -851,7 +1207,8 @@ export default function LibraryGameDetails({
       if (overlayEnabled) {
         showGroupedAchievementOverlay(events.length - maxShow);
       } else if (toastEnabled) {
-        showGroupedAchievementToast(events.length - maxShow);
+        const remainingUnlocks = events.slice(maxShow);
+        showGroupedAchievementToast(remainingUnlocks, appIdStr ?? undefined, detailTitle);
       }
     }
     if (nativeEnabled) {
@@ -974,13 +1331,28 @@ export default function LibraryGameDetails({
   useEffect(() => {
     if (!showActions) return;
     function handleClick(e: MouseEvent) {
-      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
-        setShowActions(false);
-      }
+      const target = e.target as Node;
+      if (dropdownMenuRef.current?.contains(target)) return;
+      if (actionsRef.current?.contains(target)) return;
+      if (stickyActionsBtnRef.current?.contains(target)) return;
+      setShowActions(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showActions]);
+
+  // Show launch errors as toast instead of inline — dedup by message to avoid repeat on re-mount
+  const lastShownErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (launchInfo?.state === "error" && launchInfo.error) {
+      if (lastShownErrorRef.current !== launchInfo.error) {
+        lastShownErrorRef.current = launchInfo.error;
+        showError(launchInfo.error);
+      }
+    } else {
+      lastShownErrorRef.current = null;
+    }
+  }, [launchInfo?.state, launchInfo?.error]);
 
   // PART 1: Sidebar sort — unlocked first, unlockTime desc, rarity asc, name
   const sortedSidebarAchievements = useMemo(() => {
@@ -1004,8 +1376,10 @@ export default function LibraryGameDetails({
   if (loading) {
     return (
       <div className="flex h-full flex-col overflow-y-auto">
-        <div className="aspect-[21/9] min-h-[340px] max-h-[520px] animate-pulse bg-white/5" />
-        <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
+        <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] overflow-hidden bg-black">
+          <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-black/40" />
+        </div>
+        <div className="relative z-10 shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
           <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
             <div className="mb-2 h-9 w-24 animate-pulse rounded-xl bg-white/10" />
             <div className="flex flex-wrap gap-x-5 gap-y-1">
@@ -1029,44 +1403,108 @@ export default function LibraryGameDetails({
               </div>
             </div>
           </div>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
   if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
     console.log(`[MEDIA][DETAILS_RENDER] appid=${game.appId} title=${detailTitle} imageUrl=${imageUrl ? "set" : "null"} logoUrl=${logoUrl ? "set" : "null"} canonicalMedia=${canonicalAppInfo?.media ? "set" : "null"}`);
   }
+  if (DEBUG_HERO_LAYERS) {
+    console.log(`[HERO_LAYERS] appid=${game.appId} source=${game.source} canonicalLoaded=${canonicalLoaded} imageUrl=${imageUrl ? "set" : "null"} loadedHeroUrl=${loadedHeroUrl ? "set" : "null"} placeholderUrl=${placeholderUrl ? "set" : "null"} heroImgError=${heroImgError} backdropLayers=${backdropLayers.length}`);
+  }
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      {/* Hero banner — Steam-style header */}
-      <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
-        {/* Back to Library — subtle at idle, lights up with theme accent */}
-        <button
-          type="button"
-          onClick={onBack}
-          className="absolute left-4 top-4 z-40 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-black/15 px-3 py-1.5 text-sm text-white/60 backdrop-blur-sm transition-all hover:bg-(--color-accent)/85 hover:text-white hover:shadow-lg hover:shadow-(--color-accent)/25 focus-visible:ring-2 focus-visible:ring-(--color-accent)/60"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Library
-        </button>
+    <div ref={scrollRef} className="flex h-full flex-col">
+      {/* Sticky bar — appears when hero+action row scroll away */}
+      {showStickyBar && (
+        <div className="sticky top-0 z-30 shrink-0 animate-[slideInDown_200ms_ease-out]">
+          <div className="bg-(--color-bg)/90 border-b border-white/[0.06] px-5 py-2.5 backdrop-blur-sm">
+            <div className="mx-auto flex max-w-[1440px] items-center gap-3">
+              {/* Play / Install button */}
+              <button
+                type="button"
+                onClick={() => onPlay(game)}
+                className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3.5 py-1.5 text-xs font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+              >
+                <Play className="h-3.5 w-3.5" />
+                {effectiveAction === "install" ? "Install" : "Play"}
+              </button>
 
+              {/* Game cover icon */}
+              {(() => {
+                const coverRaw = game.coverPath || game.landscapePath || canonicalAppInfo?.media?.coverPath;
+                if (!coverRaw) return <div className="h-7 w-7 shrink-0 rounded-md bg-white/5 ring-1 ring-white/10" />;
+                const coverUrl = coverRaw.startsWith("http") || coverRaw.startsWith("asset://") || coverRaw.startsWith("data:") || coverRaw.startsWith("file://")
+                  ? coverRaw
+                  : isLocalPath(coverRaw) ? localPathToUrl(coverRaw) : coverRaw;
+                return (
+                  <img
+                    src={coverUrl ?? undefined}
+                    alt=""
+                    className="h-7 w-7 shrink-0 rounded-md object-cover ring-1 ring-white/10"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                );
+              })()}
+
+              {/* Title */}
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white drop-shadow-sm">
+                {detailTitle}
+              </span>
+
+              {/* Actions dropdown */}
+              <button
+                type="button"
+                ref={stickyActionsBtnRef}
+                onClick={() => {
+                  const rect = stickyActionsBtnRef.current?.getBoundingClientRect();
+                  if (rect) setAnchorRect({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                  setShowActions(!showActions);
+                }}
+                className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-xs font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+
+              {/* Favorite heart */}
+              <button
+                type="button"
+                onClick={() => { toggleFavorite(favoriteId); }}
+                className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full p-1.5 transition hover:bg-white/10"
+                title={favorite ? "Remove from favorites" : "Add to favorites"}
+              >
+                <Heart
+                  className={`h-4 w-4 ${favorite ? "text-rose-400" : "text-white/50"}`}
+                  fill={favorite ? "currentColor" : "none"}
+                />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hero banner — Steam-style header */}
+      <div className="relative -mt-14 aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
         {/* Layer 1 — Steam-style colorful blurred backdrop */}
         {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
-            object-position: center ensures the same crop region as the sharp image. */}
-        <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
-          {imageUrl && !heroImgError ? (
-            <img
-              src={imageUrl}
-              alt=""
-              onError={() => setHeroImgError(true)}
-              className="h-full w-full scale-105 object-cover blur-2xl"
-            />
+            object-position: center ensures the same crop region as the sharp image.
+            animate-hero-entrance replays on every game switch (component remounts
+            via key=source:appId), so all sources get a visible background fade-in. */}
+        <div className="absolute inset-0 animate-hero-entrance overflow-hidden brightness-[0.65] saturate-[1.1]">
+          {backdropLayers.length > 0 ? (
+            backdropLayers.map((src, i) => (
+              <img
+                key={`b-${src}`}
+                src={src}
+                alt=""
+                onError={() => setBackdropLayers((prev) => prev.filter((s) => s !== src))}
+                className={`absolute inset-0 h-full w-full scale-105 object-cover blur-2xl transition-opacity duration-500 ${i === backdropLayers.length - 1 ? "opacity-100 animate-hero-blur-in" : "opacity-0"}`}
+              />
+            ))
           ) : (
-            <div className="flex h-full w-full items-center justify-center bg-black/40">
-              <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
-            </div>
+            <div className="h-full w-full bg-gradient-to-b from-white/[0.03] to-black/40" />
           )}
         </div>
 
@@ -1076,15 +1514,15 @@ export default function LibraryGameDetails({
         <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
           {imageUrl && !heroImgError ? (
             <img
+              key={imageUrl}
               src={imageUrl}
               alt={detailTitle}
-              onError={() => setHeroImgError(true)}
-              className="block h-full w-auto max-w-none shrink-0 [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]"
+              onError={() => { if (!loadedHeroUrl) setHeroImgError(true); }}
+              onLoad={() => setLoadedHeroUrl(imageUrl)}
+              className={`block h-full w-auto max-w-none shrink-0 ${imageUrl === loadedHeroUrl ? `opacity-100 ${sharpHeroClass}` : "opacity-0"} [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
-            </div>
+            <div className="h-full w-full" />
           )}
         </div>
 
@@ -1096,35 +1534,77 @@ export default function LibraryGameDetails({
         <div className="absolute inset-x-0 bottom-0 z-20 h-[clamp(80px,15vh,180px)] bg-linear-to-t from-black/60 via-black/5 to-transparent pointer-events-none" />
 
         {/* Bottom content: logo + title */}
-        <div className="absolute bottom-0 left-0 right-0 z-30">
-          <div className="mx-auto w-full max-w-[1440px] px-5 pb-4 lg:pb-5">
-            {logoUrl ? (
-              <div className="mb-2">
+        {canonicalLoaded && (
+          <div className="absolute bottom-0 left-0 right-0 z-30 pointer-events-none">
+            <div className="mx-auto w-full max-w-[1440px] px-5 pb-20 lg:pb-22">
+              {logoUrl ? (
                 <img
                   src={logoUrl}
                   alt={`${detailTitle} logo`}
-                  loading="lazy"
+                  loading="eager"
                   decoding="async"
-                  className="max-h-14 max-w-[180px] object-contain drop-shadow-2xl lg:max-h-20 lg:max-w-[300px]"
+                  onLoad={handleLogoLoad}
+                  className="mb-2 object-contain drop-shadow-2xl transition-[height] duration-300"
+                  style={{
+                    width: logoWidth,
+                    height: logoNaturalHeight != null ? "auto" : logoHeightFallback,
+                    maxHeight: logoMaxHeight,
+                  }}
                 />
-              </div>
-            ) : null}
-            <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
-              {detailTitle}
-            </h1>
-
-            {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
-              <p className="mt-0.5 text-sm text-white/70">
-                {(localDetailsData as any)?.developer || game.metadata?.developer}
-              </p>
-            )}
+              ) : rawLogoUrl ? (
+                <div className="mb-2" aria-hidden="true" style={{ width: logoWidth, height: logoHeightFallback }} />
+              ) : (
+                <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
+                  {detailTitle}
+                </h1>
+              )}
+            </div>
           </div>
-        </div>
-      </div>
+        )}
 
-      {/* Compact action/stats row with gradient transition */}
-      <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
-        <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
+        {/* Floating developer + source badge — raised above action row */}
+        {canonicalLoaded && (game.metadata?.developer || (localDetailsData as any)?.developer || (() => {
+          const b = game.hasLua ? "LUA" : game.source === "epic" ? "EPIC" : game.source === "debrid" ? "DEBRID" : game.source === "manual" ? "MANUAL" : game.source === "steam" ? "STEAM" : null;
+          return b;
+        })()) && (
+            <div className="absolute bottom-20 right-0 z-30 pointer-events-none px-5 text-right lg:px-8">
+              <div className="flex items-center gap-2">
+                {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
+                  <span className="text-sm text-white/60 drop-shadow-sm">
+                    {(localDetailsData as any)?.developer || game.metadata?.developer}
+                  </span>
+                )}
+                {(() => {
+                  const srcBadge = game.hasLua
+                    ? { label: "LUA", cls: "bg-emerald-500/15 text-emerald-400 ring-emerald-500/25" }
+                    : game.source === "epic"
+                      ? { label: "EPIC", cls: "bg-purple-500/15 text-purple-400 ring-purple-500/25" }
+                      : game.source === "debrid"
+                        ? { label: "DEBRID", cls: "bg-cyan-500/15 text-cyan-400 ring-cyan-500/25" }
+                        : game.source === "manual"
+                          ? { label: "MANUAL", cls: "bg-amber-500/15 text-amber-300 ring-amber-500/25" }
+                          : game.source === "steam"
+                            ? { label: "STEAM", cls: "bg-blue-500/15 text-blue-400 ring-blue-500/25" }
+                            : null;
+                  if (!srcBadge) return null;
+                  return (
+                    <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ring-1 ${srcBadge.cls}`}>
+                      {srcBadge.label}
+                    </span>
+                  );
+                })()}
+                {game.source === "debrid" && game.repacker && (
+                  <span className="inline-flex items-center rounded-full bg-cyan-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-cyan-400 ring-1 ring-cyan-500/25">
+                    {game.repacker.toUpperCase()}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+      </div>
+      {/* Action row — surface-mode glass overlay on hero bottom */}
+      <div className="relative z-20 -mt-16 shrink-0 lf-surface border-t border-white/[0.06]">
+        <div className="mx-auto w-full max-w-[1440px] px-5 py-4">
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
             <div className="shrink-0">
@@ -1149,7 +1629,7 @@ export default function LibraryGameDetails({
                         });
                         onPlay(game);
                       }}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <Play className="h-4 w-4" />
                       Play
@@ -1210,7 +1690,7 @@ export default function LibraryGameDetails({
                         <button
                           type="button"
                           disabled
-                          className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black opacity-60 transition"
+                          className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) opacity-60 transition"
                         >
                           <Loader2 className="h-4 w-4 animate-spin" />
                           Stopping...
@@ -1221,11 +1701,6 @@ export default function LibraryGameDetails({
                         </span>
                       </div>
                     </>
-                  )}
-                  {launchInfo?.state === "error" && launchInfo.error && (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-red-400">
-                      {launchInfo.error}
-                    </span>
                   )}
                 </>
               )}
@@ -1275,7 +1750,7 @@ export default function LibraryGameDetails({
                   <button
                     type="button"
                     onClick={() => onInstall(game)}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
                   >
                     <Download className="h-4 w-4" />
                     Retry
@@ -1316,7 +1791,7 @@ export default function LibraryGameDetails({
                     <button
                       type="button"
                       onClick={() => onInstall(game)}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <Download className="h-4 w-4" />
                       Install
@@ -1326,7 +1801,7 @@ export default function LibraryGameDetails({
                     <button
                       type="button"
                       onClick={() => onOpenSteam?.(game)}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <ExternalLink className="h-4 w-4" />
                       Open in Steam
@@ -1342,7 +1817,7 @@ export default function LibraryGameDetails({
                           if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => toast.error(`Could not open folder: ${err}`));
                         }
                       }}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <FolderOpen className="h-4 w-4" />
                       Lua Folder
@@ -1353,15 +1828,47 @@ export default function LibraryGameDetails({
                       Missing Path
                     </span>
                   )}
+                  {action === "installing" && (
+                    <span className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-bold text-(--color-muted)/50">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Installing
+                    </span>
+                  )}
+                  {action === "select-exe" && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const selected = await open({
+                            title: "Select game executable",
+                            filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
+                            defaultPath: game.installDir || "C:\\",
+                            multiple: false,
+                          });
+                          if (selected && game.providerGameId) {
+                            updateDebridGame(game.providerGameId, game.installDir || "", selected);
+                            toast.success("Game executable set. Ready to play!");
+                          }
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : String(err);
+                          toast.error(`File picker failed: ${msg}`);
+                        }
+                      }}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      <FileSearch className="h-4 w-4" />
+                      Select Executable
+                    </button>
+                  )}
                 </>
               )}
             </div>
 
             {/* Inline stats */}
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1">
-              <StatInline icon={<Cloud className="h-5 w-5" />} label="Cloud Status" value={cloudStatus} />
-              <StatInline icon={<Clock className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
-              <StatInline icon={<Trophy className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
+            <div className="flex min-w-0 flex-1 animate-stats-in flex-wrap items-center gap-x-4 gap-y-1">
+              {/*    */}
+              <StatInline icon={<CalendarClock className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
+              <StatInline icon={<ClockFading className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
               <StatInline icon={<HardDrive className="h-5 w-5" />} label="Size" value={formatBytes(game.sizeOnDisk)} />
               {isPerfected ? (
                 <div className="inline-flex items-center gap-1.5 text-xs">
@@ -1380,100 +1887,22 @@ export default function LibraryGameDetails({
               <div className="relative" ref={actionsRef}>
                 <button
                   type="button"
-                  onClick={() => setShowActions(!showActions)}
+                  onClick={() => {
+                    const rect = actionsRef.current?.querySelector('button')?.getBoundingClientRect();
+                    if (rect) setAnchorRect({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                    setShowActions(!showActions);
+                  }}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 >
                   <MoreHorizontal className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Actions</span>
                 </button>
-
-                {showActions && (
-                  <>
-                    <div className="fixed inset-0 z-30" onClick={() => setShowActions(false)} />
-                    <div className="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-(--surface-active-border) bg-(--color-bg) p-1 shadow-lg">
-                      {hasPendingUninstall ? (
-                        <DropdownItem
-                          label="Cancel tracking"
-                          onClick={() => {
-                            setShowActions(false);
-                            if (!game.appId) return;
-                            console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel before=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
-                            clearPendingUninstall(game.appId);
-                            showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
-                            console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
-                          }}
-                        />
-                      ) : game.steamInstalled ? (
-                        <DropdownItem
-                          label="Uninstall in Steam"
-                          onClick={async () => {
-                            setShowActions(false);
-                            const appIdStr = String(game.appId);
-                            const appIdNum = Number(game.appId);
-                            markPendingUninstall(appIdStr);
-                            console.log(`[UNINSTALL_PENDING] appid=${appIdStr} phase=start source=gamedetails-actions`);
-                            showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
-                            try {
-                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} source=gamedetails-actions`);
-                              await uninstallSteamApp(appIdNum);
-                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} result=ok source=gamedetails-actions`);
-                            } catch (e1) {
-                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} result=error error=${e1} source=gamedetails-actions`);
-                              try {
-                                console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appIdNum} attempt=2 source=gamedetails-actions`);
-                                await openSteamStoreApp(appIdNum);
-                              } catch (e2) {
-                                console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appIdNum} uri=${getSteamStoreUrl(appIdNum)} attempt=3 source=gamedetails-actions`);
-                                await openExternalUrl(getSteamStoreUrl(appIdNum));
-                              }
-                            }
-                          }}
-                        />
-                      ) : null}
-                      {script && onDeleteScript && (
-                        <DropdownItem
-                          label="Delete Lua"
-                          onClick={() => {
-                            setShowActions(false);
-                            onDeleteScript(game);
-                          }}
-                        />
-                      )}
-                      {(!script || !onDeleteScript) && (
-                        <DropdownItem
-                          label="Delete Lua"
-                          disabled={!script}
-                          subtitle={!script ? "No Lua script" : undefined}
-                        />
-                      )}
-                      <div className="border-t border-(--surface-active-border) my-1" />
-                      <DropdownItem
-                        label="Edit Game Details"
-                        onClick={() => {
-                          setShowActions(false);
-                          setEditDialogOpen(true);
-                        }}
-                      />
-                      <DropdownItem
-                        label="Refresh Artwork"
-                        onClick={() => {
-                          setShowActions(false);
-                          onRefreshArtwork?.();
-                        }}
-                      />
-                      <DropdownItem
-                        label="Close"
-                        onClick={() => setShowActions(false)}
-                      />
-                    </div>
-                  </>
-                )}
               </div>
 
               {/* Favorite button */}
               <button
                 type="button"
-                onClick={() => { if (game.appId) toggleFavorite(game.appId); }}
+                onClick={() => { toggleFavorite(favoriteId); }}
                 className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs transition hover:bg-white/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 title={favorite ? "Remove from favorites" : "Add to favorites"}
               >
@@ -1487,8 +1916,11 @@ export default function LibraryGameDetails({
         </div>
       </div>
 
+      {/* Sentinel — triggers sticky bar when hero+action row scrolls out of view */}
+      <div ref={sentinelRef} className="h-0 w-full shrink-0" aria-hidden="true" />
+
       {/* Main content: two columns */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1">
         <div className="mx-auto w-full max-w-[1440px] px-5 py-6 lg:py-8">
           <div className="lg:grid lg:grid-cols-[1fr_340px] lg:gap-8">
             {/* Left: Overview */}
@@ -1549,8 +1981,8 @@ export default function LibraryGameDetails({
                 </section>
               )}
 
-              {/* About This Game (only if longer than short intro) */}
-              {longDescText && !descriptionsMatch && (
+              {/* About This Game (only if longer than short intro, hidden for manual games without appId) */}
+              {(!isManualGame || !!appIdStr) && longDescText && !descriptionsMatch && (
                 <section>
                   <h2 className="mb-3 text-base font-bold text-(--color-text)">
                     <BookOpen className="mr-2 inline h-4 w-4 text-(--color-accent)" />
@@ -1573,496 +2005,719 @@ export default function LibraryGameDetails({
                 </section>
               )}
 
-              {!shortIntro && !longDescText && (
+              {!shortIntro && !longDescText && canonicalLoaded && (
                 <p className="text-sm text-(--color-muted)">
                   Game description is not available yet.
                 </p>
               )}
 
-              {/* Updates — Steam news only */}
-              <section>
-                <h2 className="mb-3 text-base font-bold text-(--color-text)">
-                  <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
-                  Updates
-                </h2>
+              {/* Updates — Steam news only (hidden for manual without appId and epic games) */}
+              {(!isManualGame || !!appIdStr) && !isEpicGame && (
+                <section>
+                  <h2 className="mb-3 text-base font-bold text-(--color-text)">
+                    <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
+                    Updates
+                  </h2>
 
-                {!appIdStr ? (
-                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
-                    <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
-                    <p className="mt-2 text-sm text-(--color-muted)">
-                      Game updates are only available for Steam apps.
-                    </p>
-                  </div>
-                ) : newsLoading ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
-                      <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
-                      <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
-                      <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
-                      <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                  {!appIdStr ? (
+                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
+                      <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
+                      <p className="mt-2 text-sm text-(--color-muted)">
+                        Game updates are only available for Steam apps.
+                      </p>
                     </div>
-                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
-                      <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
-                      <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
-                      <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
-                      <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                  ) : newsLoading ? (
+                    <div className="space-y-3">
+                      <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
+                        <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
+                        <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
+                        <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
+                        <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                      </div>
+                      <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
+                        <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
+                        <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
+                        <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
+                        <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                      </div>
+                      <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
+                        <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
+                        <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
+                        <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
+                        <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                      </div>
                     </div>
-                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
-                      <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
-                      <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
-                      <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
-                      <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
-                    </div>
-                  </div>
-                ) : newsError && steamNews.length === 0 ? (
-                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
-                    <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
-                    <p className="mt-2 text-sm text-(--color-muted)">
-                      {newsError}
-                    </p>
-                    <p className="mt-1 text-xs text-(--color-muted)/50">
-                      Steam news may be unavailable or blocked. Try again later.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={fetchSteamNews}
-                      className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-3.5 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
-                    >
-                      <RefreshCw className="h-3 w-3" />
-                      Retry
-                    </button>
-                  </div>
-                ) : steamNews.length > 0 ? (
-                  <div className="space-y-3">
-                    {newsError && (
-                      <p className="text-xs text-amber-400/80 text-center">
+                  ) : newsError && steamNews.length === 0 ? (
+                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
+                      <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
+                      <p className="mt-2 text-sm text-(--color-muted)">
                         {newsError}
                       </p>
-                    )}
-                    {steamNews.map((news) => (
-                      <SteamNewsCard key={news.gid} news={news} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
-                    <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
-                    <p className="mt-2 text-sm text-(--color-muted)">
-                      No recent game updates found.
-                    </p>
-                  </div>
-                )}
-              </section>
+                      <p className="mt-1 text-xs text-(--color-muted)/50">
+                        Steam news may be unavailable or blocked. Try again later.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={fetchSteamNews}
+                        className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-3.5 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        Retry
+                      </button>
+                    </div>
+                  ) : steamNews.length > 0 ? (
+                    <div className="space-y-3">
+                      {newsError && (
+                        <p className="text-xs text-amber-400/80 text-center">
+                          {newsError}
+                        </p>
+                      )}
+                      {steamNews.map((news) => (
+                        <SteamNewsCard key={news.gid} news={news} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
+                      <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
+                      <p className="mt-2 text-sm text-(--color-muted)">
+                        No recent game updates found.
+                      </p>
+                    </div>
+                  )}
+                </section>
+              )}
 
 
             </div>
 
             {/* Right: Side panel */}
             <aside className="mt-8 lg:mt-0">
-              <div className="sticky top-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
-                <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
-                  Links
-                </h3>
-                <div className="space-y-1">
-                  <ShortcutRow
-                    icon={<ExternalLink className="h-3.5 w-3.5" />}
-                    label="Store Page"
-                    enabled={!!appIdNum}
-                    onClick={() => {
-                      if (appIdNum && onOpenSteam) onOpenSteam(game);
-                      else if (appIdNum) openExternalUrl(getSteamStoreUrl(appIdNum));
-                    }}
-                  />
-
-                  <ShortcutRow
-                    icon={<Puzzle className="h-3.5 w-3.5" />}
-                    label="DLC"
-                    subtitle={
-                      game.metadata && game.metadata.dlc_count > 0
-                        ? `${game.metadata.dlc_count} available`
-                        : undefined
-                    }
-                    enabled={!!appIdNum}
-                    onClick={() => {
-                      if (appIdNum) openExternalUrl(getSteamStoreUrl(appIdNum));
-                    }}
-                  />
-
-                  <ShortcutRow
-                    icon={<MessageCircle className="h-3.5 w-3.5" />}
-                    label="Community Hub"
-                    enabled={!!appIdNum}
-                    onClick={() => {
-                      if (appIdNum) openExternalUrl(getSteamCommunityUrl(appIdNum));
-                    }}
-                  />
-
-                  <ShortcutRow
-                    icon={<MessageCircle className="h-3.5 w-3.5" />}
-                    label="Discussions"
-                    enabled={!!appIdNum}
-                    onClick={() => {
-                      if (appIdNum) openExternalUrl(getSteamDiscussionsUrl(appIdNum));
-                    }}
-                  />
-
-                  <ShortcutRow
-                    icon={<BookMarked className="h-3.5 w-3.5" />}
-                    label="Guides"
-                    enabled={!!appIdNum}
-                    onClick={() => {
-                      if (appIdNum) openExternalUrl(getSteamGuidesUrl(appIdNum));
-                    }}
-                  />
-
-                  <ShortcutRow
-                    icon={<LifeBuoy className="h-3.5 w-3.5" />}
-                    label="Support"
-                    enabled={!!appIdNum}
-                    onClick={() => {
-                      if (appIdNum) openExternalUrl(getSteamSupportUrl(appIdNum));
-                    }}
-                  />
-
-                  <ShortcutRow
-                    icon={<Database className="h-3.5 w-3.5" />}
-                    label="SteamDB"
-                    enabled={!!appIdNum}
-                    onClick={() => {
-                      if (appIdNum && onOpenSteamDb) onOpenSteamDb(game);
-                      else if (appIdNum) openExternalUrl(getSteamDbUrl(appIdNum));
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Achievements */}
-              <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
-                <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isPerfected ? "text-amber-400/90" : "text-(--color-muted)"}`}>
-                  <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
-                  {isPerfected ? "Perfected" : "Achievements"}
-                </h3>
-
-                {achievementsLoading ? (
-                  <div className="mt-3 space-y-2">
-                    <div className="h-3 w-3/4 animate-pulse rounded bg-white/5" />
-                    <div className="h-2 w-full animate-pulse rounded bg-white/5" />
-                    <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
-                    <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
-                    <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
-                  </div>
-                ) : achievementsSummary && achievementsSummary.source === "disabled" ? (
-                  <div className="mt-3">
-                    <p className="text-xs text-(--color-muted)">
-                      Steam Achievements Tracking is disabled.
-                    </p>
-                    <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
-                      onClick={() => onNavigate?.("settings")}
-                    >
-                      Enable in Settings
-                    </p>
-                  </div>
-                ) : achievementsSummary && achievementsSummary.errorReason === "missing-appid" ? (
-                  <div className="mt-3">
-                    <p className="text-xs text-(--color-muted)">
-                      Achievements are unavailable because this game has no Steam AppID.
-                    </p>
-                  </div>
-                ) : achievementsSummary && achievementsSummary.source === "setup-required" ? (
-                  <div className="mt-3">
-                    <p className="text-xs text-(--color-muted)">
-                      Configure Steam Web API in Settings to load achievement progress.
-                    </p>
-                    <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
-                      onClick={() => onNavigate?.("settings")}
-                    >
-                      Open Settings
-                    </p>
-                  </div>
-                ) : achievementsSummary && effectiveProgressAvailable && effectiveTotal > 0 ? (
-                  <div className="mt-3 space-y-3">
-                    {/* Trace: log panel count source for Cuphead */}
-                    {game.appId === "268910" && DEBUG_ACH_DETAILS && (console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=panel source=${achievementsSummary.source} effectiveUnlocked=${effectiveUnlocked}/${effectiveTotal} summaryUnlocked=${achievementsSummary.unlocked}/${achievementsSummary.total} listDerived=${derivedUnlocked}`), null)}
-
-                    {isPerfected && (
-                      <div className="rounded-xl bg-amber-500/8 border border-amber-400/15 px-3.5 py-2.5 flex items-center gap-3">
-                        <Trophy className="h-5 w-5 fill-amber-400 text-amber-400 shrink-0" />
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-amber-300">Perfected</p>
-                          <p className="text-[10px] text-amber-400/60">All achievements unlocked</p>
-                        </div>
-                        <span className="ml-auto shrink-0 text-[11px] font-bold text-amber-400/80">
-                          {effectiveUnlocked}/{effectiveTotal} &middot; 100%
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Progress bar */}
-                    <div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
-                          {effectiveUnlocked} / {effectiveTotal}
-                        </span>
-                        <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
-                          {effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%
-                        </span>
-                      </div>
-                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isPerfected
-                              ? "bg-gradient-to-r from-amber-400 to-yellow-300"
-                              : "bg-(--color-accent)"
-                          }`}
-                          style={{
-                            width: `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%`,
-                            boxShadow: isPerfected ? "0 0 10px rgba(251,191,36,0.4)" : undefined,
+              {(!isManualGame || linkedSteamAppId || !!appIdStr) && (!isEpicGame || linkedSteamAppId) && (
+                <div className="space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
+                  <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
+                    {isManualGame ? "Steam Links" : "Links"}
+                  </h3>
+                  <div className="space-y-1">
+                    {isManualGame && linkedSteamAppId ? (
+                      <>
+                        <ShortcutRow
+                          icon={<ExternalLink className="h-3.5 w-3.5" />}
+                          label="Steam Store Page"
+                          enabled={!!linkedSteamAppId}
+                          onClick={() => {
+                            if (linkedSteamAppId) openExternalUrl(getSteamStoreUrl(Number(linkedSteamAppId)));
                           }}
                         />
-                      </div>
-                      <p className={`mt-1 text-[10px] ${isPerfected ? "text-amber-400/50" : "text-(--color-muted)/60"}`}>
-                        {isPerfected
-                          ? "All achievements unlocked"
-                          : `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}% complete`}
-                        {achievementsSyncing && (
-                          <span className="ml-2 italic">Syncing...</span>
-                        )}
+                        <ShortcutRow
+                          icon={<Database className="h-3.5 w-3.5" />}
+                          label="SteamDB"
+                          enabled={!!linkedSteamAppId}
+                          onClick={() => {
+                            if (linkedSteamAppId) openExternalUrl(getSteamDbUrl(Number(linkedSteamAppId)));
+                          }}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <ShortcutRow
+                          icon={<ExternalLink className="h-3.5 w-3.5" />}
+                          label="Store Page"
+                          enabled={!!appIdNum}
+                          onClick={() => {
+                            if (appIdNum && onOpenSteam) onOpenSteam(game);
+                            else if (appIdNum) openExternalUrl(getSteamStoreUrl(appIdNum));
+                          }}
+                        />
+
+                        <ShortcutRow
+                          icon={<Puzzle className="h-3.5 w-3.5" />}
+                          label="DLC"
+                          subtitle={
+                            game.metadata && game.metadata.dlc_count > 0
+                              ? `${game.metadata.dlc_count} available`
+                              : undefined
+                          }
+                          enabled={!!appIdNum}
+                          onClick={() => {
+                            if (appIdNum) openExternalUrl(getSteamStoreUrl(appIdNum));
+                          }}
+                        />
+
+                        <ShortcutRow
+                          icon={<MessageCircle className="h-3.5 w-3.5" />}
+                          label="Community Hub"
+                          enabled={!!appIdNum}
+                          onClick={() => {
+                            if (appIdNum) openExternalUrl(getSteamCommunityUrl(appIdNum));
+                          }}
+                        />
+
+                        <ShortcutRow
+                          icon={<MessageCircle className="h-3.5 w-3.5" />}
+                          label="Discussions"
+                          enabled={!!appIdNum}
+                          onClick={() => {
+                            if (appIdNum) openExternalUrl(getSteamDiscussionsUrl(appIdNum));
+                          }}
+                        />
+
+                        <ShortcutRow
+                          icon={<BookMarked className="h-3.5 w-3.5" />}
+                          label="Guides"
+                          enabled={!!appIdNum}
+                          onClick={() => {
+                            if (appIdNum) openExternalUrl(getSteamGuidesUrl(appIdNum));
+                          }}
+                        />
+
+                        <ShortcutRow
+                          icon={<LifeBuoy className="h-3.5 w-3.5" />}
+                          label="Support"
+                          enabled={!!appIdNum}
+                          onClick={() => {
+                            if (appIdNum) openExternalUrl(getSteamSupportUrl(appIdNum));
+                          }}
+                        />
+
+                        <ShortcutRow
+                          icon={<Database className="h-3.5 w-3.5" />}
+                          label="SteamDB"
+                          enabled={!!appIdNum}
+                          onClick={() => {
+                            if (appIdNum && onOpenSteamDb) onOpenSteamDb(game);
+                            else if (appIdNum) openExternalUrl(getSteamDbUrl(appIdNum));
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Achievements — hidden for manual without appId and epic games */}
+              {(!isManualGame || !!appIdStr) && !isEpicGame && (
+                <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
+                  {!isPerfected && (
+                    <h3 className="text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 text-(--color-muted)">
+                      <Trophy className="h-3.5 w-3.5" />
+                      Achievements
+                    </h3>
+                  )}
+
+                  {achievementsLoading ? (
+                    <div className="mt-3 space-y-2">
+                      <div className="h-3 w-3/4 animate-pulse rounded bg-white/5" />
+                      <div className="h-2 w-full animate-pulse rounded bg-white/5" />
+                      <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
+                      <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
+                      <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
+                    </div>
+                  ) : achievementsSummary && achievementsSummary.source === "disabled" ? (
+                    <div className="mt-3">
+                      <p className="text-xs text-(--color-muted)">
+                        Steam Achievements Tracking is disabled.
+                      </p>
+                      <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
+                        onClick={() => onNavigate?.("settings")}
+                      >
+                        Enable in Settings
                       </p>
                     </div>
-                    {/* Recent achievements (top 5) */}
-                    <div className="space-y-1">
-                      {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
-                        <div
-                          key={ach.id}
-                          className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
-                          aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
-                        >
-                          <AchievementTooltip achievement={ach} appId={game.appId}>
-                            <AchievementIcon
-                              iconUrl={ach.iconUrl}
-                              iconGrayUrl={ach.iconGrayUrl}
-                              unlocked={ach.unlocked}
-                              size="sm"
-                              appId={game.appId}
-                            />
-                          </AchievementTooltip>
-                          <div className="min-w-0 flex-1">
-                            <span className="block truncate text-xs text-(--color-text)">
-                              {ach.name}
-                            </span>
-                            {ach.rarityPercent != null ? (
-                              <span className="block text-[9px] text-(--color-muted)/50">
-                                {ach.rarityPercent.toFixed(1)}% rarity
-                              </span>
-                            ) : (
-                              <span className="block text-[9px] text-(--color-muted)/30">N/A rarity</span>
-                            )}
+                  ) : achievementsSummary && achievementsSummary.errorReason === "missing-appid" ? (
+                    <div className="mt-3">
+                      <p className="text-xs text-(--color-muted)">
+                        Achievements are unavailable because this game has no Steam AppID.
+                      </p>
+                    </div>
+                  ) : achievementsSummary && achievementsSummary.source === "setup-required" ? (
+                    <div className="mt-3">
+                      <p className="text-xs text-(--color-muted)">
+                        Configure Steam Web API in Settings to load achievement progress.
+                      </p>
+                      <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
+                        onClick={() => onNavigate?.("settings")}
+                      >
+                        Open Settings
+                      </p>
+                    </div>
+                  ) : achievementsSummary && effectiveProgressAvailable && effectiveTotal > 0 ? (
+                    <div className="mt-3 space-y-3">
+                      {/* Trace: log panel count source for Cuphead */}
+                      {game.appId === "268910" && DEBUG_ACH_DETAILS && (console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=panel source=${achievementsSummary.source} effectiveUnlocked=${effectiveUnlocked}/${effectiveTotal} summaryUnlocked=${achievementsSummary.unlocked}/${achievementsSummary.total} listDerived=${derivedUnlocked}`), null)}
+
+                      {isPerfected && (
+                        <div className="rounded-xl bg-amber-500/8 border border-amber-400/15 px-3.5 py-2.5 flex items-center gap-3">
+                          <Trophy className="h-5 w-5 fill-amber-400 text-amber-400 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-amber-300">Perfected</p>
+                            <p className="text-[10px] text-amber-400/60">All achievements unlocked</p>
                           </div>
-                          <span className={`shrink-0 text-[9px] font-medium ${
-                            ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
-                          }`}>
-                            {ach.unlocked ? "Unlocked" : "Locked"}
+                          <span className="ml-auto shrink-0 text-[11px] font-bold text-amber-400/80">
+                            {effectiveUnlocked}/{effectiveTotal} &middot; 100%
                           </span>
                         </div>
-                      ))}
+                      )}
+
+                      {/* Source selector + refresh — only shown when crack save exists AND not Debrid/Manual (always cracked) */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={achSource}
+                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                          >
+                            <option value="steam-official">Steam Official</option>
+                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                              if (!appIdStr) return;
+                              setAchievementsLoading(true);
+                              try {
+                                achievementStore.deleteSummary(appIdStr, achSource);
+                                const { deleteAchievementCache } = await import("../../services/tauri");
+                                const appIdNum = Number(appIdStr);
+                                if (Number.isFinite(appIdNum)) {
+                                  await deleteAchievementCache(appIdNum, achSource).catch(() => { });
+                                }
+                                const gameSource = achSource === "steam" ? "debrid" : "steam";
+                                const s = await resolveSteamAchievements({
+                                  appId: appIdStr,
+                                  steamWebApiKey: settings.steamWebApiKey || undefined,
+                                  steamId64: settings.steamId64 || undefined,
+                                  accountId: settings.steamAccountId || undefined,
+                                  steamPath: settings.steamRoot || undefined,
+                                  forceRefresh: true,
+                                  steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                                  achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                                                                    gameSource,
+                                  platform: achSource,
+                                  installDir: game.installDir,
+                                });
+                                if (appIdStr) {
+                                  setAchievementsSummary(s);
+
+
+                                  achievementStore.setSummary(appIdStr, s, achSource);
+                                  const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                                  notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
+                                }
+                              } catch (err) {
+                                console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                              } finally {
+                                setAchievementsLoading(false);
+                              }
+                            }}
+                            className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[10px] text-(--color-muted) transition hover:bg-white/10"
+                            title="Refresh from selected source"
+                          >
+                            {achievementsLoading ? "..." : "↻"}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Progress bar */}
+                      <AchievementProgressBar
+                        unlocked={effectiveUnlocked}
+                        total={effectiveTotal}
+                        isPerfected={isPerfected}
+                        syncing={achievementsSyncing}
+                      />
+                      {/* Recent achievements (top 5) */}
+                      <div className="space-y-1">
+                        {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
+                          <div
+                            key={ach.id}
+                            className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
+                            aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
+                          >
+                            <AchievementTooltip achievement={ach} appId={game.appId}>
+                              <AchievementIcon
+                                iconUrl={ach.iconUrl}
+                                iconGrayUrl={ach.iconGrayUrl}
+                                unlocked={ach.unlocked}
+                                size="sm"
+                                appId={game.appId}
+                              />
+                            </AchievementTooltip>
+                            <div className="min-w-0 flex-1">
+                              <span className="block truncate text-xs text-(--color-text)">
+                                {ach.name}
+                              </span>
+                              {ach.rarityPercent != null ? (
+                                <span className="block text-[9px] text-(--color-muted)/50">
+                                  {ach.rarityPercent.toFixed(1)}% rarity
+                                </span>
+                              ) : (
+                                <span className="block text-[9px] text-(--color-muted)/30">N/A rarity</span>
+                              )}
+                            </div>
+                            <span className={`shrink-0 text-[9px] font-medium ${ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
+                              }`}>
+                              {ach.unlocked ? "Unlocked" : "Locked"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        {isPerfected ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowAchievementsModal(true)}
+                            className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-amber-400/20 bg-amber-500/8 px-3 py-2 text-xs font-medium text-amber-400 transition hover:bg-amber-500/12 focus-visible:ring-2 focus-visible:ring-amber-400/50"
+                          >
+                            <Trophy className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                            View all · {achievementsSummary.total} achievements
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setShowAchievementsModal(true)}
+                            className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                          >
+                            <Trophy className="h-3.5 w-3.5" />
+                            View all achievements ({achievementsSummary.total})
+                          </button>
+                        )}
+                        {SHOW_ACH_DEBUG_BUTTONS && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (appIdStr) debugAchievements(appIdStr, {
+                                  accountId: settings.steamAccountId,
+                                  steamPath: settings.steamRoot,
+                                  achievementSchemaPath: settings.achievementSchemaPath,
+                                });
+                              }}
+                              className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                              title="Debug achievement progress"
+                            >
+                              Debug
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => showTestAchievementToast(detailTitle)}
+                              className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                              title="Show test achievement toast"
+                            >
+                              Test Toast
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      {isPerfected ? (
-                        <button
-                          type="button"
-                          onClick={() => setShowAchievementsModal(true)}
-                          className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-amber-400/20 bg-amber-500/8 px-3 py-2 text-xs font-medium text-amber-400 transition hover:bg-amber-500/12 focus-visible:ring-2 focus-visible:ring-amber-400/50"
-                        >
-                          <Trophy className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                          View all · {achievementsSummary.total} achievements
-                        </button>
-                      ) : (
+                  ) : achievementsSummary && !effectiveProgressAvailable && achievementsSummary.achievements.length > 0 ? (
+                    <div className="mt-3 space-y-3">
+                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={achSource}
+                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                          >
+                            <option value="steam-official">Steam Official</option>
+                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                              if (!appIdStr) return;
+                              setAchievementsLoading(true);
+                              try {
+                                achievementStore.deleteSummary(appIdStr, achSource);
+                                const { deleteAchievementCache } = await import("../../services/tauri");
+                                const appIdNum = Number(appIdStr);
+                                if (Number.isFinite(appIdNum)) {
+                                  await deleteAchievementCache(appIdNum, achSource).catch(() => { });
+                                }
+                                const gameSource = achSource === "steam" ? "debrid" : "steam";
+                                const s = await resolveSteamAchievements({
+                                  appId: appIdStr,
+                                  steamWebApiKey: settings.steamWebApiKey || undefined,
+                                  steamId64: settings.steamId64 || undefined,
+                                  accountId: settings.steamAccountId || undefined,
+                                  steamPath: settings.steamRoot || undefined,
+                                  forceRefresh: true,
+                                  steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                                  achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                                                                    gameSource,
+                                  platform: achSource,
+                                  installDir: game.installDir,
+                                });
+                                if (appIdStr) {
+                                  setAchievementsSummary(s);
+
+
+                                  achievementStore.setSummary(appIdStr, s, achSource);
+                                  const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                                  notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
+                                }
+                              } catch (err) {
+                                console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                              } finally {
+                                setAchievementsLoading(false);
+                              }
+                            }}
+                            className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[10px] text-(--color-muted) transition hover:bg-white/10"
+                            title="Refresh from selected source"
+                          >
+                            {achievementsLoading ? "..." : "↻"}
+                          </button>
+                        </div>
+                      )}
+
+                      <p className="text-xs text-(--color-muted)">
+                        Achievement list available. Progress unavailable for this source.
+                      </p>
+                      {achievementsSummary.errorReason === "api-403-fallback" && (
+                        <p className="text-[10px] text-(--color-muted)/60">
+                          Steam Web API could not load your progress. LumaForge will try local Steam cache.
+                        </p>
+                      )}
+                      <div className="space-y-1">
+                        {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
+                          <div
+                            key={ach.id}
+                            className="flex items-center  gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
+                            aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
+                          >
+                            <AchievementTooltip achievement={ach} appId={game.appId}>
+                              <AchievementIcon
+                                iconUrl={ach.iconUrl}
+                                iconGrayUrl={ach.iconGrayUrl}
+                                unlocked={ach.unlocked}
+                                size="sm"
+                                appId={game.appId}
+                              />
+                            </AchievementTooltip>
+                            <div className="min-w-0 flex-1">
+                              <span className="block truncate text-xs text-(--color-text)">
+                                {ach.name}
+                              </span>
+                              {ach.rarityPercent != null ? (
+                                <span className="block text-[9px] text-(--color-muted)/50">
+                                  {ach.rarityPercent.toFixed(1)}% rarity
+                                </span>
+                              ) : (
+                                <span className="block text-[9px] text-(--color-muted)/30">N/A rarity</span>
+                              )}
+                            </div>
+                            <span className={`shrink-0 text-[9px] font-medium ${ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
+                              }`}>
+                              {ach.unlocked ? "Unlocked" : "Locked"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
                         <button
                           type="button"
                           onClick={() => setShowAchievementsModal(true)}
                           className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                         >
                           <Trophy className="h-3.5 w-3.5" />
-                          View all achievements ({achievementsSummary.total})
+                          View all achievements
                         </button>
-                      )}
-                      {import.meta.env.DEV && (
-                        <>
+                        {SHOW_ACH_DEBUG_BUTTONS && (
                           <button
                             type="button"
-                            onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
-                              accountId: settings.steamAccountId,
-                              steamPath: settings.steamRoot,
-                              achievementSchemaPath: settings.achievementSchemaPath,
-                            }); }}
+                            onClick={() => {
+                              if (appIdStr) debugAchievements(appIdStr, {
+                                accountId: settings.steamAccountId,
+                                steamPath: settings.steamRoot,
+                                achievementSchemaPath: settings.achievementSchemaPath,
+                              });
+                            }}
                             className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                             title="Debug achievement progress"
                           >
                             Debug
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => showTestAchievementToast(detailTitle)}
-                            className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                            title="Show test achievement toast"
+                        )}
+                      </div>
+                    </div>
+                  ) : achievementsSummary && achievementsSummary.source === "unavailable" && (game.achievementsSupported || localAchSupportFound) ? (
+                    <div className="mt-3 space-y-3">
+                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
+                          <select
+                            value={achSource}
+                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
                           >
-                            Test Toast
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ) : achievementsSummary && !effectiveProgressAvailable && achievementsSummary.achievements.length > 0 ? (
-                  <div className="mt-3 space-y-3">
-                    <p className="text-xs text-(--color-muted)">
-                      Achievement list available. Progress unavailable.
-                    </p>
-                    {achievementsSummary.errorReason === "api-403-fallback" && (
-                      <p className="text-[10px] text-(--color-muted)/60">
-                        Steam Web API could not load your progress. LumaForge will try local Steam cache.
-                      </p>
-                    )}
-                    <div className="space-y-1">
-                      {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
-                        <div
-                          key={ach.id}
-                          className="flex items-center  gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
-                          aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
-                        >
-                          <AchievementTooltip achievement={ach} appId={game.appId}>
-                            <AchievementIcon
-                              iconUrl={ach.iconUrl}
-                              iconGrayUrl={ach.iconGrayUrl}
-                              unlocked={ach.unlocked}
-                              size="sm"
-                              appId={game.appId}
-                            />
-                          </AchievementTooltip>
-                          <div className="min-w-0 flex-1">
-                            <span className="block truncate text-xs text-(--color-text)">
-                              {ach.name}
-                            </span>
-                            {ach.rarityPercent != null ? (
-                              <span className="block text-[9px] text-(--color-muted)/50">
-                                {ach.rarityPercent.toFixed(1)}% rarity
-                              </span>
-                            ) : (
-                              <span className="block text-[9px] text-(--color-muted)/30">N/A rarity</span>
-                            )}
-                          </div>
-                          <span className={`shrink-0 text-[9px] font-medium ${
-                            ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
-                          }`}>
-                            {ach.unlocked ? "Unlocked" : "Locked"}
-                          </span>
+                            <option value="steam-official">Steam Official (appcache/stats)</option>
+                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                          </select>
                         </div>
-                      ))}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowAchievementsModal(true)}
-                        className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                      >
-                        <Trophy className="h-3.5 w-3.5" />
-                        View all achievements
-                      </button>
-                      {import.meta.env.DEV && (
+                      )}
+                      <p className="text-xs text-(--color-muted)">
+                        {achSource === "steam"
+                          ? "No achievement data found in crack save directory."
+                          : "Achievement tracking requires Steam Web API setup."}
+                      </p>
+                      <p className="text-[10px] text-(--color-muted)/60">
+                        {achSource === "steam"
+                          ? "Try Manual Refresh to read from crack save (achievements.ini)."
+                          : "Configure in Settings or switch to Crack Save source."}
+                      </p>
+                      <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
-                            accountId: settings.steamAccountId,
-                            steamPath: settings.steamRoot,
-                            achievementSchemaPath: settings.achievementSchemaPath,
-                          }); }}
-                          className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                          title="Debug achievement progress"
+                          onClick={async () => {
+                            const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                            if (!appIdStr) return;
+                            setAchievementsLoading(true);
+                            try {
+                              achievementStore.deleteSummary(appIdStr, achSource);
+                              const { deleteAchievementCache } = await import("../../services/tauri");
+                              const appIdNum = Number(appIdStr);
+                              if (Number.isFinite(appIdNum)) {
+                                await deleteAchievementCache(appIdNum, achSource).catch(() => { });
+                              }
+                              const gameSource = achSource === "steam" ? "debrid" : "steam";
+                              const s = await resolveSteamAchievements({
+                                appId: appIdStr,
+                                steamWebApiKey: settings.steamWebApiKey || undefined,
+                                steamId64: settings.steamId64 || undefined,
+                                accountId: settings.steamAccountId || undefined,
+                                steamPath: settings.steamRoot || undefined,
+                                forceRefresh: true,
+                                steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                                achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                                gameSource,
+                                platform: achSource,
+                                installDir: game.installDir,
+                              });
+                              if (appIdStr) {
+                                setAchievementsSummary(s);
+                                achievementStore.setSummary(appIdStr, s, achSource);
+                                const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
+                                console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${unlocked}/${s.total}`);
+                                const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                                notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
+                              }
+                            } catch (err) {
+                              console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                              toast.error("Failed to refresh achievements");
+                            } finally {
+                              setAchievementsLoading(false);
+                            }
+                          }}
+                          className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
                         >
-                          Debug
+                          {achievementsLoading ? "Loading..." : "Refresh Achievements"}
                         </button>
-                      )}
+                        {achSource === "steam-official" && (
+                          <button
+                            type="button"
+                            onClick={() => onNavigate?.("settings")}
+                            className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-muted) transition hover:bg-white/10"
+                          >
+                            Settings
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ) : achievementsSummary && achievementsSummary.source === "unavailable" && (game.achievementsSupported || localAchSupportFound) ? (
-                  <div className="mt-3">
-                    <p className="text-xs text-(--color-muted)">
-                      Achievement tracking requires Steam Web API setup.
-                    </p>
-                    <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
-                      onClick={() => onNavigate?.("settings")}
-                    >
-                      Configure in Settings
-                    </p>
-                  </div>
-                ) : (game.achievementsSupported || localAchSupportFound) ? (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-xs text-(--color-muted)">
-                      Achievements not loaded
-                    </p>
-                    <p className="text-[10px] text-(--color-muted)/60">
-                      Manual refresh checks local Steam data for this game.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
-                        if (!appIdStr) return;
-                        setAchievementsLoading(true);
-                        if (appIdStr === "268910") {
-                          console.log(`[ACH][TRACE_REFRESH_START] appid=268910`);
-                        }
-                        // CRITICAL: delete existing store entry BEFORE resolving.
-                        // resolveSteamAchievements has a post-call store-freshness check (line ~968)
-                        // that returns store data if it has higher source priority.
-                        // Without this delete, a "librarycache" entry (priority 0) would
-                        // cause the resolver to return stale 13/42 instead of fresh 15/42.
-                        achievementStore.deleteSummary(appIdStr);
-                        try {
-                          const s = await resolveSteamAchievements({
-                            appId: appIdStr,
-                            steamWebApiKey: settings.steamWebApiKey || undefined,
-                            steamId64: settings.steamId64 || undefined,
-                            accountId: settings.steamAccountId || undefined,
-                            steamPath: settings.steamRoot || undefined,
-                            forceRefresh: true,
-                            steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                            achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                          });
-                          if (appIdStr) {
-                            if (appIdStr === "268910") {
+                  ) : (game.achievementsSupported || localAchSupportFound) ? (
+                    <div className="mt-3 space-y-3">
+                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
+                          <select
+                            value={achSource}
+                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                          >
+                            <option value="steam-official">Steam Official (appcache/stats)</option>
+                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                          </select>
+                        </div>
+                      )}
+                      <p className="text-xs text-(--color-muted)">
+                        Achievements not loaded for this source.
+                      </p>
+                      <p className="text-[10px] text-(--color-muted)/60">
+                        {achSource === "steam"
+                          ? "Reading from crack save directory (achievements.ini)."
+                          : "Reading from Steam appcache/stats binary files."}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                          if (!appIdStr) return;
+                          setAchievementsLoading(true);
+                          try {
+                            // CRITICAL: delete ALL cache layers BEFORE resolving.
+                            achievementStore.deleteSummary(appIdStr, achSource);
+                            const { deleteAchievementCache } = await import("../../services/tauri");
+                            const appIdNum = Number(appIdStr);
+                            if (Number.isFinite(appIdNum)) {
+                              await deleteAchievementCache(appIdNum, achSource).catch(() => { });
+                            }
+                            try {
+                              const { getCachedSnapshot, notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                              const snap = getCachedSnapshot();
+                              if (snap?.library?.games) {
+                                const g = snap.library.games.find((sg: any) => sg.appId === appIdStr);
+                                if (g?.achievementSummary) {
+                                  g.achievementSummary = undefined;
+                                  notifyMediaUpdated(appIdStr, { source: "achievement-refresh-clear" }).catch(() => { });
+                                }
+                              }
+                            } catch { /* non-critical */ }
+                            // Pass gameSource based on selected source
+                            const gameSource = achSource === "steam" ? "debrid" : "steam";
+                            const s = await resolveSteamAchievements({
+                              appId: appIdStr,
+                              steamWebApiKey: settings.steamWebApiKey || undefined,
+                              steamId64: settings.steamId64 || undefined,
+                              accountId: settings.steamAccountId || undefined,
+                              steamPath: settings.steamRoot || undefined,
+                              forceRefresh: true,
+                              steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                              achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                              gameSource,
+                              platform: achSource,
+                              installDir: game.installDir,
+                            });
+                            if (appIdStr) {
+                              setAchievementsSummary(s);
+                              achievementStore.setSummary(appIdStr, s, achSource);
                               const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
-                              console.log(`[ACH][TRACE_RESOLVED] appid=268910 source=${s.source} unlocked=${unlocked}/${s.total} progressAvailable=${s.progressAvailable} updatedAt=${s.updatedAt}`);
+                              console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${unlocked}/${s.total}`);
+                              const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                              notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
                             }
-                            setAchievementsSummary(s);
-                            achievementStore.setSummary(appIdStr, s);
-                            const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
-                            if (appIdStr === "268910") {
-                              console.log(`[ACH][TRACE_STORE_SET] appid=268910 source=${s.source} unlocked=${unlocked}/${s.total} updatedAt=${s.updatedAt}`);
-                            }
-                            console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${s.achievements.length} summary=${unlocked}/${s.total}`);
-                            console.log(`[ACH][MANUAL_REFRESH_APPLY] appid=${appIdStr} unlocked=${unlocked}/${s.total}`);
-                            // Phase 9: Schedule snapshot write so achievement summary persists after restart
-                            notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => {});
+                          } catch (err) {
+                            console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                            toast.error("Failed to refresh achievements");
+                          } finally {
+                            setAchievementsLoading(false);
                           }
-                        } catch (err) {
-                          console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
-                          toast.error("Failed to refresh achievements");
-                        } finally {
-                          setAchievementsLoading(false);
-                        }
-                      }}
-                      className="mt-1 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
-                    >
-                      {achievementsLoading ? "Loading..." : "Refresh Achievements"}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="mt-3">
-                    <p className="text-xs text-(--color-muted)">
-                      Achievements are not supported for this game.
-                    </p>
-                  </div>
-                )}
-              </div>
+                        }}
+                        className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
+                      >
+                        {achievementsLoading ? "Loading..." : "Refresh Achievements"}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-3">
+                      <p className="text-xs text-(--color-muted)">
+                        Achievements are not supported for this game.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Release Date */}
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
@@ -2071,7 +2726,9 @@ export default function LibraryGameDetails({
                   Release Date
                 </h3>
                 <p className="mt-1 text-sm text-(--color-text)">
-                  {game.metadata?.release_date || "Unknown"}
+                  {canonicalLoaded
+                    ? (game.metadata?.release_date || (localDetailsData as any)?.releaseDate || "Unknown")
+                    : "Loading…"}
                 </p>
               </div>
 
@@ -2123,12 +2780,12 @@ export default function LibraryGameDetails({
                 </div>
               )}
             </aside>
-            </div>
           </div>
+        </div>
       </div>
 
       {/* Achievements modal */}
-      {showAchievementsModal && achievementsSummary && achievementsSummary.achievements.length > 0 && (
+      {showAchievementsModal && achievementsSummary && (achievementsSummary.total > 0 || achievementsSummary.progressAvailable === true) && (
         <AchievementsModal
           summary={achievementsSummary}
           appIdStr={appIdStr}
@@ -2140,6 +2797,62 @@ export default function LibraryGameDetails({
             console.debug(`[ACH][REFRESH] appid=${appIdStr} start`);
             console.debug(`[ACH][REFRESH] previous source=${previousSummary?.source} progressAvailable=${previousSummary?.progressAvailable} unlocked=${previousSummary?.unlocked}`);
             setAchievementsRefreshing(true);
+
+            const handleResult = (s: GameAchievementsSummary) => {
+              console.debug(`[ACH][REFRESH] next source=${s.source} progressAvailable=${s.progressAvailable} unlocked=${s.unlocked}`);
+              const downgrade = previousSummary?.progressAvailable === true && s.progressAvailable === false && (s.source === "schema-only" || s.source === "global-percentages");
+              console.debug(`[ACH][REFRESH] downgradeDetected=${!!downgrade}`);
+              if (downgrade && previousSummary) {
+                console.debug(`[ACH][REFRESH] preservingPreviousProgress=true — merging schema metadata with previous progress`);
+                const merged: GameAchievement[] = s.achievements.map((a) => {
+                  const prev = previousSummary.achievements.find((pa) => pa.apiName === a.apiName);
+                  return {
+                    ...a,
+                    unlocked: prev?.unlocked ?? a.unlocked,
+                    unlockTime: prev?.unlockTime ?? a.unlockTime,
+                    rarityPercent: a.rarityPercent ?? prev?.rarityPercent,
+                  };
+                });
+                const staleSummary: GameAchievementsSummary = {
+                  appId: previousSummary.appId,
+                  achievements: merged,
+                  total: s.achievements.length || previousSummary.total,
+                  unlocked: previousSummary.unlocked ?? merged.filter((a) => a.unlocked).length,
+                  percent: previousSummary.percent ?? 0,
+                  progressAvailable: true,
+                  source: (previousSummary.source === "librarycache" ? "librarycache-stale" : (previousSummary.source + "-stale")) as GameAchievementsSummary["source"],
+                  updatedAt: Date.now(),
+                  errorReason: "showing-last-known-progress",
+                };
+                setAchievementsSummary(staleSummary);
+                if (appIdStr) achievementStore.setSummary(appIdStr, staleSummary, achSource);
+                toast("Showing last known achievement progress.", { duration: 4000, icon: "🔄" });
+              } else {
+                setAchievementsSummary(s);
+                if (appIdStr) achievementStore.setSummary(appIdStr, s, achSource);
+              }
+              if (appIdStr) {
+                const summary = achievementStore.getSummary(appIdStr, achSource);
+                console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${summary?.achievements?.length ?? 0} summary=${summary?.unlocked}/${summary?.total}`);
+                console.log(`[ACH][SUMMARY_PERSISTED] appid=${appIdStr} unlocked=${summary?.unlocked}/${summary?.total}`);
+              }
+              console.debug(`[ACH][REFRESH] done`);
+              setAchievementsRefreshing(false);
+            };
+
+            const handleError = (err: unknown) => {
+              console.warn(`[ACH][REFRESH] failed keeping previous summary reason=${err}`);
+              setAchievementsRefreshing(false);
+              toast.error("Failed to refresh achievements", { duration: 3000 });
+            };
+
+            // CRITICAL: delete existing store entry BEFORE resolving, mirroring the
+            // panel button (L2334). resolveSteamAchievements has a post-call
+            // store-freshness check (~L1248) that returns store data when it has
+            // higher source priority. Without this delete, a "librarycache" entry
+            // would cause the resolver to return the stale stored summary — the UI
+            // would show old progress until restart (fresh data is only on disk).
+            achievementStore.deleteSummary(appIdStr!, achSource);
             resolveSteamAchievements({
               appId: appIdStr!,
               steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -2149,65 +2862,24 @@ export default function LibraryGameDetails({
               forceRefresh: true,
               steamAchievementsEnabled: settings.steamAchievementsEnabled,
               achievementSchemaPath: settings.achievementSchemaPath || undefined,
-            })
-              .then((s) => {
-                console.debug(`[ACH][REFRESH] next source=${s.source} progressAvailable=${s.progressAvailable} unlocked=${s.unlocked}`);
-                const downgrade = previousSummary?.progressAvailable === true && s.progressAvailable === false && (s.source === "schema-only" || s.source === "global-percentages");
-                console.debug(`[ACH][REFRESH] downgradeDetected=${!!downgrade}`);
-                if (downgrade && previousSummary) {
-                  console.debug(`[ACH][REFRESH] preservingPreviousProgress=true — merging schema metadata with previous progress`);
-                  // Merge metadata from new scan, keep progress from previous
-                  const merged: GameAchievement[] = s.achievements.map((a) => {
-                    const prev = previousSummary.achievements.find((pa) => pa.apiName === a.apiName);
-                    return {
-                      ...a,
-                      unlocked: prev?.unlocked ?? a.unlocked,
-                      unlockTime: prev?.unlockTime ?? a.unlockTime,
-                      rarityPercent: a.rarityPercent ?? prev?.rarityPercent,
-                    };
-                  });
-                  const staleSummary: GameAchievementsSummary = {
-                    appId: previousSummary.appId,
-                    achievements: merged,
-                    total: s.achievements.length || previousSummary.total,
-                    unlocked: previousSummary.unlocked ?? merged.filter((a) => a.unlocked).length,
-                    percent: previousSummary.percent ?? 0,
-                    progressAvailable: true,
-                    source: (previousSummary.source === "librarycache" ? "librarycache-stale" : (previousSummary.source + "-stale")) as GameAchievementsSummary["source"],
-                    updatedAt: Date.now(),
-                    errorReason: "showing-last-known-progress",
-                  };
-                  setAchievementsSummary(staleSummary);
-                  if (appIdStr) achievementStore.setSummary(appIdStr, staleSummary);
-                  toast("Showing last known achievement progress.", { duration: 4000, icon: "🔄" });
-                } else {
-                  setAchievementsSummary(s);
-                  if (appIdStr) achievementStore.setSummary(appIdStr, s);
-                }
-                if (appIdStr) {
-                  const summary = achievementStore.getSummary(appIdStr);
-                  console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${summary?.achievements?.length ?? 0} summary=${summary?.unlocked}/${summary?.total}`);
-                  console.log(`[ACH][SUMMARY_PERSISTED] appid=${appIdStr} unlocked=${summary?.unlocked}/${summary?.total}`);
-                }
-                console.debug(`[ACH][REFRESH] done`);
-                setAchievementsRefreshing(false);
-              })
-              .catch((err) => {
-                console.warn(`[ACH][REFRESH] failed keeping previous summary reason=${err}`);
-                setAchievementsRefreshing(false);
-                toast.error("Failed to refresh achievements", { duration: 3000 });
-              });
+              platform: achSource,
+              gameSource: game.source,
+              installDir: game.installDir,
+            }).then(handleResult).catch(handleError);
           }}
           refreshing={achievementsRefreshing}
         />
       )}
 
-      {game.appId && (
+      {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
         <GameEditDialog
-          appId={game.appId}
+          appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
+          manualGameId={game.source === "manual" ? game.providerGameId : undefined}
+          epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
+          debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
-          initialTab="general"
+          initialTab={editDialogTab}
           game={game}
           settings={{
             rawgApiKey: settings.rawgApiKey,
@@ -2221,12 +2893,92 @@ export default function LibraryGameDetails({
           }}
         />
       )}
+
+      {/* Actions dropdown — portal to body like CardActionMenu */}
+      {showActions && anchorRect && createPortal(
+        <>
+          <div className="fixed inset-0 z-[99999]" onMouseDown={() => setShowActions(false)} />
+          <div
+            ref={dropdownMenuRef}
+            className="fixed z-[100000] w-52 overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl"
+            style={{ top: anchorRect.top, right: anchorRect.right }}
+          >
+            {hasPendingUninstall ? (
+              <DropdownItem label="Cancel tracking" onClick={() => {
+                setShowActions(false);
+                if (!game.appId) return;
+                clearPendingUninstall(game.appId);
+                showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+              }} />
+            ) : game.source === "debrid" ? (
+              <DropdownItem label="Remove from Library" destructive onClick={() => {
+                setShowActions(false);
+                const providerGameId = game.providerGameId;
+                if (providerGameId) {
+                  removeDebridGameFromLibrary(providerGameId);
+                  showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                } else {
+                  showError("Could not remove this game from the library.");
+                }
+              }} />
+            ) : game.steamInstalled && game.source !== "epic" ? (
+              <DropdownItem label="Uninstall in Steam" onClick={async () => {
+                setShowActions(false);
+                const appIdNum = Number(game.appId);
+                markPendingUninstall(String(game.appId));
+                showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                try { await uninstallSteamApp(appIdNum); } catch { try { await openSteamStoreApp(appIdNum); } catch { await openExternalUrl(getSteamStoreUrl(appIdNum)); } }
+              }} />
+            ) : null}
+            {script && onDeleteScript && (
+              <DropdownItem label="Delete Lua" onClick={() => { setShowActions(false); onDeleteScript(game); }} />
+            )}
+            {(!script || !onDeleteScript) && (
+              <DropdownItem label="Delete Lua" disabled={!script} subtitle={!script ? "No Lua script" : undefined} />
+            )}
+            <div className="border-t border-(--surface-active-border) my-1" />
+            {game.source === "manual" && (
+              <DropdownItem label="Remove from Library" destructive disabled={isManualRunning}
+                subtitle={isManualRunning ? "Stop the game first" : undefined}
+                onClick={() => {
+                  if (isManualRunning) return;
+                  setShowActions(false);
+                  const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+                  if (rawId && window.confirm(`Remove "${game.title}" from your library?`)) {
+                    if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][DETAILS] rawId=${rawId} title="${game.title}"`);
+                    removeManualGame(rawId);
+                    showInfo(`"${game.title ?? rawId}" removed from library`);
+                    onBack();
+                  }
+                }} />
+            )}
+            <DropdownItem label="Edit Game Details" onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
+            <DropdownItem
+              label={game.source === "epic" || (game.source === "manual" && !game.appId) ? "Manage Artwork" : "Refresh Artwork"}
+              onClick={() => {
+                setShowActions(false);
+                if (game.source === "epic" || (game.source === "manual" && !game.appId)) {
+                  setEditDialogTab("media");
+                  setEditDialogOpen(true);
+                } else { onRefreshArtwork?.(); }
+              }} />
+            {onOpenTools && (
+              <DropdownItem label="Game Fixes" onClick={() => { setShowActions(false); onOpenTools(game); }} />
+            )}
+            <DropdownItem label="Close" onClick={() => setShowActions(false)} />
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }
 
 function formatTimestamp(ts: number) {
-  if (!ts || ts <= 0 || ts < 1000000000000) return "Recently";
+  if (!ts || ts <= 0) return "Recently";
+  // Normalize seconds to milliseconds if needed (timestamps < 10^12 are seconds)
+  if (ts < 1000000000000) ts *= 1000;
+  if (ts < 1000000000000) return "Recently";
 
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
@@ -2346,11 +3098,10 @@ function ShortcutRow({ icon, label, subtitle, enabled, onClick }: ShortcutRowPro
       type="button"
       disabled={!enabled}
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition ${
-        enabled
+      className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition ${enabled
           ? "cursor-pointer text-(--color-text) hover:bg-white/5 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
           : "cursor-not-allowed text-(--color-muted)/40"
-      }`}
+        }`}
     >
       <span className="shrink-0 text-(--color-muted)">{icon}</span>
       <span className="flex-1 truncate">{label}</span>
@@ -2365,11 +3116,13 @@ function DropdownItem({
   label,
   subtitle,
   disabled,
+  destructive,
   onClick,
 }: {
   label: string;
   subtitle?: string;
   disabled?: boolean;
+  destructive?: boolean;
   onClick?: () => void;
 }) {
   return (
@@ -2377,16 +3130,70 @@ function DropdownItem({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-        disabled
+      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${disabled
           ? "cursor-not-allowed text-(--color-muted)/40"
-          : "cursor-pointer text-(--color-text) hover:bg-white/5"
-      }`}
+          : destructive
+            ? "cursor-pointer text-rose-400 hover:bg-rose-400/10"
+            : "cursor-pointer text-(--color-text) hover:bg-white/5"
+        }`}
     >
       <span className="flex-1">{label}</span>
       {subtitle && (
         <span className="text-[10px] text-(--color-muted)">{subtitle}</span>
       )}
     </button>
+  );
+}
+
+/**
+ * Achievements progress bar. Grows from 0 to its current width on mount
+ * (page-entry / game-switch animation) via `useGrowOnMount`, keeping the
+ * existing `transition-all duration-500` on the fill.
+ */
+function AchievementProgressBar({
+  unlocked,
+  total,
+  isPerfected,
+  syncing,
+}: {
+  unlocked: number;
+  total: number;
+  isPerfected: boolean;
+  syncing: boolean;
+}) {
+  const grow = useGrowOnMount();
+  const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs">
+        <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
+          {unlocked} / {total}
+        </span>
+        <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
+          {percent}%
+        </span>
+      </div>
+      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${isPerfected
+              ? "bg-gradient-to-r from-amber-400 to-yellow-300"
+              : "bg-(--color-accent)"
+            }`}
+          style={{
+            width: `${grow ? percent : 0}%`,
+            boxShadow: isPerfected ? "0 0 10px rgba(251,191,36,0.4)" : undefined,
+          }}
+        />
+      </div>
+      <p className={`mt-1 text-[10px] ${isPerfected ? "text-amber-400/50" : "text-(--color-muted)/60"}`}>
+        {isPerfected
+          ? "All achievements unlocked"
+          : `${percent}% complete`}
+        {syncing && (
+          <span className="ml-2 italic">Syncing...</span>
+        )}
+      </p>
+    </div>
   );
 }

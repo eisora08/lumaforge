@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,4 +13,14 @@ pub struct SteamGridDbArtwork {
     pub hero_url: Option<String>,
     pub logo_url: Option<String>,
     pub icon_url: Option<String>,
+}
+
+/// Result from SGDB name search — used for manual games without a Steam App ID.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamGridDbGameSearchResult {
+    pub sgdb_game_id: u32,
+    pub name: Option<String>,
+    pub release_date: Option<String>,
+    pub image_url: Option<String>,
 }
