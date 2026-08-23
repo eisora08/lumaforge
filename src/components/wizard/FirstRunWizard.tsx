@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import WizardProgress from "./WizardProgress";
 import WizardWelcome from "./WizardWelcome";
@@ -17,6 +18,7 @@ type FirstRunWizardProps = {
 const TOTAL_STEPS = 7;
 
 export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
+  const { t } = useTranslation();
   const [currentStep, setCurrentStep] = useState(0);
   const [direction, setDirection] = useState<"forward" | "backward">("forward");
   const [visible, setVisible] = useState(true);
@@ -119,7 +121,7 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
             onClick={handleComplete}
             className="rounded-xl px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:text-(--color-text)"
           >
-            Skip All
+            {t("wizard.skip_all")}
           </button>
         )}
       </div>

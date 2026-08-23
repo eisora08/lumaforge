@@ -1,5 +1,6 @@
 import { Wrench, ExternalLink, Download } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "../../context/SettingsContext";
 import WizardStep from "./WizardStep";
@@ -32,6 +33,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
 };
 
 export default function WizardTools({ currentStep, totalSteps, onBack, onContinue, onSkip }: Props) {
+  const { t } = useTranslation();
   const { settings } = useSettings();
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [installing, setInstalling] = useState<string | null>(null);
@@ -59,8 +61,8 @@ export default function WizardTools({ currentStep, totalSteps, onBack, onContinu
   return (
     <WizardStep
       icon={<Wrench className="h-8 w-8" />}
-      title="Third-Party Tools"
-      description="Optional tools for DRM handling and offline game support. Install what you need."
+      title={t("wizard.tools_title")}
+      description={t("wizard.tools_desc")}
       currentStep={currentStep}
       totalSteps={totalSteps}
       onBack={onBack}
@@ -86,12 +88,12 @@ export default function WizardTools({ currentStep, totalSteps, onBack, onContinu
                   <p className="text-sm font-medium text-(--color-text)">{tool.name}</p>
                   {tool.installed && (
                     <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                      Installed{tool.installed_version ? ` v${tool.installed_version}` : ""}
+                      {t("wizard.tools_installed")}{tool.installed_version ? ` v${tool.installed_version}` : ""}
                     </span>
                   )}
                   {tool.update_available && (
                     <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-400">
-                      Update available
+                      {t("wizard.tools_update_available")}
                     </span>
                   )}
                 </div>
@@ -105,7 +107,7 @@ export default function WizardTools({ currentStep, totalSteps, onBack, onContinu
                   className="mt-2 inline-flex items-center gap-1 text-[11px] text-(--color-muted) transition hover:text-(--color-text)"
                 >
                   <ExternalLink className="h-3 w-3" />
-                  View on GitHub
+                  {t("wizard.tools_view_github")}
                 </a>
               </div>
               {!tool.installed && (
@@ -119,7 +121,7 @@ export default function WizardTools({ currentStep, totalSteps, onBack, onContinu
                   ) : (
                     <Download className="h-3.5 w-3.5" />
                   )}
-                  {isInstalling ? "Installing…" : "Install"}
+                  {isInstalling ? t("wizard.tools_installing") : t("wizard.tools_install")}
                 </button>
               )}
             </div>
@@ -129,7 +131,7 @@ export default function WizardTools({ currentStep, totalSteps, onBack, onContinu
 
       {!settings.steamRoot && (
         <p className="text-center text-xs text-amber-400">
-          Steam root path must be configured in Step 3 to install tools.
+          {t("wizard.tools_steam_root_warning")}
         </p>
       )}
     </WizardStep>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import { Bell, ChevronLeft, ChevronRight, Download, Flame, Minus, Monitor, Square, X } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useSearch } from "../../context/SearchContext";
@@ -34,6 +35,7 @@ type TopBarProps = {
 };
 
 export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreTab, onStoreTabChange }: TopBarProps) {
+  const { t } = useTranslation();
   const { setQuery } = useSearch();
   const { selectGame } = useGameDetails();
   const showSearch = true;
@@ -301,7 +303,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
           onClick={handleGoBack}
           disabled={!historySnapshot.canGoBack}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--color-muted)"
-          title="Atras"
+          title={t("topbar.back")}
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
@@ -310,7 +312,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
           onClick={handleGoForward}
           disabled={!historySnapshot.canGoForward}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--color-muted)"
-          title="Adelante"
+          title={t("topbar.forward")}
         >
           <ChevronRight className="h-4 w-4" />
         </button>
@@ -351,7 +353,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
           <div className="w-full max-w-[540px]">
             <PackagesToolbarSearch
               variant="topbar"
-              placeholder="Search Steam games..."
+              placeholder={t("topbar.search_placeholder")}
               inputRef={searchInputRef}
               onSelectItem={handleSelectItem}
               onSubmit={handleSubmit}
@@ -372,7 +374,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
         <button
           onClick={() => onNavigate?.(activePage === "console" ? "home" : "console")}
           className="hidden h-9 w-9 items-center justify-center rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-accent) transition hover:bg-(--color-accent)/15 sm:inline-flex"
-          title={activePage === "console" ? "Desktop Mode" : "Console Mode"}
+          title={activePage === "console" ? t("topbar.desktop_mode") : t("topbar.console_mode")}
         >
           <Monitor className="h-4 w-4" />
         </button>
@@ -402,7 +404,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
         <button
           onClick={() => setDownloadsOpen(true)}
           className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 transition hover:bg-white/8"
-          title="Descargas"
+          title={t("topbar.downloads")}
         >
           <Download className="h-4 w-4 text-(--color-muted)" />
           {downloadProgress !== null && (
@@ -443,16 +445,16 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
       <div className="flex h-full items-center gap-1 pr-1.5">
         <button
           onClick={handleMinimize}
-          aria-label="Minimize window"
-          title="Minimize"
+          aria-label={t("topbar.minimize")}
+          title={t("topbar.minimize")}
           className="flex h-[32px] w-[40px] cursor-default items-center justify-center rounded-lg transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
         >
           <Minus className="h-3.5 w-3.5 text-(--color-text)/60" />
         </button>
         <button
           onClick={handleToggleMaximize}
-          aria-label={isMaximized ? "Restore window" : "Maximize window"}
-          title={isMaximized ? "Restore Down" : "Maximize"}
+          aria-label={isMaximized ? t("topbar.restore") : t("topbar.maximize")}
+          title={isMaximized ? t("topbar.restore") : t("topbar.maximize")}
           className="flex h-[32px] w-[40px] cursor-default items-center justify-center rounded-lg transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
         >
           {isMaximized ? (
@@ -466,8 +468,8 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
         </button>
         <button
           onClick={handleClose}
-          aria-label="Close window"
-          title="Close"
+          aria-label={t("topbar.close")}
+          title={t("topbar.close")}
           className="flex h-[32px] w-[40px] cursor-default items-center justify-center rounded-lg transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
         >
           <X className="h-3.5 w-3.5 text-(--color-text)/60 group-hover:text-white" />

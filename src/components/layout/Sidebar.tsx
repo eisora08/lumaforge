@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ElementType } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Award,
@@ -34,18 +35,6 @@ type SidebarItem = {
   icon: ElementType;
 };
 
-const mainItems: SidebarItem[] = [
-  { label: "Inicio",              page: "home",                   icon: Home },
-  { label: "Biblioteca",          page: "library",                icon: Library },
-  { label: "Tienda",              page: "store",                  icon: Store },
-  { label: "Stats",               page: "activity",               icon: BarChart3 },
-  { label: "Logros",              page: "launcher-achievements",  icon: Award },
-];
-
-const toolItems: SidebarItem[] = [
-  { label: "Configuración", page: "settings", icon: Settings },
-];
-
 const isNavExpanded = (mode: SidebarMode) =>
   mode === "expanded" || mode === "compact";
 
@@ -57,6 +46,7 @@ export default function Sidebar({
   onNavigate,
   width,
 }: SidebarProps) {
+  const { t } = useTranslation();
   const isDrawer = mode === "drawer";
   const showLabels = isNavExpanded(mode);
   const isCollapsed = mode === "collapsed";
@@ -64,6 +54,18 @@ export default function Sidebar({
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
   const [profile, patchProfile] = useUserProfile();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+
+  const mainItems: SidebarItem[] = [
+    { label: t("sidebar.home"),              page: "home",                   icon: Home },
+    { label: t("sidebar.library"),          page: "library",                icon: Library },
+    { label: t("sidebar.store"),            page: "store",                  icon: Store },
+    { label: t("sidebar.stats"),            page: "activity",               icon: BarChart3 },
+    { label: t("sidebar.achievements"),     page: "launcher-achievements",  icon: Award },
+  ];
+
+  const toolItems: SidebarItem[] = [
+    { label: t("sidebar.settings"), page: "settings", icon: Settings },
+  ];
 
 
   const avatarPreset = getAvatarPreset(profile.avatarPreset);
@@ -118,7 +120,7 @@ export default function Sidebar({
         showLabels ? "px-4 pb-1" : "px-3 pb-1"
       }`}>
         <SidebarSection
-          title="Principal"
+          title={t("sidebar.section_main")}
           items={mainItems}
           activePage={activePage}
           showLabels={showLabels}
@@ -129,7 +131,7 @@ export default function Sidebar({
 
         <div className={showLabels ? "mt-3" : "mt-2"}>
           <SidebarSection
-            title="Sistema"
+            title={t("sidebar.section_system")}
             items={toolItems}
             activePage={activePage}
             showLabels={showLabels}

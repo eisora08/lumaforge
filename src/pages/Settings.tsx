@@ -1,4 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 
 import ThirdPartyToolsSection from "../components/settings/ThirdPartyToolsSection";
 import { setAmbientEnabled, setAmbientIntensity, setAmbientMode, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
@@ -68,28 +69,29 @@ type SettingsSectionId =
   | "backup"
   | "startup";
 
-const navSections: {
-  key: SettingsSectionId;
-  label: string;
-  icon: React.ReactNode;
-  description: string;
-}[] = [
-  { key: "general", label: "General", icon: <Cog className="h-4 w-4" />, description: "Steam paths, account and auto-detection" },
-  { key: "appearance", label: "Appearance", icon: <Palette className="h-4 w-4" />, description: "Theme, surface mode and accent color" },
-  { key: "library", label: "Layout", icon: <Library className="h-4 w-4" />, description: "Dashboard, card layout and display mode" },
-  { key: "notifications", label: "Notifications", icon: <Gamepad2 className="h-4 w-4" />, description: "Achievement alerts and session overlay" },
-  { key: "metadata", label: "Artwork & Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG and SteamGridDB API keys" },
-  { key: "extensions", label: "Extensions", icon: <Puzzle className="h-4 w-4" />, description: "External tool integrations" },
-  { key: "providers", label: "Providers & Tools", icon: <Zap className="h-4 w-4" />, description: "Package sources, integrations and tools" },
-  { key: "backup", label: "Cloud & Backup", icon: <Cloud className="h-4 w-4" />, description: "Backups, restore and cloud sync" },
-  { key: "startup", label: "Startup & More", icon: <Power className="h-4 w-4" />, description: "Launch mode, behavior, maintenance and about" },
-];
-
 type SettingsProps = {
   onSectionChange?: (label: string) => void;
 };
 
 export default function Settings({ onSectionChange }: SettingsProps) {
+  const { t } = useTranslation();
+
+  const navSections: {
+    key: SettingsSectionId;
+    label: string;
+    icon: React.ReactNode;
+    description: string;
+  }[] = [
+    { key: "general", label: t("settings.general"), icon: <Cog className="h-4 w-4" />, description: t("settings.general_desc") },
+    { key: "appearance", label: t("settings.appearance"), icon: <Palette className="h-4 w-4" />, description: t("settings.appearance_desc") },
+    { key: "library", label: t("settings.layout"), icon: <Library className="h-4 w-4" />, description: t("settings.layout_desc") },
+    { key: "notifications", label: t("settings.notifications"), icon: <Gamepad2 className="h-4 w-4" />, description: t("settings.notifications_desc") },
+    { key: "metadata", label: t("settings.metadata"), icon: <Database className="h-4 w-4" />, description: t("settings.metadata_desc") },
+    { key: "extensions", label: t("settings.extensions"), icon: <Puzzle className="h-4 w-4" />, description: t("settings.extensions_desc") },
+    { key: "providers", label: t("settings.providers"), icon: <Zap className="h-4 w-4" />, description: t("settings.providers_desc") },
+    { key: "backup", label: t("settings.backup"), icon: <Cloud className="h-4 w-4" />, description: t("settings.backup_desc") },
+    { key: "startup", label: t("settings.startup"), icon: <Power className="h-4 w-4" />, description: t("settings.startup_desc") },
+  ];
   const {
     theme: selectedTheme,
     surfaceMode,
@@ -201,7 +203,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-(--color-muted) transition hover:bg-white/[0.04] hover:text-(--color-text)"
           >
             <RotateCcw className="h-4 w-4 shrink-0" />
-            <span className="truncate">Restablecer</span>
+            <span className="truncate">{t("settings.reset")}</span>
           </button>
         </div>
       </nav>
@@ -211,12 +213,12 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "general" && (
               <>
                 <SettingsSection
-                  title="Rutas"
-                  description="Administra rutas detectadas o configuradas manualmente."
+                  title={t("settings.paths")}
+                  description={t("settings.paths_desc")}
                 >
                 <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                   <FolderCog className="h-4 w-4" />
-                  Steam y carpetas internas
+                  {t("settings.steam_folders")}
                 </div>
 
                 <button
@@ -225,28 +227,28 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   className="mb-4 inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
                 >
                   <Crosshair className="h-4 w-4" />
-                  Detectar Steam automáticamente
+                  {t("settings.detect_steam")}
                 </button>
 
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                   <SettingsInput
-                    label="Steam Root"
-                    description="Carpeta raíz donde está steam.exe."
-                    placeholder="No detectada"
+                    label={t("settings.steam_root")}
+                    description={t("settings.steam_root_desc")}
+                    placeholder={t("settings.not_detected")}
                     value={settings.steamRoot}
                     onChange={(value) => updateSetting("steamRoot", value)}
                   />
 
                   <SettingsInput
-                    label="config/lua"
-                    description="Destino para archivos .lua instalados."
-                    placeholder="No detectada"
+                    label={t("settings.lua_path")}
+                    description={t("settings.lua_path_desc")}
+                    placeholder={t("settings.not_detected")}
                     value={settings.luaPath}
                     onChange={(value) => updateSetting("luaPath", value)}
                   />
 
                   <SettingsInput
-                    label="depotcache"
+                    label={t("settings.depot_cache")}
                     description="Destino para archivos .manifest."
                     placeholder="No detectado"
                     value={settings.depotcachePath}

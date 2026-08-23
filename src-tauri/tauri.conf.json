@@ -91,7 +91,7 @@
       "endpoints": ["https://github.com/anomalyco/LumaForge/releases/latest/download/latest.json"],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyMDY4QTdENUY4MzgxQUEKUldTcWdZTmZmWW9Hc3VENFB6QUxJM0EzelFsYnBVNTBrSjJPNlZEZDNlSFY1WnRTbXFIQjJwUTcK",
       "windows": {
-        "installMode": "currentUser"
+        "installMode": "passive"
       }
     }
   }

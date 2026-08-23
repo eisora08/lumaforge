@@ -1,4 +1,5 @@
 import { Zap, ExternalLink, Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useSettings } from "../../context/SettingsContext";
 import type { ApiProviderId } from "../../types/provider";
 import WizardStep from "./WizardStep";
@@ -29,13 +30,14 @@ const PROVIDERS = [
 ];
 
 export default function WizardProviders({ currentStep, totalSteps, onBack, onContinue, onSkip }: Props) {
+  const { t } = useTranslation();
   const { settings, updateSetting } = useSettings();
 
   return (
     <WizardStep
       icon={<Zap className="h-8 w-8" />}
-      title="Package Providers"
-      description="Add API keys for game package sources. These power game downloads and Lua scripts."
+      title={t("wizard.providers_title")}
+      description={t("wizard.providers_desc")}
       currentStep={currentStep}
       totalSteps={totalSteps}
       onBack={onBack}
@@ -67,7 +69,7 @@ export default function WizardProviders({ currentStep, totalSteps, onBack, onCon
                 <div>
                   <p className="text-sm font-medium text-(--color-text)">{provider.name}</p>
                   {hasKey && (
-                    <p className="text-[10px] text-emerald-400">Configured</p>
+                    <p className="text-[10px] text-emerald-400">{t("wizard.providers_configured")}</p>
                   )}
                 </div>
               </div>
@@ -88,7 +90,7 @@ export default function WizardProviders({ currentStep, totalSteps, onBack, onCon
                     },
                   })
                 }
-                placeholder={`Enter ${provider.name} API key`}
+                placeholder={t("wizard.providers_placeholder", { name: provider.name })}
                 className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-(--color-text) placeholder-(--color-muted) outline-none transition focus:border-(--color-accent)/50 focus:ring-1 focus:ring-(--color-accent)/30"
               />
             </div>
@@ -99,7 +101,7 @@ export default function WizardProviders({ currentStep, totalSteps, onBack, onCon
               className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-(--color-accent) transition hover:brightness-110"
             >
               <ExternalLink className="h-3 w-3" />
-              Get API key at {provider.name}
+              {t("wizard.providers_link", { name: provider.name })}
             </a>
           </div>
         );

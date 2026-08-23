@@ -1,4 +1,5 @@
 import { Database, ExternalLink, Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useSettings } from "../../context/SettingsContext";
 import WizardStep from "./WizardStep";
 
@@ -11,6 +12,7 @@ type Props = {
 };
 
 export default function WizardMetadata({ currentStep, totalSteps, onBack, onContinue, onSkip }: Props) {
+  const { t } = useTranslation();
   const { settings, updateSetting } = useSettings();
 
   const sgdbConfigured = !!settings.steamGridDbApiKey;
@@ -20,8 +22,8 @@ export default function WizardMetadata({ currentStep, totalSteps, onBack, onCont
   return (
     <WizardStep
       icon={<Database className="h-8 w-8" />}
-      title="Artwork & Metadata"
-      description="Enhance your library with beautiful artwork and rich game metadata from these providers."
+      title={t("wizard.metadata_title")}
+      description={t("wizard.metadata_desc")}
       currentStep={currentStep}
       totalSteps={totalSteps}
       onBack={onBack}
@@ -39,10 +41,10 @@ export default function WizardMetadata({ currentStep, totalSteps, onBack, onCont
             {sgdbConfigured ? <Check className="h-4 w-4" /> : <Database className="h-4 w-4" />}
           </div>
           <p className="text-sm font-medium text-(--color-text)">SteamGridDB</p>
-          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">Recommended</span>
+          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">{t("wizard.metadata_recommended")}</span>
         </div>
         <p className="mb-3 text-xs leading-relaxed text-(--color-muted)">
-          Curated cover art, hero images, logos, and icons for your game library.
+          {t("wizard.sgdb_desc")}
         </p>
         <div className="flex items-center gap-2">
           <input
@@ -54,7 +56,7 @@ export default function WizardMetadata({ currentStep, totalSteps, onBack, onCont
                 updateSetting("steamGridDbArtworkEnabled", true);
               }
             }}
-            placeholder="Enter SteamGridDB API key"
+            placeholder={t("wizard.sgdb_placeholder")}
             className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-(--color-text) placeholder-(--color-muted) outline-none transition focus:border-(--color-accent)/50 focus:ring-1 focus:ring-(--color-accent)/30"
           />
         </div>
@@ -65,7 +67,7 @@ export default function WizardMetadata({ currentStep, totalSteps, onBack, onCont
           className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-(--color-accent) transition hover:brightness-110"
         >
           <ExternalLink className="h-3 w-3" />
-          Get API key at steamgriddb.com
+          {t("wizard.sgdb_link")}
         </a>
       </div>
 
@@ -79,25 +81,25 @@ export default function WizardMetadata({ currentStep, totalSteps, onBack, onCont
           }`}>
             {igdbConfigured ? <Check className="h-4 w-4" /> : <Database className="h-4 w-4" />}
           </div>
-          <p className="text-sm font-medium text-(--color-text)">IGDB / Twitch</p>
-          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">Optional</span>
+          <p className="text-sm font-medium text-(--color-text)">{t("wizard.igdb_label")}</p>
+          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">{t("wizard.igdb_optional")}</span>
         </div>
         <p className="mb-3 text-xs leading-relaxed text-(--color-muted)">
-          Rich game metadata — descriptions, genres, release dates, and cover art. Requires Twitch OAuth credentials.
+          {t("wizard.igdb_desc")}
         </p>
         <div className="space-y-2">
           <input
             type="text"
             value={settings.igdbClientId}
             onChange={(e) => updateSetting("igdbClientId", e.target.value)}
-            placeholder="Twitch Client ID"
+            placeholder={t("wizard.igdb_client_id")}
             className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-(--color-text) placeholder-(--color-muted) outline-none transition focus:border-(--color-accent)/50 focus:ring-1 focus:ring-(--color-accent)/30"
           />
           <input
             type="password"
             value={settings.igdbClientSecret}
             onChange={(e) => updateSetting("igdbClientSecret", e.target.value)}
-            placeholder="Twitch Client Secret"
+            placeholder={t("wizard.igdb_client_secret")}
             className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-(--color-text) placeholder-(--color-muted) outline-none transition focus:border-(--color-accent)/50 focus:ring-1 focus:ring-(--color-accent)/30"
           />
         </div>
@@ -108,7 +110,7 @@ export default function WizardMetadata({ currentStep, totalSteps, onBack, onCont
           className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-(--color-accent) transition hover:brightness-110"
         >
           <ExternalLink className="h-3 w-3" />
-          Get credentials at dev.twitch.tv
+          {t("wizard.igdb_link")}
         </a>
       </div>
 
@@ -122,17 +124,17 @@ export default function WizardMetadata({ currentStep, totalSteps, onBack, onCont
           }`}>
             {rawgConfigured ? <Check className="h-4 w-4" /> : <Database className="h-4 w-4" />}
           </div>
-          <p className="text-sm font-medium text-(--color-text)">RAWG</p>
-          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">Optional</span>
+          <p className="text-sm font-medium text-(--color-text)">{t("wizard.rawg_label")}</p>
+          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">{t("wizard.rawg_optional")}</span>
         </div>
         <p className="mb-3 text-xs leading-relaxed text-(--color-muted)">
-          Background artwork and metadata enrichment for Store discovery sections.
+          {t("wizard.rawg_desc")}
         </p>
         <input
           type="password"
           value={settings.rawgApiKey}
           onChange={(e) => updateSetting("rawgApiKey", e.target.value)}
-          placeholder="Enter RAWG API key"
+          placeholder={t("wizard.rawg_placeholder")}
           className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-(--color-text) placeholder-(--color-muted) outline-none transition focus:border-(--color-accent)/50 focus:ring-1 focus:ring-(--color-accent)/30"
         />
         <a

@@ -1,10 +1,13 @@
 import { Flame } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 type WizardWelcomeProps = {
   onGetStarted: () => void;
 };
 
 export default function WizardWelcome({ onGetStarted }: WizardWelcomeProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
       {/* Animated gradient orb */}
@@ -26,13 +29,11 @@ export default function WizardWelcome({ onGetStarted }: WizardWelcomeProps) {
       </div>
 
       <h1 className="relative text-4xl font-extrabold tracking-tight text-(--color-text) md:text-5xl">
-        Welcome to{" "}
-        <span className="text-(--color-accent)">LumaForge</span>
+        {t("wizard.welcome_title")}{" "}
       </h1>
 
       <p className="relative mt-4 max-w-lg text-base leading-relaxed text-(--color-muted)">
-        Your open-source game launcher with Steam integration, achievements, 
-        Debrid downloads, and more. Let&apos;s get you set up in just a minute.
+        {t("wizard.welcome_desc")}
       </p>
 
       {/* Feature pills */}
@@ -53,11 +54,11 @@ export default function WizardWelcome({ onGetStarted }: WizardWelcomeProps) {
         onClick={onGetStarted}
         className="relative mt-10 flex items-center gap-2 rounded-2xl bg-(--color-accent) px-8 py-3 text-base font-semibold text-(--color-accent-text) shadow-lg shadow-(--color-accent)/20 transition hover:brightness-110 hover:scale-[1.02] active:scale-[0.98]"
       >
-        Get Started
+        {t("wizard.welcome_cta")}
       </button>
 
       <p className="relative mt-4 text-xs text-(--color-muted)">
-        All steps are optional — you can always configure later in Settings.
+        {t("wizard.welcome_note")}
       </p>
     </div>
   );

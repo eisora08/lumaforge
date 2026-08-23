@@ -1,4 +1,5 @@
 import { PartyPopper, Check, Settings } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useSettings } from "../../context/SettingsContext";
 import WizardStep from "./WizardStep";
 
@@ -10,17 +11,18 @@ type Props = {
 };
 
 export default function WizardReady({ currentStep, totalSteps, onBack, onLaunch }: Props) {
+  const { t } = useTranslation();
   const { settings } = useSettings();
 
   const configuredItems = [
-    { label: "Theme & appearance", done: true },
-    { label: "Steam detection", done: !!settings.steamRoot },
-    { label: "Steam Web API key", done: !!settings.steamWebApiKey },
-    { label: "HubcapDB provider", done: !!settings.providers.hubcapdb?.apiKey },
-    { label: "Ryuu provider", done: !!settings.providers.ryuu?.apiKey },
-    { label: "SteamGridDB artwork", done: !!settings.steamGridDbApiKey },
-    { label: "IGDB metadata", done: !!(settings.igdbClientId && settings.igdbClientSecret) },
-    { label: "RAWG metadata", done: !!settings.rawgApiKey },
+    { label: t("wizard.ready_theme"), done: true },
+    { label: t("wizard.ready_steam_detect"), done: !!settings.steamRoot },
+    { label: t("wizard.ready_steam_api"), done: !!settings.steamWebApiKey },
+    { label: t("wizard.ready_hubcap"), done: !!settings.providers.hubcapdb?.apiKey },
+    { label: t("wizard.ready_ryuu"), done: !!settings.providers.ryuu?.apiKey },
+    { label: t("wizard.ready_sgdb"), done: !!settings.steamGridDbApiKey },
+    { label: t("wizard.ready_igdb"), done: !!(settings.igdbClientId && settings.igdbClientSecret) },
+    { label: t("wizard.ready_rawg"), done: !!settings.rawgApiKey },
   ];
 
   const configuredCount = configuredItems.filter((i) => i.done).length;
@@ -28,20 +30,20 @@ export default function WizardReady({ currentStep, totalSteps, onBack, onLaunch 
   return (
     <WizardStep
       icon={<PartyPopper className="h-8 w-8" />}
-      title="You're All Set!"
-      description="Here's what you configured. You can always change these in Settings later."
+      title={t("wizard.ready_title")}
+      description={t("wizard.ready_desc")}
       currentStep={currentStep}
       totalSteps={totalSteps}
       onBack={onBack}
       onContinue={onLaunch}
-      continueLabel="Launch LumaForge"
+      continueLabel={t("wizard.ready_launch")}
     >
       {/* Summary card */}
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
         <div className="mb-3 flex items-center justify-between">
-          <p className="text-sm font-medium text-(--color-text)">Configuration Summary</p>
+          <p className="text-sm font-medium text-(--color-text)">{t("wizard.ready_summary")}</p>
           <span className="text-xs text-(--color-muted)">
-            {configuredCount}/{configuredItems.length} configured
+            {t("wizard.ready_configured", { count: configuredCount, total: configuredItems.length })}
           </span>
         </div>
         <div className="space-y-2">
@@ -76,9 +78,7 @@ export default function WizardReady({ currentStep, totalSteps, onBack, onLaunch 
       <div className="flex items-start gap-3 rounded-2xl border border-(--color-accent)/20 bg-(--color-accent)/5 p-4">
         <Settings className="mt-0.5 h-4 w-4 shrink-0 text-(--color-accent)" />
         <p className="text-xs leading-relaxed text-(--color-muted)">
-          You can re-run this wizard anytime from{" "}
-          <span className="font-medium text-(--color-text)">Settings → Startup & More → Run Setup Wizard</span>.
-          All configuration is stored locally on your machine.
+          {t("wizard.ready_tip")}
         </p>
       </div>
     </WizardStep>

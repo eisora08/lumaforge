@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { FolderSearch, Key, ExternalLink, Check, AlertTriangle } from "lucide-react";
 import { useSettings } from "../../context/SettingsContext";
 import { detectSteamPaths } from "../../services/tauri";
@@ -13,6 +14,7 @@ type Props = {
 };
 
 export default function WizardSteam({ currentStep, totalSteps, onBack, onContinue, onSkip }: Props) {
+  const { t } = useTranslation();
   const { settings, updateSetting } = useSettings();
   const [detecting, setDetecting] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -38,8 +40,8 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
   return (
     <WizardStep
       icon={<FolderSearch className="h-8 w-8" />}
-      title="Steam Setup"
-      description="Auto-detect your Steam installation and optionally add your Steam Web API key for achievements."
+      title={t("wizard.steam_title")}
+      description={t("wizard.steam_desc")}
       currentStep={currentStep}
       totalSteps={totalSteps}
       onBack={onBack}
@@ -64,7 +66,7 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
           )}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-(--color-text)">
-              {hasSteam ? "Steam Detected" : detecting ? "Detecting Steam…" : "Steam Not Found"}
+              {hasSteam ? t("wizard.steam_detected") : detecting ? t("wizard.steam_detecting") : t("wizard.steam_not_found")}
             </p>
             {hasSteam && (
               <p className="mt-0.5 truncate text-xs text-(--color-muted)">
@@ -79,12 +81,11 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
         <div className="mb-3 flex items-center gap-2">
           <Key className="h-4 w-4 text-(--color-muted)" />
-          <p className="text-sm font-medium text-(--color-text)">Steam Web API Key</p>
-          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">Optional</span>
+          <p className="text-sm font-medium text-(--color-text)">{t("wizard.steam_web_api_key")}</p>
+          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">{t("wizard.steam_optional")}</span>
         </div>
         <p className="mb-3 text-xs leading-relaxed text-(--color-muted)">
-          Enables achievement tracking, playtime stats, and automatic library sync. 
-          Your key stays local — never sent to third parties.
+          {t("wizard.steam_api_desc")}
         </p>
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -92,7 +93,7 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
               type={showKey ? "text" : "password"}
               value={settings.steamWebApiKey}
               onChange={(e) => updateSetting("steamWebApiKey", e.target.value)}
-              placeholder="Enter your Steam Web API key"
+              placeholder={t("wizard.steam_api_placeholder")}
               className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-(--color-text) placeholder-(--color-muted) outline-none transition focus:border-(--color-accent)/50 focus:ring-1 focus:ring-(--color-accent)/30"
             />
           </div>
@@ -100,7 +101,7 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
             onClick={() => setShowKey(!showKey)}
             className="rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-(--color-muted) transition hover:bg-white/8"
           >
-            {showKey ? "Hide" : "Show"}
+            {showKey ? t("wizard.steam_api_hide") : t("wizard.steam_api_show")}
           </button>
         </div>
         <a
@@ -110,7 +111,7 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
           className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-(--color-accent) transition hover:brightness-110"
         >
           <ExternalLink className="h-3 w-3" />
-          Get your API key at steamcommunity.com
+          {t("wizard.steam_api_link")}
         </a>
       </div>
 
@@ -118,11 +119,11 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
         <div className="mb-3 flex items-center gap-2">
           <Key className="h-4 w-4 text-(--color-muted)" />
-          <p className="text-sm font-medium text-(--color-text)">SteamID64</p>
-          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">Optional</span>
+          <p className="text-sm font-medium text-(--color-text)">{t("wizard.steam_id64")}</p>
+          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">{t("wizard.steam_optional")}</span>
         </div>
         <p className="mb-3 text-xs leading-relaxed text-(--color-muted)">
-          Your 17-digit Steam ID for per-user achievement progress. Found in your Steam profile URL.
+          {t("wizard.steam_id64_desc")}
         </p>
         <input
           type="text"
