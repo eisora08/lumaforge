@@ -8,6 +8,7 @@ import {
 
 import { AppSettings, AppSettingsKey, DEFAULT_DEBRID_PROVIDER_CONFIG } from "../types/settings";
 import { defaultProviderSettings } from "../data/providers";
+import { saveStartupConfig, setAutostart } from "../services/tauri";
 
 type SettingsContextValue = {
   settings: AppSettings;
@@ -192,6 +193,22 @@ export function SettingsProvider({
     window.addEventListener("lumaforge-data-changed", handler);
     return () => window.removeEventListener("lumaforge-data-changed", handler);
   }, []);
+
+  // ── Sync startup settings to Rust (startup-config.json + autostart registry) ──
+  useEffect(() => {
+    saveStartupConfig({
+      startWithWindows: settings.startWithWindows,
+      startMaximized: settings.startMaximized,
+      startInTray: settings.startInTray,
+      closeToTray: settings.closeToTray,
+      launchMode: settings.launchMode,
+      startupWindowMode: settings.startupWindowMode,
+    }).catch((err) => console.warn("[Settings] Failed to save startup config:", err));
+
+    setAutostart(settings.startWithWindows).catch((err) =>
+      console.warn("[Settings] Failed to toggle autostart:", err)
+    );
+  }, [settings.startWithWindows, settings.startMaximized, settings.startInTray, settings.closeToTray, settings.launchMode, settings.startupWindowMode]);
 
   const value = useMemo(
     () => ({

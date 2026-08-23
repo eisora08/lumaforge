@@ -1100,7 +1100,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <div className="space-y-4">
                     <ToggleOption
                       label="Start with Windows"
-                      description="Launch LumaForge automatically when Windows starts. (Requires OS registration — not yet implemented.)"
+                      description="Launch LumaForge automatically when Windows starts."
                       enabled={settings.startWithWindows}
                       onChange={(enabled) => updateSetting("startWithWindows", enabled)}
                     />

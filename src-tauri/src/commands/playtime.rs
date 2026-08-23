@@ -437,3 +437,46 @@ pub fn batch_import_external_playtime(
         Ok(count)
     })
 }
+
+// ---------------------------------------------------------------------------
+// get_recent_played_games — 5 most recently played games for tray menu
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct RecentGame {
+    pub app_id: String,
+    pub title: String,
+}
+
+#[tauri::command]
+pub fn get_recent_played_games(
+    db: State<'_, SqliteCoreDb>,
+) -> Result<Vec<RecentGame>, String> {
+    with_conn(&db, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT app_id, title FROM playtime_entries \
+                 WHERE app_id IS NOT NULL AND app_id != '' \
+                 AND last_played_at IS NOT NULL AND last_played_at > 0 \
+                 ORDER BY last_played_at DESC LIMIT 5",
+            )
+            .map_err(|e| format!("Failed to prepare recent games query: {}", e))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(RecentGame {
+                    app_id: row.get::<_, String>(0).unwrap_or_default(),
+                    title: row.get::<_, String>(1).unwrap_or_default(),
+                })
+            })
+            .map_err(|e| format!("Failed to query recent games: {}", e))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            if let Ok(game) = row {
+                results.push(game);
+            }
+        }
+        Ok(results)
+    })
+}

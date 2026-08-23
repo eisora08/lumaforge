@@ -1,5 +1,3 @@
-let _fullscreenEnabled = false;
-
 const DEBUG_FULLSCREEN = false;
 
 function log(...args: unknown[]) {
@@ -7,12 +5,12 @@ function log(...args: unknown[]) {
 }
 
 export async function setAppFullscreen(enabled: boolean): Promise<void> {
-  if (_fullscreenEnabled === enabled) return;
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();
+    // Always call setFullscreen — do NOT short-circuit based on cached state,
+    // because external OS actions (Win+Up, snap, etc.) can desync the cache.
     await win.setFullscreen(enabled);
-    _fullscreenEnabled = enabled;
     log(enabled ? "fullscreen ON" : "fullscreen OFF");
   } catch (err) {
     console.warn("[WINDOW_MODE] setAppFullscreen failed:", err);

@@ -3884,3 +3884,53 @@ export async function downloadStoreImage(
 ): Promise<string> {
   return await invoke<string>("download_store_image", { url, appId, role });
 }
+
+// ── Startup config / autostart ───────────────────────────────────────────────
+
+export interface StartupConfigDto {
+  start_with_windows: boolean;
+  start_maximized: boolean;
+  start_in_tray: boolean;
+  close_to_tray: boolean;
+  launch_mode: string;
+  startup_window_mode: string;
+}
+
+export async function saveStartupConfig(cfg: {
+  startWithWindows: boolean;
+  startMaximized: boolean;
+  startInTray: boolean;
+  closeToTray: boolean;
+  launchMode: string;
+  startupWindowMode: string;
+}): Promise<void> {
+  return await invoke("save_startup_config", {
+    startWithWindows: cfg.startWithWindows,
+    startMaximized: cfg.startMaximized,
+    startInTray: cfg.startInTray,
+    closeToTray: cfg.closeToTray,
+    launchMode: cfg.launchMode,
+    startupWindowMode: cfg.startupWindowMode,
+  });
+}
+
+export async function readStartupConfig(): Promise<StartupConfigDto> {
+  return await invoke<StartupConfigDto>("read_startup_config_cmd");
+}
+
+export async function setAutostart(enabled: boolean): Promise<void> {
+  return await invoke("set_autostart", { enabled });
+}
+
+export interface RecentGame {
+  app_id: string;
+  title: string;
+}
+
+export async function getRecentPlayedGames(): Promise<RecentGame[]> {
+  return await invoke<RecentGame[]>("get_recent_played_games");
+}
+
+// ── Tray menu ─────────────────────────────────────────────────────────────
+// Tray menu is rebuilt automatically via Tauri event `lumaforge-mode-changed`.
+// Emit this event from TS when the app mode changes (console ↔ desktop).

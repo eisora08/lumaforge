@@ -49,6 +49,8 @@ import { getBootSnapshot } from "./services/appBootCoordinator";
 import { localPathToUrl, isLocalPath } from "./services/gameCacheService";
 import { initDataChangeBus } from "./services/dataChangeBus";
 import { pushToHistory } from "./services/navigationHistory";
+import { readStartupConfig } from "./services/tauri";
+import { listen } from "@tauri-apps/api/event";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -163,6 +165,7 @@ function App() {
   const modeSwitchKeyRef = useRef(0);
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
+  const activePageRef = useRef(activePage);
   const { settings } = useSettings();
 
   // Start boot coordinator once on mount
@@ -191,6 +194,73 @@ function App() {
     });
   }, []);
 
+  // ── Launch mode: read startup-config.json and override initial page ──
+  useEffect(() => {
+    readStartupConfig().then((cfg) => {
+      const mode = cfg.launch_mode || "last-used";
+      if (mode === "console") {
+        console.log("[App] launchMode=console → navigating to Console Mode");
+        setActivePage("console");
+      } else if (mode === "desktop") {
+        // Force home page — don't restore last-used
+        const current = localStorage.getItem(ACTIVE_PAGE_KEY);
+        if (current && current !== "home") {
+          console.log(`[App] launchMode=desktop → overriding "${current}" → "home"`);
+          setActivePage("home");
+        }
+      }
+      // "last-used" → keep restoreActivePage() default (no-op)
+    }).catch((err) => {
+      console.warn("[App] Failed to read startup config for launch mode:", err);
+    });
+  }, []);
+
+  // ── Tray icon event listeners (system tray menu actions) ──
+  useEffect(() => {
+    const unlisteners: Array<() => void> = [];
+
+    // "Open LumaForge" from tray → show + focus
+    listen("lumaforge-tray-open", () => {
+      console.log("[App] Tray: open requested");
+    }).then((unlisten) => unlisteners.push(unlisten));
+
+    // "Switch to Console/Desktop Mode" from tray — toggles between modes
+    listen("lumaforge-tray-switch-mode", () => {
+      const current = activePageRef.current;
+      if (current === "console") {
+        console.log("[App] Tray: switch to desktop mode");
+        setAppFullscreen(false);
+        setActivePage("home");
+      } else {
+        console.log("[App] Tray: switch to console mode");
+        setAppFullscreen(true);
+        setActivePage("console");
+      }
+    }).then((unlisten) => unlisteners.push(unlisten));
+
+    // "Open recent game" from tray
+    listen<{ app_id: string }>("lumaforge-tray-open-game", (event) => {
+      const appId = event.payload?.app_id;
+      if (appId) {
+        console.log(`[App] Tray: open game appId=${appId}`);
+        // Navigate to library-game-detail with this game
+        const snapshot = getBootSnapshot();
+        const game = snapshot?.library?.games?.find(
+          (g: { appId?: string }) => g.appId === appId
+        );
+        if (game) {
+          setActivePage("library-game-detail");
+          // Dispatch to GameDetailsContext
+          window.dispatchEvent(
+            new CustomEvent("lumaforge-select-game", { detail: { game } })
+          );
+        }
+      }
+    }).then((unlisten) => unlisteners.push(unlisten));
+
+    return () => unlisteners.forEach((fn) => fn());
+  }, []);
+
   // Init SQLite data change bus — listens for Rust-side data mutations
   useEffect(() => {
     const unlisten = initDataChangeBus();
@@ -211,6 +281,13 @@ function App() {
 
   useEffect(() => {
     setConsoleMode(activePage === "console");
+    activePageRef.current = activePage;
+    // Notify Rust tray menu to rebuild with correct switch-mode label
+    try {
+      import("@tauri-apps/api/event").then(({ emit }) => {
+        emit("lumaforge-mode-changed", activePage === "console" ? "console" : "desktop");
+      }).catch(() => {});
+    } catch { /* ignore */ }
     if (initialRender.current) {
       initialRender.current = false;
       return;

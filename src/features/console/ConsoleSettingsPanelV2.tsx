@@ -11,6 +11,7 @@ import {
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
+import { useSettings } from "../../context/SettingsContext";
 import { getAvatarPreset, getBannerPreset } from "../profile/profilePresets";
 import type {
   ConsoleSettings,
@@ -1261,6 +1262,7 @@ export default function ConsoleSettingsPanelV2({
   onNavigate, allGames, onSelectGame, onRefreshLibrary,
 }: Props) {
   const [profile] = useUserProfile();
+  const { settings: desktopSettings, updateSetting: updateDesktopSetting } = useSettings();
   const [page, setPage] = useState<PanelPage>("main");
   const [subPage, setSubPage] = useState<PanelPage | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -1781,12 +1783,43 @@ export default function ConsoleSettingsPanelV2({
     const rows = subPage ? SUBPAGE_ROWS[subPage] : undefined;
     const title = subPage ? SUBPAGE_TITLES[subPage] ?? "" : "";
     if (rows && title) {
+      // ── Startup sub-page: sync 4 shared fields with Desktop settings ──
+      const isStartup = subPage === "startup";
+      const effectiveSettings = isStartup ? {
+        ...settings,
+        autostart: desktopSettings.startWithWindows,
+        startMaximized: desktopSettings.startMaximized,
+        startInTray: desktopSettings.startInTray,
+        closeToTray: desktopSettings.closeToTray,
+        windowMode: desktopSettings.startupWindowMode as ConsoleSettings["windowMode"],
+      } : settings;
+
+      const effectiveOnPatch = isStartup
+        ? (p: Partial<ConsoleSettings>) => {
+            onPatch(p);
+            // Sync shared startup fields to Desktop settings
+            if (p.autostart !== undefined) updateDesktopSetting("startWithWindows", p.autostart);
+            if (p.startMaximized !== undefined) updateDesktopSetting("startMaximized", p.startMaximized);
+            if (p.startInTray !== undefined) updateDesktopSetting("startInTray", p.startInTray);
+            if (p.closeToTray !== undefined) updateDesktopSetting("closeToTray", p.closeToTray);
+            // windowMode (Console) → startupWindowMode (Desktop)
+            if (p.windowMode !== undefined) {
+              updateDesktopSetting("startupWindowMode", p.windowMode as "windowed" | "maximized" | "fullscreen");
+            }
+            // launchMode: map Console's 3-value to Desktop's 2-value
+            if (p.launchMode !== undefined) {
+              const mapped = p.launchMode === "last-used" ? "desktop" : p.launchMode;
+              updateDesktopSetting("launchMode", mapped as "desktop" | "console");
+            }
+          }
+        : onPatch;
+
       return (
         <ConsoleSettingsSubPage
           title={title}
           rows={rows}
-          settings={settings}
-          onPatch={onPatch}
+          settings={effectiveSettings}
+          onPatch={effectiveOnPatch}
           onBack={doBackNav}
           focusedIndex={focusedIndex}
           settingEditingId={settingEditingId}

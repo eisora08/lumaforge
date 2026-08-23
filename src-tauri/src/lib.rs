@@ -5,7 +5,129 @@ mod utils;
 
 use commands::achievement_watcher::{AchievementWatcher, AchievementWatcherState};
 use std::sync::Mutex;
+use tauri::Emitter;
+use tauri::Listener;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+/// Build the tray context menu with recent games + actions.
+/// `is_console_mode` controls the label on the switch item:
+///   - true  → "Switch to Desktop Mode"
+///   - false → "Switch to Console Mode"
+fn build_tray_menu(
+    app_handle: &tauri::AppHandle,
+    is_console_mode: bool,
+) -> Option<tauri::menu::Menu<tauri::Wry>> {
+    let mut menu = MenuBuilder::new(app_handle);
+
+    // ── Recent games ──
+    if let Some(state) = app_handle.try_state::<commands::sqlite_cache::SqliteCoreDb>() {
+        if let Ok(recent) = commands::playtime::get_recent_played_games(state) {
+            if !recent.is_empty() {
+                for game in &recent {
+                    let label = if game.title.len() > 40 {
+                        format!("{}…", &game.title[..39])
+                    } else {
+                        game.title.clone()
+                    };
+                    if let Ok(item) = MenuItemBuilder::new(format!("🎮 {}", label))
+                        .id(format!("tray-game-{}", game.app_id))
+                        .build(app_handle)
+                    {
+                        menu = menu.item(&item);
+                    }
+                }
+                if let Ok(sep) = PredefinedMenuItem::separator(app_handle) {
+                    menu = menu.item(&sep);
+                }
+            }
+        }
+    }
+
+    // ── Static actions ──
+    if let Ok(show) = MenuItemBuilder::new("Open LumaForge").id("tray-show").build(app_handle) {
+        menu = menu.item(&show);
+    }
+    let switch_label = if is_console_mode {
+        "Switch to Desktop Mode"
+    } else {
+        "Switch to Console Mode"
+    };
+    if let Ok(switch) = MenuItemBuilder::new(switch_label)
+        .id("tray-switch-mode")
+        .build(app_handle)
+    {
+        menu = menu.item(&switch);
+    }
+    if let Ok(sep) = PredefinedMenuItem::separator(app_handle) {
+        menu = menu.item(&sep);
+    }
+    if let Ok(exit) = MenuItemBuilder::new("Exit").id("tray-exit").build(app_handle) {
+        menu = menu.item(&exit);
+    }
+
+    menu.build().ok()
+}
+
+/// Rebuild the tray context menu with the correct switch-mode label.
+/// Called from the `lumaforge-mode-changed` event listener.
+fn rebuild_tray_menu(
+    app_handle: tauri::AppHandle,
+    is_console_mode: bool,
+) -> Result<(), String> {
+    let new_menu = build_tray_menu(&app_handle, is_console_mode)
+        .ok_or_else(|| "Failed to build tray menu".to_string())?;
+    let tray = app_handle
+        .tray_by_id("lumaforge-tray")
+        .ok_or_else(|| "Tray icon not found — is close-to-tray enabled?")?;
+    tray.set_menu(Some(new_menu))
+        .map_err(|e| format!("Failed to set tray menu: {}", e))
+}
+
+/// Read startup preferences written by the frontend (Settings → Startup).
+/// The JSON file lives next to localStorage under the app data dir but is
+/// written as a plain file so Rust can read it *before* the webview loads.
+fn read_startup_config(app_handle: &tauri::AppHandle) -> StartupConfig {
+    let path = app_handle
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("startup-config.json"));
+
+    if let Some(path) = path {
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = serde_json::from_str::<StartupConfig>(&data) {
+                return cfg;
+            }
+        }
+    }
+    StartupConfig::default()
+}
+
+#[derive(serde::Deserialize, Default)]
+struct StartupConfig {
+    #[serde(default)]
+    start_with_windows: bool,
+    #[serde(default)]
+    start_maximized: bool,
+    #[serde(default)]
+    start_in_tray: bool,
+    #[serde(default)]
+    close_to_tray: bool,
+    #[serde(default = "default_launch_mode")]
+    launch_mode: String,
+    #[serde(default = "default_window_mode")]
+    startup_window_mode: String,
+}
+
+fn default_launch_mode() -> String {
+    "last-used".to_string()
+}
+
+fn default_window_mode() -> String {
+    "windowed".to_string()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,22 +135,170 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::SIZE,
+                )
+                .build(),
+        )
+        .plugin({
+            use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+            tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None)
+        })
         .setup(|app| {
-            // Future: Achievement overlay notification window
-            // - create transparent always-on-top window
-            // - decorations: false
-            // - click-through via set_ignore_cursor_events(true)
-            // - render achievement toast there
-            // See commands::toast::show_toast_notification for reference
+            // ── Single-instance lock ──────────────────────────────────────
+            let startup_cfg = read_startup_config(app.handle());
 
-            // Initialize achievement file watcher state
+            // ── Achievement file watcher state ─────────────────────────────
             app.manage(AchievementWatcherState(Mutex::new(AchievementWatcher::new())));
 
-            // Initialize SQLite cache databases (core / achievements / store)
+            // ── SQLite cache databases ─────────────────────────────────────
             app.manage(commands::sqlite_cache::initialize_core_sqlite(app.handle()));
             app.manage(commands::sqlite_cache::initialize_achievements_sqlite(app.handle()));
             app.manage(commands::sqlite_cache::initialize_store_sqlite(app.handle()));
 
+            // ── Close-to-tray: system tray icon + context menu + intercept close ──
+            if startup_cfg.close_to_tray {
+                let handle_for_menu = app.handle().clone();
+
+                // Determine initial mode from startup config
+                let is_console = startup_cfg.launch_mode == "console";
+
+                // Build initial tray menu (label reflects current mode)
+                let initial_menu = build_tray_menu(&handle_for_menu, is_console);
+
+                let handle_clone = app.handle().clone();
+                let mut tray = TrayIconBuilder::with_id("lumaforge-tray")
+                    .icon(app.default_window_icon().cloned().expect("no icon in app bundle"))
+                    .tooltip("LumaForge — click to restore");
+
+                // Only attach menu if it built successfully
+                if let Some(ref menu) = initial_menu {
+                    tray = tray.menu(menu);
+                }
+
+                let tray = tray
+                    .on_menu_event(move |app_handle, event| {
+                        let id = event.id().as_ref();
+                        match id {
+                            "tray-show" => {
+                                if let Some(main) = app_handle.get_webview_window("main") {
+                                    let _ = main.show();
+                                    let _ = main.set_focus();
+                                }
+                            }
+                            "tray-switch-mode" => {
+                                let _ = app_handle.emit("lumaforge-tray-switch-mode", ());
+                            }
+                            "tray-exit" => {
+                                app_handle.exit(0);
+                            }
+                            _ if id.starts_with("tray-game-") => {
+                                let app_id = id.strip_prefix("tray-game-").unwrap_or("");
+                                let _ = app_handle.emit("lumaforge-tray-open-game", serde_json::json!({ "app_id": app_id }));
+                                if let Some(main) = app_handle.get_webview_window("main") {
+                                    let _ = main.show();
+                                    let _ = main.set_focus();
+                                }
+                            }
+                            _ => {}
+                        }
+                    })
+                    .on_tray_icon_event(move |tray_icon, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            if let Some(main) = handle_clone.get_webview_window("main") {
+                                let _ = main.show();
+                                let _ = main.set_focus();
+                            }
+                        }
+                        // Right-click: the OS shows the menu set at creation time.
+                        // Do NOT call set_menu here — replacing the menu handle
+                        // while Windows is displaying it causes the menu to vanish.
+                    })
+                    .build(app.handle())
+                    .map_err(|e| eprintln!("[Boot] Failed to create tray icon: {}", e));
+
+                if tray.is_ok() {
+                    eprintln!("[Boot] System tray icon created (close-to-tray enabled)");
+                }
+
+                // Intercept close → hide instead of quit
+                if let Some(main) = app.get_webview_window("main") {
+                    let main_clone = main.clone();
+                    let handle_emit = app.handle().clone();
+                    main.on_window_event(move |event| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                            api.prevent_close();
+                            let _ = main_clone.hide();
+                            let _ = handle_emit.emit("lumaforge-minimized-to-tray", ());
+                        }
+                    });
+                }
+            }
+
+            // ── Listen for mode changes → rebuild tray menu with correct label ──
+            {
+                let handle = app.handle().clone();
+                app.handle().listen("lumaforge-mode-changed", move |event| {
+                    let is_console = event
+                        .payload()
+                        .trim_matches('"')
+                        == "console";
+                    if let Err(e) = rebuild_tray_menu(handle.clone(), is_console) {
+                        eprintln!("[Tray] Rebuild on mode change failed: {}", e);
+                    }
+                });
+            }
+
+            // ── Apply dynamic window size at boot (before TS loads) ─────────
+            // The window-state plugin may have restored a stale size; re-apply
+            // the monitor-proportional size when windowed mode is configured.
+            {
+                let cfg = read_startup_config(app.handle());
+                if let Some(main) = app.get_webview_window("main") {
+                    match cfg.startup_window_mode.as_str() {
+                        "fullscreen" => {
+                            let _ = main.show();
+                            let _ = main.set_fullscreen(true);
+                        }
+                        "maximized" => {
+                            let _ = main.show();
+                            let _ = main.maximize();
+                        }
+                        _ => {
+                            // "windowed" — resize from monitor
+                            if let Ok(Some(monitor)) = main.primary_monitor() {
+                                let scale = monitor.scale_factor();
+                                let phys = monitor.size();
+                                let logical_w = phys.width as f64 / scale;
+                                let logical_h = phys.height as f64 / scale;
+                                let target_w = logical_w * 0.55;
+                                let target_h = logical_h * 0.75;
+                                let target = tauri::LogicalSize::new(target_w, target_h);
+                                eprintln!(
+                                    "[Boot][Setup] windowed → monitor {}×{} (scale {:.1}), window {:.0}×{:.0}",
+                                    phys.width, phys.height, scale, target_w, target_h
+                                );
+                                let _ = main.set_size(target);
+                                let _ = main.center();
+                            }
+                            if cfg.start_maximized {
+                                let _ = main.maximize();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Failsafe: show main window after timeout ───────────────────
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(10));
@@ -46,8 +316,21 @@ pub fn run() {
             });
             Ok(())
         })
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // When a second instance launches, focus the existing window
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.set_focus();
+            }
+            if let Some(splash) = app.get_webview_window("splashscreen") {
+                let _ = splash.close();
+            }
+        }))
         .invoke_handler(tauri::generate_handler![
             commands::splash::close_splashscreen_and_show_main,
+            commands::splash::save_startup_config,
+            commands::splash::set_autostart,
+            commands::splash::read_startup_config_cmd,
             commands::steam::detect_steam_paths,
             commands::steam_news::fetch_steam_news,
             commands::installer::download_and_install_package,
@@ -202,6 +485,7 @@ pub fn run() {
             commands::playtime::record_play_session_end,
             commands::playtime::import_external_playtime,
             commands::playtime::batch_import_external_playtime,
+            commands::playtime::get_recent_played_games,
             commands::sqlite_cache::check_sqlite_health,
             commands::sqlite_cache::get_media_cache,
             commands::sqlite_cache::get_metadata_cache,
