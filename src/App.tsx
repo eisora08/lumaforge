@@ -51,6 +51,7 @@ import { initDataChangeBus } from "./services/dataChangeBus";
 import { pushToHistory } from "./services/navigationHistory";
 import { readStartupConfig } from "./services/tauri";
 import { listen } from "@tauri-apps/api/event";
+import { checkForUpdate } from "./services/appUpdateStore";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -193,6 +194,15 @@ function App() {
       console.error("[App] Extension bootstrap failed:", err);
     });
   }, []);
+
+  // ── Auto-update: silent check on startup (respects disableAutoUpdates) ──
+  useEffect(() => {
+    if (settings.disableAutoUpdates) return;
+    const timer = setTimeout(() => {
+      checkForUpdate(true);
+    }, 8000); // 8s delay — let boot finish and UI settle
+    return () => clearTimeout(timer);
+  }, [settings.disableAutoUpdates]);
 
   // ── Launch mode: read startup-config.json and override initial page ──
   useEffect(() => {

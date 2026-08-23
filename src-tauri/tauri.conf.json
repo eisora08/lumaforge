@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "lumaforge",
+  "productName": "LumaForge",
   "version": "0.1.0",
   "identifier": "com.einey.lumaforge",
   "build": {
@@ -14,7 +14,7 @@
       {
         "label": "splashscreen",
         "url": "/splashscreen.html",
-        "title": "lumaforge",
+        "title": "LumaForge",
         "width": 720,
         "height": 420,
         "visible": true,
@@ -24,7 +24,7 @@
       },
       {
         "label": "main",
-        "title": "lumaforge",
+        "title": "LumaForge",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -44,7 +44,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "category": "Game",
+    "copyright": "Copyright 2024-2026 LumaForge",
+    "shortDescription": "Gestor de juegos open-source con soporte Steam, Lua, Epic, Debrid y mas",
+    "longDescription": "LumaForge es un gestor de biblioteca de juegos open-source que integra Steam, Epic Games Store, Lua scripts, Debrid downloads y herramientas de terceros en una sola interfaz.",
+    "homepage": "https://github.com/anomalyco/LumaForge",
+    "publisher": "LumaForge",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -52,6 +58,41 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": []
+    "resources": [],
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "allowDowngrades": true,
+      "minimumWebview2Version": null,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "signCommand": null,
+      "timestampUrl": null,
+      "tsp": false,
+      "nsis": {
+        "compression": "lzma",
+        "installMode": "currentUser",
+        "displayLanguageSelector": true,
+        "languages": ["Spanish", "English"],
+        "headerImage": "nsis/header.bmp",
+        "sidebarImage": "nsis/sidebar.bmp",
+        "uninstallerHeaderImage": "nsis/uninstaller-header.bmp",
+        "uninstallerIcon": "icons/icon.ico",
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "LumaForge"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/anomalyco/LumaForge/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyMDY4QTdENUY4MzgxQUEKUldTcWdZTmZmWW9Hc3VENFB6QUxJM0EzelFsYnBVNTBrSjJPNlZEZDNlSFY1WnRTbXFIQjJwUTcK",
+      "windows": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

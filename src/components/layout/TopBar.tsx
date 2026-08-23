@@ -10,6 +10,7 @@ import PackagesToolbarSearch from "../packages/PackagesToolbarSearch";
 import type { StoreSearchDropdownItem } from "../packages/PackagesToolbar";
 import PackageUpdatePanel from "../notifications/PackageUpdatePanel";
 import DownloadsModal from "../downloads/DownloadsModal";
+import AppUpdateIcon from "../updates/AppUpdateIcon";
 
 const DEBUG_WINDOW_CONTROLS = false;
 
@@ -353,6 +354,8 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
         >
           <Monitor className="h-4 w-4" />
         </button>
+
+        <AppUpdateIcon />
 
         <div className="relative">
           <button

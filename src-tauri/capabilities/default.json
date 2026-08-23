@@ -21,6 +21,7 @@
     "notification:default",
     "window-state:default",
     "autostart:default",
-    "process:default"
+    "process:default",
+    "updater:default"
   ]
 }
