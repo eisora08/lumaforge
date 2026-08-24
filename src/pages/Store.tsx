@@ -814,22 +814,26 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   useEffect(() => {
     if (skipCatalogFetch) return;
     let cancelled = false;
-    fetch("/data/steamdb.json")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ appid: number; name: string }[]>;
-      })
-      .then((data) => {
-        if (!cancelled) {
-          setSteamCatalog(data);
-          console.log(`[STORE][CATALOG_SOURCE] total=${data.length} source=steamdb.json`);
-          logSteamDbSchema(data);
-        }
-      })
-      .catch((err) => {
-        console.error("[Store] Failed to load steamdb.json", err);
-      });
-    return () => { cancelled = true; };
+    // Defer the 7.4 MB fetch to after first paint to avoid blocking INP
+    const loadCatalog = () => {
+      fetch("/data/steamdb.json")
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json() as Promise<{ appid: number; name: string }[]>;
+        })
+        .then((data) => {
+          if (!cancelled) {
+            setSteamCatalog(data);
+            console.log(`[STORE][CATALOG_SOURCE] total=${data.length} source=steamdb.json`);
+            logSteamDbSchema(data);
+          }
+        })
+        .catch((err) => {
+          console.error("[Store] Failed to load steamdb.json", err);
+        });
+    };
+    const idleId = requestIdleCallback(loadCatalog, { timeout: 2000 });
+    return () => { cancelled = true; cancelIdleCallback(idleId); };
   }, [skipCatalogFetch]);
 
   // Restore Store UI state from module-level cache on mount
@@ -1962,6 +1966,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   }, [lumaForgeSections, sectionModels, catalogFingerprint]);
 
   const browseGames = useMemo(() => {
+    // Skip 162K-entry computation when Browse tab is inactive
+    if (activeStoreTab !== "browse") {
+      if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][COMPUTE_SKIP] target=browseGames reason=inactive-tab`);
+      return [];
+    }
+
     // Check dedicated Browse cache first
     const browseCached = getCachedBrowseGames(catalogFingerprint);
     if (browseCached && browseCached.browseGames.length > 0) {
@@ -2007,7 +2017,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] browseGames count=${games.length} elapsed=${(performance.now() - t0).toFixed(1)}ms`);
     return games;
-  }, [steamCatalog, lumaForgeSections, results, providerOverlayByAppId, catalogFingerprint]);
+  }, [activeStoreTab, steamCatalog, lumaForgeSections, results, providerOverlayByAppId, catalogFingerprint]);
 
 
   // ── Performance logs and cache save ──

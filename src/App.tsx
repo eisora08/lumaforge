@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, Suspense, lazy } from "react";
 import { countRender, logRenderSummary, startRenderSession, markNavigation } from "./services/perfCounters";
 
 import AppLayout from "./components/layout/AppLayout";
@@ -7,7 +7,7 @@ import Settings from "./pages/Settings";
 
 import Home from "./pages/Home";
 import Library from "./pages/Library";
-import Store from "./pages/Store";
+const Store = lazy(() => import("./pages/Store"));
 import Games from "./pages/Games";
 import GlobalSearchResults from "./pages/GlobalSearchResults";
 import Achievements from "./pages/Achievements";
@@ -456,12 +456,21 @@ function App() {
         <AmbientNavFallback activePage={activePage} />
         <AppLayout activePage={activePage} onNavigate={handleNavigate} isConsoleMode={activePage === "console"}>
           <AppRouteTransition routeKey={activePage}>
-            {renderPage() ?? (
+            <Suspense fallback={
               <div className="flex h-full items-center justify-center text-(--color-muted)">
-                {DEBUG_ROUTE_SHELL && console.warn(`[ROUTE][EMPTY] activePage=${activePage} renderPage returned null`)}
-                <span>Page failed to render</span>
+                <div className="flex flex-col items-center gap-3">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-accent)/30 border-t-(--color-accent)" />
+                  <span className="text-sm">Loading…</span>
+                </div>
               </div>
-            )}
+            }>
+              {renderPage() ?? (
+                <div className="flex h-full items-center justify-center text-(--color-muted)">
+                  {DEBUG_ROUTE_SHELL && console.warn(`[ROUTE][EMPTY] activePage=${activePage} renderPage returned null`)}
+                  <span>Page failed to render</span>
+                </div>
+              )}
+            </Suspense>
           </AppRouteTransition>
         </AppLayout>
       </GameDetailsProvider>
