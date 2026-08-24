@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { countRender } from "../services/perfCounters";
 import { useLibraryGames } from "../context/LibraryGamesContext";
@@ -597,7 +598,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           setMetadataLoading(false);
         }
       });
-  }, [selectedGame, resetGeneration]);
+  }, [selectedGame, resetGeneration, i18n.language]);
 
   // ── Re-run fallback resolver when enriched metadata becomes available ──
   // The main effect runs with selectedGame?.metadata (may not be enriched yet).
