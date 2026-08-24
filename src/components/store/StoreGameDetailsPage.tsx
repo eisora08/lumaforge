@@ -1236,6 +1236,7 @@ export default function StoreGameDetailsPage({
 
   const summaryPanelProps = {
     game: { ...game, sources: selectableSources },
+    resolvedTitle: title,
     previewImageUrl: imageUrl,
     installStatus,
     isSteamInstalled,

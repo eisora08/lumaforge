@@ -2057,11 +2057,12 @@ html[data-compact="true"] .lf-launch-bar {
 
 /* =========================
    CARD LABELS (Settings-driven)
-   Applied via --card-label-display CSS variable.
+   Applied via data-dashboard-card-label / data-library-card-label attributes on <html>.
    Hides card title text below artwork.
 ========================= */
 
-[data-card-label="hidden"] .lf-card-title {
+[data-dashboard-card-label="hidden"] [data-card-scope="dashboard"] .lf-card-title,
+[data-library-card-label="hidden"] [data-card-scope="library"] .lf-card-title {
   display: none !important;
 }
 

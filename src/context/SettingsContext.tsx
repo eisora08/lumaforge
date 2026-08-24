@@ -79,7 +79,8 @@ export const defaultSettings: AppSettings = {
   maxLandscapeColumns: 0,
 
   cardCornerRadius: 12,
-  hideCardLabels: false,
+  hideDashboardCardLabels: false,
+  hideLibraryCardLabels: false,
 
   // ── Dashboard Home Layout ──────────────────────────────────────────
   dashboardHeroEnabled: true,
@@ -118,10 +119,19 @@ export function loadSettings(): AppSettings {
       return defaultSettings;
     }
 
+    const saved = JSON.parse(savedSettings) as Record<string, unknown>;
+
+    // Migrate single toggle to split toggles
+    if ("hideCardLabels" in saved && !("hideDashboardCardLabels" in saved)) {
+      (saved as any).hideDashboardCardLabels = saved.hideCardLabels;
+      (saved as any).hideLibraryCardLabels = saved.hideCardLabels;
+      delete (saved as any).hideCardLabels;
+    }
+
     return {
       ...defaultSettings,
-      ...JSON.parse(savedSettings),
-    };
+      ...saved,
+    } as AppSettings;
   } catch {
     return defaultSettings;
   }
@@ -180,9 +190,11 @@ export function SettingsProvider({
   }, [settings.cardCornerRadius]);
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--card-label-display", settings.hideCardLabels ? "none" : "block");
-    document.documentElement.dataset.cardLabel = settings.hideCardLabels ? "hidden" : "visible";
-  }, [settings.hideCardLabels]);
+    document.documentElement.dataset.dashboardCardLabel =
+      settings.hideDashboardCardLabels ? "hidden" : "visible";
+    document.documentElement.dataset.libraryCardLabel =
+      settings.hideLibraryCardLabels ? "hidden" : "visible";
+  }, [settings.hideDashboardCardLabels, settings.hideLibraryCardLabels]);
 
   // ── Listen for restore-triggered refresh events ──
   useEffect(() => {

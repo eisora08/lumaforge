@@ -71,7 +71,8 @@
     "appearance_desc": "Change the visual style of LumaForge.",
     "language": "Language",
     "languageDescription": "Change the interface language.",
-    "layout": {
+    "layout": "Layout",
+    "cardLayout": {
       "card_layout": "Card Layout",
       "card_layout_desc": "Tune card size, spacing, artwork style, width mode, radius, and labels.",
       "dashboard_tab": "Dashboard",

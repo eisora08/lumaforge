@@ -32,7 +32,8 @@ export const DEPOTCACHE_EXCLUDED_FROM_PRESETS = true as const;
  */
 export const APPEARANCE_SETTINGS_KEYS: string[] = [
   "compactMode",
-  "hideCardLabels",
+  "hideDashboardCardLabels",
+  "hideLibraryCardLabels",
   "cardCornerRadius",
   "libraryCardArtworkMode",
   "libraryCardSize",

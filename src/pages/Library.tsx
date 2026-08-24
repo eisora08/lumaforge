@@ -523,7 +523,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   }
 
   return (
-    <div className="flex h-full flex-col lf-page-in">
+    <div className="flex h-full flex-col lf-page-in" data-card-scope="library">
       <div className="flex min-w-0 flex-1 flex-col">
         {showLuaSetup ? (
           <div className="flex flex-1 items-center justify-center p-5 lg:p-7">

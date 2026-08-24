@@ -32,7 +32,7 @@ interface WidthPreset {
 const WIDTH_PRESETS: WidthPreset[] = [
   {
     label: "Compact",
-    labelKey: "settings.layout.preset_compact",
+    labelKey: "settings.cardLayout.preset_compact",
     description: "Dense, more cards visible",
     dashboard: {
       dashboardContentWidth: 1600,
@@ -50,7 +50,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Dense",
-    labelKey: "settings.layout.preset_dense",
+    labelKey: "settings.cardLayout.preset_dense",
     description: "Tight with slight breathing room",
     dashboard: {
       dashboardContentWidth: 1680,
@@ -68,7 +68,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Standard",
-    labelKey: "settings.layout.preset_standard",
+    labelKey: "settings.cardLayout.preset_standard",
     description: "Balanced size and spacing",
     dashboard: {
       dashboardContentWidth: 1760,
@@ -86,7 +86,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Balanced",
-    labelKey: "settings.layout.preset_balanced",
+    labelKey: "settings.cardLayout.preset_balanced",
     description: "Comfortable cards, even spacing",
     dashboard: {
       dashboardContentWidth: 1840,
@@ -104,7 +104,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Comfort",
-    labelKey: "settings.layout.preset_comfort",
+    labelKey: "settings.cardLayout.preset_comfort",
     description: "Larger cards, more space",
     dashboard: {
       dashboardContentWidth: 1920,
@@ -122,7 +122,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Large",
-    labelKey: "settings.layout.preset_large",
+    labelKey: "settings.cardLayout.preset_large",
     description: "Maximum sizes, spacious",
     dashboard: {
       dashboardContentWidth: 2200,
@@ -141,11 +141,11 @@ const WIDTH_PRESETS: WidthPreset[] = [
 ];
 
 const RADIUS_PRESETS = [
-  { label: "Sharp", labelKey: "settings.layout.radius_sharp", value: 4 },
-  { label: "Subtle", labelKey: "settings.layout.radius_subtle", value: 8 },
-  { label: "Classic", labelKey: "settings.layout.radius_classic", value: 12 },
-  { label: "Rounded", labelKey: "settings.layout.radius_rounded", value: 18 },
-  { label: "Pill", labelKey: "settings.layout.radius_pill", value: 999 },
+  { label: "Sharp", labelKey: "settings.cardLayout.radius_sharp", value: 4 },
+  { label: "Subtle", labelKey: "settings.cardLayout.radius_subtle", value: 8 },
+  { label: "Classic", labelKey: "settings.cardLayout.radius_classic", value: 12 },
+  { label: "Rounded", labelKey: "settings.cardLayout.radius_rounded", value: 18 },
+  { label: "Pill", labelKey: "settings.cardLayout.radius_pill", value: 999 },
 ];
 
 const DASHBOARD_DEFAULTS = {
@@ -155,7 +155,7 @@ const DASHBOARD_DEFAULTS = {
   dashboardFeaturedCardSize: 340,
   dashboardGridGap: 16,
   cardCornerRadius: 12,
-  hideCardLabels: false,
+  hideDashboardCardLabels: false,
 };
 
 const LIBRARY_DEFAULTS = {
@@ -167,7 +167,7 @@ const LIBRARY_DEFAULTS = {
   libraryLandscapeGap: 28,
   libraryCardArtworkMode: "landscape" as const,
   cardCornerRadius: 12,
-  hideCardLabels: false,
+  hideLibraryCardLabels: false,
 };
 
 /* ================================================================== */
@@ -298,12 +298,12 @@ function LivePreview({
     tab === "dashboard"
       ? null
       : artworkMode === "landscape"
-        ? t("settings.layout.landscape", "Landscape")
-        : t("settings.layout.poster", "Poster");
+        ? t("settings.cardLayout.landscape", "Landscape")
+        : t("settings.cardLayout.poster", "Poster");
 
   return (
     <div className="lf-surface rounded-xl border p-4">
-      <SectionLabel>{t("settings.layout.live_preview", "Live Preview")}</SectionLabel>
+      <SectionLabel>{t("settings.cardLayout.live_preview", "Live Preview")}</SectionLabel>
 
       {/* Preview area — constrained, no overflow */}
       <div
@@ -366,22 +366,22 @@ function LivePreview({
               : "bg-(--color-accent)/10 text-(--color-accent)"
           }`}
         >
-          Labels: {labelsHidden ? t("settings.layout.hidden", "Hidden") : t("settings.layout.visible", "Visible")}
+          Labels: {labelsHidden ? t("settings.cardLayout.hidden", "Hidden") : t("settings.cardLayout.visible", "Visible")}
         </span>
       </div>
 
       {/* Stats */}
       <div className="mt-3 space-y-1 border-t border-(--surface-active-border) pt-3">
-        <StatRow label={t("settings.layout.card", "Card")} value={`${cardW} × ${cardH}px`} />
+        <StatRow label={t("settings.cardLayout.card", "Card")} value={`${cardW} × ${cardH}px`} />
         {tab === "dashboard" && (
-          <StatRow label={t("settings.layout.featured", "Featured")} value={`${featuredW} × ${featuredH}px`} />
+          <StatRow label={t("settings.cardLayout.featured", "Featured")} value={`${featuredW} × ${featuredH}px`} />
         )}
-        <StatRow label={t("settings.layout.gap", "Gap")} value={`${gap}px`} />
-        <StatRow label={t("settings.layout.radius", "Radius")} value={`${radius}px`} />
-        {modeLabel && <StatRow label={t("settings.layout.mode", "Mode")} value={modeLabel} />}
+        <StatRow label={t("settings.cardLayout.gap", "Gap")} value={`${gap}px`} />
+        <StatRow label={t("settings.cardLayout.radius", "Radius")} value={`${radius}px`} />
+        {modeLabel && <StatRow label={t("settings.cardLayout.mode", "Mode")} value={modeLabel} />}
         <StatRow
-          label={t("settings.layout.width", "Width")}
-          value={widthMode === "expanded" ? t("settings.layout.full", "Full") : t("settings.layout.contained", "Contained")}
+          label={t("settings.cardLayout.width", "Width")}
+          value={widthMode === "expanded" ? t("settings.cardLayout.full", "Full") : t("settings.cardLayout.contained", "Contained")}
         />
       </div>
     </div>
@@ -482,17 +482,17 @@ export default function CardLayoutEditor() {
         <div>
           <div className="flex items-center gap-2 text-sm font-semibold text-(--color-text)">
             <LayoutDashboard className="h-4 w-4 text-(--color-accent)" />
-            {t("settings.layout.card_layout", "Card Layout")}
+            {t("settings.cardLayout.card_layout", "Card Layout")}
           </div>
           <p className="mt-0.5 text-[11px] text-(--color-muted)">
-            {t("settings.layout.card_layout_desc", "Tune card size, spacing, artwork style, width mode, radius, and labels.")}
+            {t("settings.cardLayout.card_layout_desc", "Tune card size, spacing, artwork style, width mode, radius, and labels.")}
           </p>
         </div>
         <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
           {(
             [
-              { key: "dashboard", label: t("settings.layout.dashboard_tab", "Dashboard"), Icon: LayoutDashboard },
-              { key: "library", label: t("settings.layout.library_tab", "Library"), Icon: Columns3 },
+              { key: "dashboard", label: t("settings.cardLayout.dashboard_tab", "Dashboard"), Icon: LayoutDashboard },
+              { key: "library", label: t("settings.cardLayout.library_tab", "Library"), Icon: Columns3 },
             ] as const
           ).map(({ key, label, Icon }) => (
             <button
@@ -518,7 +518,7 @@ export default function CardLayoutEditor() {
 
           {/* ─── Card Size Presets ─────────────────────────── */}
           <div>
-            <SectionLabel>{t("settings.layout.card_size", "Card Size")}</SectionLabel>
+            <SectionLabel>{t("settings.cardLayout.card_size", "Card Size")}</SectionLabel>
             <div className="mt-2 grid grid-cols-7 gap-1.5">
               {WIDTH_PRESETS.map((preset, idx) => {
                 const active = detectWidthPreset(tab, settings) === idx;
@@ -545,9 +545,9 @@ export default function CardLayoutEditor() {
               {isCustom ? (
                 <p className="text-[11px] text-(--color-muted)">
                   <span className="font-medium text-(--color-accent)">
-                    {t("settings.layout.custom", "Custom")}
+                    {t("settings.cardLayout.custom", "Custom")}
                   </span>{" "}
-                  — {t("settings.layout.adjust_sliders", "adjust the sliders below")}
+                  — {t("settings.cardLayout.adjust_sliders", "adjust the sliders below")}
                 </p>
               ) : (
                 <p className="text-[11px] text-(--color-muted)">
@@ -559,7 +559,7 @@ export default function CardLayoutEditor() {
 
           {/* ─── Width Mode (both targets) ─────────────────── */}
           <div>
-            <SectionLabel>{t("settings.layout.width_mode", "Width Mode")}</SectionLabel>
+            <SectionLabel>{t("settings.cardLayout.width_mode", "Width Mode")}</SectionLabel>
             <div className="mt-2 flex overflow-hidden rounded-lg border border-(--surface-active-border)">
               <button
                 type="button"
@@ -574,7 +574,7 @@ export default function CardLayoutEditor() {
                     : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                 }`}
               >
-                {t("settings.layout.contained", "Contained")}
+                {t("settings.cardLayout.contained", "Contained")}
               </button>
               <button
                 type="button"
@@ -585,23 +585,23 @@ export default function CardLayoutEditor() {
                     : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                 }`}
               >
-                {t("settings.layout.expanded", "Expanded")}
+                {t("settings.cardLayout.expanded", "Expanded")}
               </button>
             </div>
             <p className="mt-1.5 text-[10px] text-(--color-muted)">
               {tab === "dashboard"
                 ? isExpanded
-                  ? t("settings.layout.dashboard_full_width", "Dashboard fills the full window width.")
+                  ? t("settings.cardLayout.dashboard_full_width", "Dashboard fills the full window width.")
                   : `Max width: ${settings.dashboardContentWidth}px`
                 : isExpanded
-                  ? t("settings.layout.library_full_width", "Library grid uses all available width.")
-                  : t("settings.layout.library_centered", "Library grid is centered with a max width.")}
+                  ? t("settings.cardLayout.library_full_width", "Library grid uses all available width.")
+                  : t("settings.cardLayout.library_centered", "Library grid is centered with a max width.")}
             </p>
           </div>
 
           {/* ─── Corner Radius ─────────────────────────────── */}
           <div>
-            <SectionLabel>{t("settings.layout.corner_radius", "Corner Radius")}</SectionLabel>
+            <SectionLabel>{t("settings.cardLayout.corner_radius", "Corner Radius")}</SectionLabel>
             <div className="mt-2 grid grid-cols-5 gap-1.5">
               {RADIUS_PRESETS.map((preset) => {
                 const active = settings.cardCornerRadius === preset.value;
@@ -645,15 +645,22 @@ export default function CardLayoutEditor() {
           {/* ─── Toggles ───────────────────────────────────── */}
           <div className="space-y-3">
             <ToggleOption
-              label={t("settings.layout.hide_card_labels", "Hide card labels")}
-              description={t("settings.layout.hide_card_labels_desc", "Hide the title text displayed below each card.")}
-              enabled={settings.hideCardLabels}
-              onChange={(v) => updateSetting("hideCardLabels", v)}
+              label={t("settings.cardLayout.hide_card_labels", "Hide card labels")}
+              description={t("settings.cardLayout.hide_card_labels_desc", "Hide the title text displayed below each card.")}
+              enabled={tab === "dashboard"
+                ? settings.hideDashboardCardLabels
+                : settings.hideLibraryCardLabels}
+              onChange={(v) =>
+                updateSetting(
+                  tab === "dashboard" ? "hideDashboardCardLabels" : "hideLibraryCardLabels",
+                  v
+                )
+              }
             />
             {tab === "library" && (
               <ToggleOption
-                label={t("settings.layout.landscape_artwork", "Landscape artwork")}
-                description={t("settings.layout.landscape_artwork_desc", "Use landscape artwork for library cards instead of portrait posters.")}
+                label={t("settings.cardLayout.landscape_artwork", "Landscape artwork")}
+                description={t("settings.cardLayout.landscape_artwork_desc", "Use landscape artwork for library cards instead of portrait posters.")}
                 enabled={settings.libraryCardArtworkMode === "landscape"}
                 onChange={(v) =>
                   updateSetting(
@@ -668,11 +675,11 @@ export default function CardLayoutEditor() {
           {/* ─── Custom sliders (hidden unless Custom) ─────── */}
           {isCustom && (
             <div className="space-y-2 rounded-xl border border-dashed border-(--surface-active-border) bg-white/[0.01] p-3">
-              <SectionLabel>{t("settings.layout.custom_values", "Custom Values")}</SectionLabel>
+              <SectionLabel>{t("settings.cardLayout.custom_values", "Custom Values")}</SectionLabel>
               {tab === "dashboard" ? (
                 <>
                   <Slider
-                    label={t("settings.layout.content_max_width", "Content max width")}
+                    label={t("settings.cardLayout.content_max_width", "Content max width")}
                     value={settings.dashboardContentWidth}
                     min={1200}
                     max={2400}
@@ -680,7 +687,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("dashboardContentWidth", v)}
                   />
                   <Slider
-                    label={t("settings.layout.featured_card_size", "Featured card size")}
+                    label={t("settings.cardLayout.featured_card_size", "Featured card size")}
                     value={settings.dashboardFeaturedCardSize}
                     min={280}
                     max={480}
@@ -690,7 +697,7 @@ export default function CardLayoutEditor() {
                     }
                   />
                   <Slider
-                    label={t("settings.layout.standard_card_size", "Standard card size")}
+                    label={t("settings.cardLayout.standard_card_size", "Standard card size")}
                     value={settings.dashboardCardSize}
                     min={200}
                     max={400}
@@ -698,7 +705,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("dashboardCardSize", v)}
                   />
                   <Slider
-                    label={t("settings.layout.card_gap", "Card gap")}
+                    label={t("settings.cardLayout.card_gap", "Card gap")}
                     value={settings.dashboardGridGap}
                     min={8}
                     max={48}
@@ -709,7 +716,7 @@ export default function CardLayoutEditor() {
               ) : (
                 <>
                   <Slider
-                    label={t("settings.layout.standard_card_size", "Standard card size")}
+                    label={t("settings.cardLayout.standard_card_size", "Standard card size")}
                     value={settings.libraryCardSize}
                     min={160}
                     max={280}
@@ -717,7 +724,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("libraryCardSize", v)}
                   />
                   <Slider
-                    label={t("settings.layout.card_gap", "Card gap")}
+                    label={t("settings.cardLayout.card_gap", "Card gap")}
                     value={settings.libraryGridGap}
                     min={16}
                     max={48}
@@ -725,7 +732,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("libraryGridGap", v)}
                   />
                   <Slider
-                    label={t("settings.layout.landscape_card_size", "Landscape card size")}
+                    label={t("settings.cardLayout.landscape_card_size", "Landscape card size")}
                     value={settings.libraryLandscapeCardSize}
                     min={160}
                     max={300}
@@ -735,7 +742,7 @@ export default function CardLayoutEditor() {
                     }
                   />
                   <Slider
-                    label={t("settings.layout.landscape_grid_gap", "Landscape grid gap")}
+                    label={t("settings.cardLayout.landscape_grid_gap", "Landscape grid gap")}
                     value={settings.libraryLandscapeGap}
                     min={16}
                     max={56}
@@ -743,7 +750,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("libraryLandscapeGap", v)}
                   />
                   <Slider
-                    label={t("settings.layout.filter_panel_width", "Filter panel width")}
+                    label={t("settings.cardLayout.filter_panel_width", "Filter panel width")}
                     value={settings.libraryFilterPanelWidth}
                     min={240}
                     max={360}
@@ -766,8 +773,8 @@ export default function CardLayoutEditor() {
             >
               <RotateCcw className="h-3 w-3" />
               {tab === "dashboard"
-                ? t("settings.layout.restore_dashboard_defaults", "Restore dashboard defaults")
-                : t("settings.layout.restore_library_defaults", "Restore library defaults")}
+                ? t("settings.cardLayout.restore_dashboard_defaults", "Restore dashboard defaults")
+                : t("settings.cardLayout.restore_library_defaults", "Restore library defaults")}
             </button>
           </div>
         </div>
@@ -788,7 +795,7 @@ export default function CardLayoutEditor() {
             }
             gap={gap}
             radius={settings.cardCornerRadius}
-            labelsHidden={settings.hideCardLabels}
+            labelsHidden={tab === "dashboard" ? settings.hideDashboardCardLabels : settings.hideLibraryCardLabels}
             widthMode={isExpanded ? "expanded" : "contained"}
             artworkMode={settings.libraryCardArtworkMode}
           />

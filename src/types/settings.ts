@@ -65,7 +65,8 @@ export type AppSettings = {
   maxLandscapeColumns: number;
 
   cardCornerRadius: number;
-  hideCardLabels: boolean;
+  hideDashboardCardLabels: boolean;
+  hideLibraryCardLabels: boolean;
 
   // ── Dashboard Home Layout ──────────────────────────────────────────
   dashboardHeroEnabled: boolean;

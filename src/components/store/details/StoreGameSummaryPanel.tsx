@@ -40,6 +40,7 @@ export type ProviderCheckState =
 
 type StoreGameSummaryPanelProps = {
   game: PackageGame;
+  resolvedTitle?: string;
   previewImageUrl?: string;
   installStatus?: PackageInstallStatus;
   isSteamInstalled?: boolean;
@@ -240,6 +241,7 @@ function getProviderStatusBadge(checkState: ProviderCheckState, t: (key: string,
 
 export default function StoreGameSummaryPanel({
   game,
+  resolvedTitle,
   previewImageUrl,
   installStatus = "not-installed",
   isSteamInstalled = false,
@@ -396,7 +398,7 @@ export default function StoreGameSummaryPanel({
 
         <div className="p-4">
           <h2 className="text-lg font-bold text-(--color-text)">
-            {game.title}
+            {resolvedTitle || game.title}
           </h2>
 
           <p className="mt-0.5 text-sm text-(--color-muted)">
