@@ -1099,6 +1099,12 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   <span className="inline-flex items-center gap-1"><HardDrive className="h-3 w-3" />{getGameDiskSize(game)}</span>
                   {game.steamInstalled && <span className="rounded bg-emerald-500/80 px-1.5 py-0.5 font-semibold text-black">{t("settings.installed", "Installed")}</span>}
                   {game.isLuaActive && <span className="rounded bg-violet-500/80 px-1.5 py-0.5 font-semibold text-white">Lua</span>}
+                  {game.source === "steam" && !game.hasLua && (
+                    <span className="rounded bg-blue-500/80 px-1.5 py-0.5 font-semibold text-white">Steam</span>
+                  )}
+                  {game.source === "epic" && (
+                    <span className="rounded bg-purple-500/80 px-1.5 py-0.5 font-semibold text-white">Epic</span>
+                  )}
                   {game.source === "debrid" && game.repacker && (
                     <span className="rounded bg-cyan-500/80 px-1.5 py-0.5 font-semibold text-black">{game.repacker.toUpperCase()}</span>
                   )}

@@ -187,7 +187,7 @@ export default function ConsoleSpotlightLayout({
             {focusedGame.hasUpdate && (
               <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black backdrop-blur-sm">Update</span>
             )}
-            {focusedGame.source === "steam" && (
+            {focusedGame.source === "steam" && !focusedGame.hasLua && (
               <span className="rounded-md bg-blue-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">Steam</span>
             )}
             {focusedGame.source === "epic" && (
