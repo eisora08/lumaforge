@@ -112,8 +112,8 @@ function formatXpNumber(n: number): string {
   return `${n}`;
 }
 
-function formatUnlockDate(ts: number): string {
-  return new Date(ts).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" });
+function formatUnlockDate(ts: number, locale?: string): string {
+  return new Date(ts).toLocaleDateString(locale || "es", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function PanelCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -380,7 +380,7 @@ export default function LauncherAchievements() {
 }
 
 function AchievementCard({ achievement, onClick }: { achievement: AchievementWithState; onClick: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const rarity = RARITY_COLORS[achievement.rarity];
   const isLocked = !achievement.unlocked;
   const AchIcon = achievement.icon;
@@ -426,29 +426,29 @@ function AchievementCard({ achievement, onClick }: { achievement: AchievementWit
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className={`text-sm font-semibold leading-5 ${isLocked ? "text-(--color-text)/50" : "text-(--color-text)"}`}>
-              {achievement.title}
+              {achievement.titleKey ? t(achievement.titleKey, achievement.title) : achievement.title}
             </h3>
             {!isLocked && (
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
             )}
           </div>
           <p className={`mt-0.5 text-xs leading-relaxed ${isLocked ? "text-(--color-muted)/40" : "text-(--color-muted)"}`}>
-            {achievement.hidden && isLocked ? "???" : achievement.description}
+            {achievement.hidden && isLocked ? "???" : (achievement.descriptionKey ? t(achievement.descriptionKey, achievement.description) : achievement.description)}
           </p>
 
           <div className="mt-2 flex items-center gap-2">
             <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${rarity.bg} ${rarity.text}`}>
               <RarityIcon className="h-2.5 w-2.5" />
-              {achievement.rarity}
+              {t("launcher_achievements.rarity." + achievement.rarity, achievement.rarity)}
             </span>
             <span className="text-[10px] font-bold text-amber-400/80">
-              +{achievement.xp} XP
+              {t("launcher_achievements.xp_format", { value: achievement.xp })}
             </span>
           </div>
 
           {achievement.unlocked && achievement.unlockedAt && (
             <div className="mt-1.5 text-[10px] text-(--color-muted)/40">
-              {t("launcher_achievements.unlocked_at", "Unlocked")} {formatUnlockDate(achievement.unlockedAt)}
+              {t("launcher_achievements.unlocked_at", "Unlocked")} {formatUnlockDate(achievement.unlockedAt, i18n.language)}
             </div>
           )}
         </div>

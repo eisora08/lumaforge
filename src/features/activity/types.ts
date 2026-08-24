@@ -30,6 +30,8 @@ export type AchievementDef = {
   id: string;
   title: string;
   description: string;
+  titleKey?: string;
+  descriptionKey?: string;
   category: AchievementCategory;
   rarity: AchievementRarity;
   xp: number;
@@ -110,6 +112,31 @@ export const CATEGORY_LABELS: Record<AchievementCategory, string> = {
   streak: "Streak",
   exploration: "Exploration",
   session: "Session",
+};
+
+export const CATEGORY_LABEL_KEYS: Record<AchievementCategory, string> = {
+  library: "launcher_achievements.categories.library",
+  play: "launcher_achievements.categories.play",
+  completion: "launcher_achievements.categories.completion",
+  streak: "launcher_achievements.categories.streak",
+  exploration: "launcher_achievements.categories.exploration",
+  session: "launcher_achievements.categories.session",
+};
+
+export const RARITY_LABELS: Record<AchievementRarity, string> = {
+  common: "Common",
+  uncommon: "Uncommon",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
+};
+
+export const RARITY_LABEL_KEYS: Record<AchievementRarity, string> = {
+  common: "launcher_achievements.rarity.common",
+  uncommon: "launcher_achievements.rarity.uncommon",
+  rare: "launcher_achievements.rarity.rare",
+  epic: "launcher_achievements.rarity.epic",
+  legendary: "launcher_achievements.rarity.legendary",
 };
 
 export const CATEGORY_ICONS: Record<AchievementCategory, React.ComponentType<{ className?: string }>> = {

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { X, CheckCircle2, Lock, Zap } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { AchievementWithState } from "../../features/activity/types";
-import { RARITY_COLORS, RARITY_ACCENT_BAR, RARITY_ICONS, CATEGORY_LABELS, CATEGORY_ICONS } from "../../features/activity/types";
+import { RARITY_COLORS, RARITY_ACCENT_BAR, RARITY_ICONS, CATEGORY_ICONS } from "../../features/activity/types";
 
 type ProgressInfo = {
   current: number;
@@ -17,8 +18,8 @@ type Props = {
   onClose: () => void;
 };
 
-function formatUnlockDate(ts: number): string {
-  return new Date(ts).toLocaleDateString("en", {
+function formatUnlockDate(ts: number, locale?: string): string {
+  return new Date(ts).toLocaleDateString(locale || "es", {
     month: "long",
     day: "numeric",
     year: "numeric",
@@ -26,6 +27,7 @@ function formatUnlockDate(ts: number): string {
 }
 
 export default function AchievementDetailModal({ open, achievement, progress, onClose }: Props) {
+  const { t, i18n } = useTranslation();
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -71,7 +73,7 @@ export default function AchievementDetailModal({ open, achievement, progress, on
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
-      aria-label={`Achievement: ${achievement.title}`}
+      aria-label={t("launcher_achievements.status.achievement_label", "Achievement: ") + (achievement.titleKey ? t(achievement.titleKey, achievement.title) : achievement.title)}
       className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
     >
       <div
@@ -110,10 +112,10 @@ export default function AchievementDetailModal({ open, achievement, progress, on
 
             <div className="min-w-0 flex-1 pt-0.5">
               <h2 className={`text-lg font-bold leading-6 ${isUnlocked ? "text-(--color-text)" : "text-(--color-text)/60"}`}>
-                {achievement.title}
+                {achievement.titleKey ? t(achievement.titleKey, achievement.title) : achievement.title}
               </h2>
               <p className={`mt-1 text-sm leading-relaxed ${isUnlocked ? "text-(--color-muted)" : "text-(--color-muted)/50"}`}>
-                {achievement.hidden && !isUnlocked ? "This is a hidden achievement" : achievement.description}
+                {achievement.hidden && !isUnlocked ? t("launcher_achievements.status.hidden", "This is a hidden achievement") : (achievement.descriptionKey ? t(achievement.descriptionKey, achievement.description) : achievement.description)}
               </p>
             </div>
           </div>
@@ -122,17 +124,17 @@ export default function AchievementDetailModal({ open, achievement, progress, on
           {isUnlocked ? (
             <div className="mt-5 flex items-center gap-2.5 rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-3">
               <CheckCircle2 className="h-4.5 w-4.5 text-emerald-400 shrink-0" />
-              <span className="text-sm font-medium text-emerald-300">Achievement Unlocked</span>
+              <span className="text-sm font-medium text-emerald-300">{t("launcher_achievements.status.unlocked", "Achievement Unlocked")}</span>
               {achievement.unlockedAt && (
                 <span className="ml-auto text-xs text-emerald-400/60">
-                  {formatUnlockDate(achievement.unlockedAt)}
+                  {formatUnlockDate(achievement.unlockedAt, i18n.language)}
                 </span>
               )}
             </div>
           ) : (
             <div className="mt-5 flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
               <Lock className="h-4 w-4 text-(--color-muted)/40 shrink-0" />
-              <span className="text-sm font-medium text-(--color-muted)">Locked</span>
+              <span className="text-sm font-medium text-(--color-muted)">{t("launcher_achievements.status.locked", "Locked")}</span>
             </div>
           )}
 
@@ -159,8 +161,8 @@ export default function AchievementDetailModal({ open, achievement, progress, on
           {!progress && !isUnlocked && (
             <div className="mt-4 rounded-xl border border-(--color-border)/15 bg-white/[0.03] px-4 py-3">
               <div className="text-xs text-(--color-muted)">
-                <span className="font-medium text-(--color-text)/70">Requirement: </span>
-                {achievement.description}
+                <span className="font-medium text-(--color-text)/70">{t("launcher_achievements.status.requirement", "Requirement: ")}</span>
+                {achievement.descriptionKey ? t(achievement.descriptionKey, achievement.description) : achievement.description}
               </div>
             </div>
           )}
@@ -170,19 +172,19 @@ export default function AchievementDetailModal({ open, achievement, progress, on
             {/* Category */}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-(--color-border)/20 bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-(--color-muted)">
               <CatIcon className="h-3 w-3" />
-              {CATEGORY_LABELS[achievement.category]}
+              {t("launcher_achievements.categories." + achievement.category, achievement.category)}
             </span>
 
             {/* Rarity */}
             <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold ${rarity.bg} ${rarity.text}`}>
               <RarityIcon className="h-3 w-3" />
-              {achievement.rarity.charAt(0).toUpperCase() + achievement.rarity.slice(1)}
+              {t("launcher_achievements.rarity." + achievement.rarity, achievement.rarity.charAt(0).toUpperCase() + achievement.rarity.slice(1))}
             </span>
 
             {/* XP */}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/8 px-3 py-1 text-[11px] font-bold text-amber-300">
               <Zap className="h-3 w-3" />
-              +{achievement.xp} XP
+              {t("launcher_achievements.xp_format", { value: achievement.xp })}
             </span>
           </div>
         </div>
@@ -191,14 +193,14 @@ export default function AchievementDetailModal({ open, achievement, progress, on
         <div className="flex items-center justify-between border-t border-(--color-border)/10 bg-white/[0.02] px-6 py-3">
           <div className="flex items-center gap-1 text-[10px] text-(--color-muted)/40">
             <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[9px]">Esc</kbd>
-            <span>Close</span>
+            <span>{t("launcher_achievements.status.close", "Close")}</span>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-xs font-medium text-(--color-text) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
           >
-            Close
+            {t("launcher_achievements.status.close", "Close")}
           </button>
         </div>
       </div>

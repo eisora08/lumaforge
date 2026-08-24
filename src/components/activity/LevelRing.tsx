@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useGrowOnMount } from "../../hooks/useGrowOnMount";
 
 interface LevelRingProps {
@@ -20,6 +21,7 @@ export default function LevelRing({
   levelClassName = "text-2xl",
   labelClassName = "text-[8px]",
 }: LevelRingProps) {
+  const { t } = useTranslation();
   const grow = useGrowOnMount();
   const circumference = 2 * Math.PI * 38;
   const offset = circumference * (1 - (grow ? percent / 100 : 0));
@@ -38,7 +40,7 @@ export default function LevelRing({
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className={`${levelClassName} font-bold text-amber-400`}>{level}</span>
-        <span className={`${labelClassName} uppercase tracking-widest text-amber-400/60 -mt-0.5`}>Level</span>
+        <span className={`${labelClassName} uppercase tracking-widest text-amber-400/60 -mt-0.5`}>{t("launcher_achievements.status.level", "Level")}</span>
       </div>
     </div>
   );
