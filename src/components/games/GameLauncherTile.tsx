@@ -488,8 +488,8 @@ function GameLauncherTileInner({
   }
 
   return (
-    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); onOverlayToggle?.(true); onHoverEnd?.(); }} className="lf-game-card group flex flex-col overflow-hidden rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
-      {/* Image */}
+    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); onOverlayToggle?.(true); onHoverEnd?.(); }} className="lf-game-card group overflow-hidden rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
+      {/* Image — fills entire card */}
       <div
         role="button"
         tabIndex={0}
@@ -500,8 +500,7 @@ function GameLauncherTileInner({
             handleCardClick();
           }
         }}
-        className={`relative cursor-pointer overflow-hidden ${artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[5/3]"
-          }`}
+        className={`relative cursor-pointer overflow-hidden ${artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[5/3]"}`}
       >
         {mediaLoading ? (
           <SkeletonBox className="h-full w-full" />
@@ -520,6 +519,28 @@ function GameLauncherTileInner({
             <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />
           </div>
         )}
+
+        {/* Always-visible title gradient at bottom */}
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-2.5 pb-2">
+          <Tooltip label={displayTitle} delay={400}>
+            <h3
+              role="button"
+              tabIndex={0}
+              onClick={handleCardClick}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleCardClick();
+                }
+              }}
+              className="lf-card-title line-clamp-1 cursor-pointer text-[13px] font-semibold text-white transition hover:text-white/90"
+            >
+              {displayTitle}
+            </h3>
+          </Tooltip>
+        </div>
+
+        {/* Hover overlay — full info */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none">
           <div className="absolute bottom-0 left-0 right-0 p-2.5">
             <h3 className="lf-card-title line-clamp-1 text-[13px] font-semibold text-white">{displayTitle}</h3>
@@ -533,14 +554,37 @@ function GameLauncherTileInner({
                 </span>
               ))}
             </div>
-            {playtimeText && (
-              <p className="mt-1 flex items-center gap-1 text-[10px] text-white/50">
-                <Clock className="h-2.5 w-2.5" />
-                {playtimeText}
-              </p>
-            )}
+            <div className="mt-1 flex items-center gap-2">
+              {playtimeText && (
+                <span className="flex items-center gap-1 text-[10px] text-white/50">
+                  <Clock className="h-2.5 w-2.5" />
+                  {playtimeText}
+                </span>
+              )}
+              {(() => {
+                const srcBadge = game.hasLua
+                  ? { label: "LUA", cls: "bg-emerald-500/30 text-emerald-300" }
+                  : game.source === "epic"
+                    ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300" }
+                    : game.source === "debrid"
+                      ? { label: "DEBRID", cls: "bg-cyan-500/30 text-cyan-300" }
+                      : game.source === "manual"
+                        ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
+                        : game.source === "steam"
+                          ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
+                          : null;
+                if (!srcBadge) return null;
+                return (
+                  <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
+                    {srcBadge.label}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
         </div>
+
+        {/* Top badges — always visible */}
         {luaUpdateStatus === "update-available" && game.steamInstalled && (
           <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-black">
             {t("game_tile.update", "Update")}
@@ -551,45 +595,6 @@ function GameLauncherTileInner({
             {game.repacker.toUpperCase()}
           </span>
         )}
-        {(() => {
-          const srcBadge = game.hasLua
-            ? { label: "LUA", cls: "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30" }
-            : game.source === "epic"
-              ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300 ring-1 ring-purple-500/40" }
-              : game.source === "debrid"
-                ? { label: "DEBRID", cls: "bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/30" }
-                : game.source === "manual"
-                  ? { label: "MANUAL", cls: "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30" }
-                  : game.source === "steam"
-                    ? { label: "STEAM", cls: "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30" }
-                    : null;
-          if (!srcBadge) return null;
-          return (
-            <span className={`absolute bottom-2 left-2 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
-              {srcBadge.label}
-            </span>
-          );
-        })()}
-      </div>
-
-      {/* Title only — actions via context menu / hover preview */}
-      <div className="px-2.5 py-2">
-        <Tooltip label={displayTitle} delay={400}>
-          <h3
-            role="button"
-            tabIndex={0}
-            onClick={handleCardClick}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                handleCardClick();
-              }
-            }}
-            className="lf-card-title line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
-          >
-            {displayTitle}
-          </h3>
-        </Tooltip>
       </div>
 
       {/* Right-click context menu (no visible button on card) */}

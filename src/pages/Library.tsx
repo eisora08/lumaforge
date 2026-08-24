@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import {
   FileCode2,
   FolderSearch,
@@ -87,6 +88,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [tileOverlayOpen, setTileOverlayOpen] = useState(false);
   const [filterPopupOpen, setFilterPopupOpen] = useState(false);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
   const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
@@ -101,6 +103,18 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [hoveredGame, setHoveredGame] = useState<LibraryGame | null>(null);
   const [gamePosition, setGamePosition] = useState<DOMRect | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useLayoutEffect(() => {
+    if (filterPopupOpen && filterButtonRef.current) {
+      const rect = filterButtonRef.current.getBoundingClientRect();
+      setPopupPos({
+        top: rect.bottom + 4,
+        left: Math.min(rect.left, window.innerWidth - 280),
+      });
+    } else {
+      setPopupPos(null);
+    }
+  }, [filterPopupOpen]);
 
   const handleHoverStart = useCallback((game: LibraryGame, rect: DOMRect) => {
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
@@ -832,32 +846,29 @@ export default function LibraryPage({ onNavigate }: Props) {
         )}
       </div>
 
-      {filterPopupOpen && (
-        <div className="fixed inset-0 z-40" onClick={() => setFilterPopupOpen(false)}>
-          <div 
-            className="absolute z-50 w-64 rounded-2xl border border-(--surface-active-border) bg-(--surface-base) p-4 shadow-2xl shadow-black/40"
-            style={{
-              top: filterButtonRef.current?.getBoundingClientRect().bottom ?? 0,
-              left: Math.min(
-                (filterButtonRef.current?.getBoundingClientRect().left ?? 0),
-                window.innerWidth - 280
-              ),
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <LibraryFilterPanel
-              filter={filter}
-              sort={sort}
-              query={searchQuery}
-              filteredCount={filteredGames.length}
-              totalCount={displayGames.length}
-              onFilterChange={setFilter}
-              onSortChange={setSort}
-              onQueryChange={setSearchQuery}
-              onReset={() => { handleResetFilters(); setFilterPopupOpen(false); }}
-            />
+      {createPortal(
+        filterPopupOpen && popupPos ? (
+          <div className="fixed inset-0 z-40" onClick={() => setFilterPopupOpen(false)}>
+            <div
+              className="absolute z-50 w-64 rounded-2xl border border-(--surface-active-border) bg-(--surface-base) p-4 shadow-2xl shadow-black/40"
+              style={{ top: popupPos.top, left: popupPos.left }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <LibraryFilterPanel
+                filter={filter}
+                sort={sort}
+                query={searchQuery}
+                filteredCount={filteredGames.length}
+                totalCount={displayGames.length}
+                onFilterChange={setFilter}
+                onSortChange={setSort}
+                onQueryChange={setSearchQuery}
+                onReset={() => { handleResetFilters(); setFilterPopupOpen(false); }}
+              />
+            </div>
           </div>
-        </div>
+        ) : null,
+        document.body,
       )}
 
       <DebridSourceSelectorModal

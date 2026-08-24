@@ -154,7 +154,7 @@ const DASHBOARD_DEFAULTS = {
   dashboardCardSize: 260,
   dashboardFeaturedCardSize: 340,
   dashboardGridGap: 16,
-  cardCornerRadius: 12,
+  dashboardCardCornerRadius: 12,
   hideDashboardCardLabels: false,
 };
 
@@ -166,7 +166,7 @@ const LIBRARY_DEFAULTS = {
   libraryLandscapeCardSize: 200,
   libraryLandscapeGap: 28,
   libraryCardArtworkMode: "landscape" as const,
-  cardCornerRadius: 12,
+  libraryCardCornerRadius: 12,
   hideLibraryCardLabels: true,
 };
 
@@ -604,13 +604,13 @@ export default function CardLayoutEditor() {
             <SectionLabel>{t("settings.cardLayout.corner_radius", "Corner Radius")}</SectionLabel>
             <div className="mt-2 grid grid-cols-5 gap-1.5">
               {RADIUS_PRESETS.map((preset) => {
-                const active = settings.cardCornerRadius === preset.value;
+                const active = (tab === "dashboard" ? settings.dashboardCardCornerRadius : settings.libraryCardCornerRadius) === preset.value;
                 return (
                   <button
                     key={preset.label}
                     type="button"
                     onClick={() =>
-                      updateSetting("cardCornerRadius", preset.value)
+                      updateSetting(tab === "dashboard" ? "dashboardCardCornerRadius" : "libraryCardCornerRadius", preset.value)
                     }
                     className={`group cursor-pointer border px-2 py-2.5 text-center transition-all ${
                       active
@@ -794,7 +794,7 @@ export default function CardLayoutEditor() {
                 : 0
             }
             gap={gap}
-            radius={settings.cardCornerRadius}
+            radius={tab === "dashboard" ? settings.dashboardCardCornerRadius : settings.libraryCardCornerRadius}
             labelsHidden={tab === "dashboard" ? settings.hideDashboardCardLabels : settings.hideLibraryCardLabels}
             widthMode={isExpanded ? "expanded" : "contained"}
             artworkMode={settings.libraryCardArtworkMode}

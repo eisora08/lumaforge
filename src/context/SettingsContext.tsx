@@ -78,7 +78,8 @@ export const defaultSettings: AppSettings = {
   libraryLandscapeGap: 28,
   maxLandscapeColumns: 0,
 
-  cardCornerRadius: 12,
+  dashboardCardCornerRadius: 12,
+  libraryCardCornerRadius: 12,
   hideDashboardCardLabels: false,
   hideLibraryCardLabels: true,
 
@@ -126,6 +127,13 @@ export function loadSettings(): AppSettings {
       (saved as any).hideDashboardCardLabels = saved.hideCardLabels;
       (saved as any).hideLibraryCardLabels = saved.hideCardLabels;
       delete (saved as any).hideCardLabels;
+    }
+
+    // Migrate single cardCornerRadius to split corner radius
+    if ("cardCornerRadius" in saved && !("dashboardCardCornerRadius" in saved)) {
+      (saved as any).dashboardCardCornerRadius = saved.cardCornerRadius;
+      (saved as any).libraryCardCornerRadius = saved.cardCornerRadius;
+      delete (saved as any).cardCornerRadius;
     }
 
     return {
@@ -186,8 +194,9 @@ export function SettingsProvider({
 
   // Sync card layout settings to CSS custom properties
   useEffect(() => {
-    document.documentElement.style.setProperty("--card-radius", `${settings.cardCornerRadius}px`);
-  }, [settings.cardCornerRadius]);
+    document.documentElement.style.setProperty("--dashboard-card-radius", `${settings.dashboardCardCornerRadius}px`);
+    document.documentElement.style.setProperty("--library-card-radius", `${settings.libraryCardCornerRadius}px`);
+  }, [settings.dashboardCardCornerRadius, settings.libraryCardCornerRadius]);
 
   useEffect(() => {
     document.documentElement.dataset.dashboardCardLabel =

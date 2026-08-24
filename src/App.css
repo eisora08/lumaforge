@@ -2034,7 +2034,7 @@ html[data-compact="true"] .lf-launch-bar {
 
 /* =========================
    CARD RADIUS (Settings-driven)
-   Applied via --card-radius CSS variable.
+   Applied via --dashboard-card-radius and --library-card-radius CSS variables.
    Falls back to hardcoded Tailwind values when variable is unset.
 ========================= */
 
@@ -2042,17 +2042,17 @@ html[data-compact="true"] .lf-launch-bar {
 .lf-game-card,
 .lf-game-card-header,
 .lf-game-card-overlay {
-  border-radius: var(--card-radius, 16px) !important;
+  border-radius: var(--library-card-radius, 16px) !important;
 }
 
 /* Dashboard horizontal-scroll section cards (rounded-xl default) */
 .lf-dash-card {
-  border-radius: var(--card-radius, 12px) !important;
+  border-radius: var(--dashboard-card-radius, 12px) !important;
 }
 
 /* Store PackageCard */
 .lf-store-card {
-  border-radius: var(--card-radius, 16px) !important;
+  border-radius: var(--dashboard-card-radius, 16px) !important;
 }
 
 /* =========================

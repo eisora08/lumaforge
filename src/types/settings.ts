@@ -64,7 +64,8 @@ export type AppSettings = {
   libraryLandscapeGap: number;
   maxLandscapeColumns: number;
 
-  cardCornerRadius: number;
+  dashboardCardCornerRadius: number;
+  libraryCardCornerRadius: number;
   hideDashboardCardLabels: boolean;
   hideLibraryCardLabels: boolean;
 
