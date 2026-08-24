@@ -279,7 +279,7 @@ export default function ConsoleSwitchSpotlightLayout({
           }}
         >
           {/* Row 1: Status badges */}
-          {(focusedGame.steamInstalled || focusedGame.isLuaActive || focusedGame.hasUpdate || isFav) && (
+          {(focusedGame.steamInstalled || focusedGame.isLuaActive || focusedGame.hasUpdate || focusedGame.source === "steam" || focusedGame.source === "epic" || isFav) && (
             <div className="flex flex-wrap justify-end gap-1.5">
               {focusedGame.steamInstalled && (
                 <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">Installed</span>
@@ -289,6 +289,12 @@ export default function ConsoleSwitchSpotlightLayout({
               )}
               {focusedGame.hasUpdate && (
                 <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">Update</span>
+              )}
+              {focusedGame.source === "steam" && (
+                <span className="rounded-md bg-blue-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Steam</span>
+              )}
+              {focusedGame.source === "epic" && (
+                <span className="rounded-md bg-purple-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Epic</span>
               )}
               {isFav && (
                 <span className="rounded-md bg-rose-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Favorite</span>
