@@ -482,10 +482,14 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
 #[tauri::command]
 pub async fn fetch_steam_store_drm_notice(
     app_id: u32,
+    language: Option<String>,
+    country: Option<String>,
 ) -> Result<Option<String>, String> {
+    let lang = language.as_deref().unwrap_or("english");
+    let cc = country.as_deref().unwrap_or("us");
     let url = format!(
-        "https://store.steampowered.com/app/{}?l=english&cc=us",
-        app_id
+        "https://store.steampowered.com/app/{}?l={}&cc={}",
+        app_id, lang, cc
     );
 
     let client = reqwest::Client::builder()

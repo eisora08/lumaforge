@@ -1,4 +1,5 @@
 import { resolveSteamStoreSearch } from "./tauri";
+import i18n from "../i18n";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 
 const CACHE_KEY = "lumaforge-steam-store-search-cache";
@@ -58,10 +59,12 @@ export async function searchSteamStore(
     return cached.items;
   }
 
+  const locale = i18n.language === "es"
+    ? { countryCode: "ES", language: "spanish" }
+    : { countryCode: "US", language: "english" };
   const items = await resolveSteamStoreSearch({
     term: normalizedTerm,
-    countryCode: "US",
-    language: "english",
+    ...locale,
     limit: 8,
   });
 

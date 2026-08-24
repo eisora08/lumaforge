@@ -5,6 +5,7 @@ import { extractStoreDrmInfo, applyCuratedDenuvoFallback } from "./storeDrmInfo"
 import { loadCuratedDenuvoIndex, getCuratedDenuvoIndexCached } from "./curatedDenuvoService";
 import { matchCuratedDenuvoEntry } from "./curatedDenuvoIndex";
 import { fetchSteamStoreDrmNotice } from "../../services/tauri";
+import i18n from "../../i18n";
 
 const drmInfoByAppId = new Map<string, StoreDrmInfo>();
 const inFlightByAppId = new Map<string, Promise<StoreDrmInfo>>();
@@ -61,7 +62,10 @@ async function resolveDrmInfoInner(params: {
   // Step 3: fetch Steam Store HTML for this single appId
   const appIdNum = typeof params.appId === "number" ? params.appId : Number(params.appId);
   try {
-    const drmNotice = await fetchSteamStoreDrmNotice(appIdNum);
+    const drmLocale = i18n.language === "es"
+      ? { language: "spanish", country: "ES" }
+      : { language: "english", country: "US" };
+    const drmNotice = await fetchSteamStoreDrmNotice(appIdNum, drmLocale.language, drmLocale.country);
     if (drmNotice) {
       return {
         hasThirdPartyDrm: true,

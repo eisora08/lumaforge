@@ -2,27 +2,33 @@ import { resolveSteamAppMetadata, getStoreDetails } from "./tauri";
 import { persistStoreDetails } from "./gameCacheService";
 import type { SteamAppMetadata, SteamMovie } from "../types/gameMetadata";
 import type { ResolvedGameTrailer } from "../types/gameMedia";
+import i18n from "../i18n";
 
 const ENABLE_VERBOSE_APPDETAILS_FETCH = false;
 /** Gate per-appId disk-cache movie logging — off by default to avoid log spam from 200+ calls. */
 const DEBUG_CACHE_MOVIES_LOG = false;
-const inMemoryCache = new Map<number, SteamAppMetadata>();
+const inMemoryCache = new Map<string, SteamAppMetadata>();
 /** Per-appId in-flight dedup — prevents overlapping boot batches from fetching the same appId twice. */
-const metadataInFlightByAppId = new Map<number, Promise<SteamAppMetadata>>();
+const metadataInFlightByAppId = new Map<string, Promise<SteamAppMetadata>>();
 /** Per-batch-key in-flight dedup for resolveGameMetadataForMedia (batch-level is acceptable here since media resolution is inherently per-batch). */
 const mediaInFlight = new Map<string, Promise<Record<number, SteamAppMetadata>>>();
 
-export function loadMetadataCache(): Record<string, SteamAppMetadata> {
-  const result: Record<string, SteamAppMetadata> = {};
-  for (const [appId, meta] of inMemoryCache) {
-    result[String(appId)] = meta;
-  }
-  return result;
+/** Return Steam API locale params based on the user's selected UI language. */
+function getSteamLocale(): { language: string; country: string } {
+  return i18n.language === "es"
+    ? { language: "spanish", country: "ES" }
+    : { language: "english", country: "US" };
+}
+
+/** Build a cache key that includes the language so metadata is per-locale. */
+function cacheKey(appId: number): string {
+  return `${appId}:${i18n.language}`;
 }
 
 async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null> {
   try {
-    const cached = await getStoreDetails(String(appId));
+    const key = cacheKey(appId);
+    const cached = await getStoreDetails(key);
     if (cached && cached.data) {
       const meta = cached.data as SteamAppMetadata;
       if (DEBUG_CACHE_MOVIES_LOG) {
@@ -30,9 +36,6 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
         const moviesNames = meta.movies?.map((m) => `"${m.name}"`).join(", ") ?? "";
         console.log(`[STORE][STORE_DETAILS_CACHE_MOVIES] appid=${appId} count=${moviesCount} names=${moviesNames}`);
       }
-      // Phase 10: Trust `resolved === true` cache — the Rust parser always captures movies.
-      // The old `moviesCount === 0` refetch forced unnecessary re-fetches for games with no movies,
-      // causing hundreds of redundant Rust IPC calls on every boot.
       if (meta.resolved === true) {
         return meta;
       }
@@ -46,8 +49,9 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
 
 async function saveToAppCache(appId: number, data: SteamAppMetadata): Promise<void> {
   try {
-    await persistStoreDetails(String(appId), {
-      app_id: String(appId),
+    const key = cacheKey(appId);
+    await persistStoreDetails(key, {
+      app_id: key,
       source: "metadata-resolver",
       updated_at: Math.floor(Date.now() / 1000),
       data,
@@ -98,7 +102,8 @@ export async function resolveGameMetadata(
   const missingAppIds: number[] = [];
 
   for (const appId of uniqueAppIds) {
-    const cached = inMemoryCache.get(appId);
+    const key = cacheKey(appId);
+    const cached = inMemoryCache.get(key);
     if (cached) {
       result[appId] = cached;
       if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] appId=${appId} → cache HIT resolved=${cached.resolved} hasShortDesc=${!!cached.short_description} name="${cached.name}"`);
@@ -121,7 +126,7 @@ export async function resolveGameMetadata(
 
   for (const { appId, meta } of diskResults) {
     if (meta) {
-      inMemoryCache.set(appId, meta);
+      inMemoryCache.set(cacheKey(appId), meta);
       result[appId] = meta;
       if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] appId=${appId} → disk HIT resolved=${meta.resolved} hasShortDesc=${!!meta.short_description}`);
     } else {
@@ -142,13 +147,12 @@ export async function resolveGameMetadata(
 
   for (const appId of toFetch) {
     if (options.skipInFlight) {
-      // Bypass the shared batch promise — force an independent fetch for each id.
       trulyNeedsFetch.push(appId);
       continue;
     }
-    const inflight = metadataInFlightByAppId.get(appId);
+    const key = cacheKey(appId);
+    const inflight = metadataInFlightByAppId.get(key);
     if (inflight) {
-      // Already fetching this appId — wait for it and merge
       inFlightPromises.push(
         inflight.then((meta) => {
           result[appId] = meta;
@@ -167,8 +171,9 @@ export async function resolveGameMetadata(
     return result;
   }
 
-  // Create per-appId promises for the remaining appIds, then batch-fetch them
-  const fetchPromise = resolveSteamAppMetadata(trulyNeedsFetch).then((resolved) => {
+  // Fetch metadata with the user's locale
+  const { language, country } = getSteamLocale();
+  const fetchPromise = resolveSteamAppMetadata(trulyNeedsFetch, language, country).then((resolved) => {
     const map: Record<number, SteamAppMetadata> = {};
     for (const meta of resolved) {
       map[meta.app_id] = meta;
@@ -178,8 +183,9 @@ export async function resolveGameMetadata(
 
   // Register all per-appId promises sharing the same batch fetch
   for (const appId of trulyNeedsFetch) {
+    const key = cacheKey(appId);
     metadataInFlightByAppId.set(
-      appId,
+      key,
       fetchPromise.then((map) => map[appId] ?? createFallbackMetadata(appId))
     );
   }
@@ -195,7 +201,7 @@ export async function resolveGameMetadata(
       console.log(`[STORE][STEAM_APPDETAILS_FETCH] appid=${meta.app_id} resolved=${meta.resolved} movies=${moviesCount} names=${moviesNames}`);
     }
     if (meta.resolved) {
-      inMemoryCache.set(meta.app_id, meta);
+      inMemoryCache.set(cacheKey(meta.app_id), meta);
       saveToAppCache(meta.app_id, meta);
     }
     result[Number(appId)] = meta;
@@ -208,22 +214,17 @@ export async function resolveGameMetadata(
     }
   }
 
-  // Intentionally do NOT delete from metadataInFlightByAppId here.
-  // Keeping resolved entries ensures concurrent callers that miss inMemoryCache
-  // (due to parallel disk reads) still find the in-flight promise and dedup.
-  // The map is bounded by unique appIds loaded per session (few hundred at most).
-
   return result;
 }
 
-const englishMediaCache = new Map<number, SteamAppMetadata>();
+const englishMediaCache = new Map<string, SteamAppMetadata>();
 
 /**
- * Resolve metadata with an English-first strategy for media (movies/trailers).
+ * Resolve metadata with a locale-aware strategy for media (movies/trailers).
  *
  * Strategy:
- *   A. Fetch with language=english / cc=US.
- *   B. If no movies in English response, fall back to default (no params).
+ *   A. Fetch with user's locale language/country.
+ *   B. If no movies in localized response, fall back to English.
  *   C. If still no movies, the game has no Steam movies — return original metadata unchanged.
  *
  * Returns a map of enhanced metadata. Callers should merge the `movies` field:
@@ -237,7 +238,8 @@ export async function resolveGameMetadataForMedia(
   const toFetch: number[] = [];
 
   for (const appId of uniqueAppIds) {
-    const cached = englishMediaCache.get(appId);
+    const key = cacheKey(appId);
+    const cached = englishMediaCache.get(key);
     if (cached) {
       result[appId] = cached;
     } else {
@@ -250,7 +252,7 @@ export async function resolveGameMetadataForMedia(
   }
 
   // Dedup in-flight media metadata requests for the same batch
-  const mediaKey = `media:${toFetch.join(",")}`;
+  const mediaKey = `media:${i18n.language}:${toFetch.join(",")}`;
   const mediaPending = mediaInFlight.get(mediaKey);
   if (mediaPending) {
     const resolved = await mediaPending;
@@ -263,33 +265,34 @@ export async function resolveGameMetadataForMedia(
   }
 
   const mediaPromise = (async () => {
-    // Step A — Try English media metadata
-    if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appIds=[${toFetch.join(",")}] trying language=english cc=us`);
-    const englishResult = await resolveSteamAppMetadata(toFetch, "english", "US");
+    // Step A — Try user's locale for media metadata
+    const { language, country } = getSteamLocale();
+    if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appIds=[${toFetch.join(",")}] trying language=${language} cc=${country}`);
+    const localizedResult = await resolveSteamAppMetadata(toFetch, language, country);
 
     const needsFallback: number[] = [];
     const stepResult: Record<number, SteamAppMetadata> = {};
 
-    for (const meta of englishResult) {
+    for (const meta of localizedResult) {
       const count = meta.movies?.length ?? 0;
-      if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=english movies=${count}`);
+      if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=${language} movies=${count}`);
       if (meta.resolved && count > 0) {
-        console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=english movies=${count}`);
-        englishMediaCache.set(meta.app_id, meta);
+        console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=${language} movies=${count}`);
+        englishMediaCache.set(cacheKey(meta.app_id), meta);
         stepResult[meta.app_id] = meta;
       } else {
         needsFallback.push(meta.app_id);
       }
     }
 
-    // Step B — Fallback to default language for those without English movies
+    // Step B — Fallback to English for those without localized movies
     if (needsFallback.length > 0) {
-      if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appIds=[${needsFallback.join(",")}] fallback default language`);
-      const fallbackResult = await resolveSteamAppMetadata(needsFallback);
+      if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appIds=[${needsFallback.join(",")}] fallback english`);
+      const fallbackResult = await resolveSteamAppMetadata(needsFallback, "english", "US");
       for (const meta of fallbackResult) {
         const count = meta.movies?.length ?? 0;
-        if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=default movies=${count}`);
-        englishMediaCache.set(meta.app_id, meta);
+        if (ENABLE_VERBOSE_APPDETAILS_FETCH) console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=english movies=${count}`);
+        englishMediaCache.set(cacheKey(meta.app_id), meta);
         stepResult[meta.app_id] = meta;
       }
     }
@@ -298,7 +301,7 @@ export async function resolveGameMetadataForMedia(
     for (const appId of toFetch) {
       if (!stepResult[appId]) {
         const placeholder = createFallbackMetadata(appId);
-        englishMediaCache.set(appId, placeholder);
+        englishMediaCache.set(cacheKey(appId), placeholder);
         stepResult[appId] = placeholder;
       }
     }

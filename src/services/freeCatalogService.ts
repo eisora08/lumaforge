@@ -16,6 +16,7 @@ import {
   queryCultClassics,
 } from "./steamCatalogService";
 import { fetchJsonFromUrl } from "./tauri";
+import i18n from "../i18n";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 interface CacheEntry { data: StoreGame[]; timestamp: number; }
@@ -115,8 +116,9 @@ export async function getNewReleasesFromSteam(limit = 20): Promise<{ games: Stor
     return { games: cached };
   }
   try {
+    const lang = i18n.language === "es" ? { cc: "ES", l: "spanish" } : { cc: "US", l: "english" };
     const text = await fetchJsonFromUrl(
-      "https://store.steampowered.com/api/featuredcategories?cc=us&l=english"
+      `https://store.steampowered.com/api/featuredcategories?cc=${lang.cc}&l=${lang.l}`
     );
     const json = JSON.parse(text);
     const games = parseFeaturedcategoriesNewReleases(json, limit);

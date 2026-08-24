@@ -157,9 +157,13 @@ export async function resolveSteamAppMetadata(
 
 export async function fetchSteamStoreDrmNotice(
   appId: number,
+  language?: string,
+  country?: string,
 ): Promise<string | null> {
   return await invoke<string | null>("fetch_steam_store_drm_notice", {
     appId,
+    language: language ?? null,
+    country: country ?? null,
   });
 }
 
