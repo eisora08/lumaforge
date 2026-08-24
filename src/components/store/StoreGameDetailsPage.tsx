@@ -114,8 +114,8 @@ function getTitle(game: PackageGame, metadata?: SteamAppMetadata) {
   return metadata?.name || game.title;
 }
 
-function getDeveloper(game: PackageGame, metadata?: SteamAppMetadata) {
-  return metadata?.developer || game.developer || "Developer unknown";
+function getDeveloper(game: PackageGame, metadata?: SteamAppMetadata, t?: (key: string, fallback: string) => string) {
+  return metadata?.developer || game.developer || (t ? t("store.details.developer_unknown", "Developer unknown") : "Developer unknown");
 }
 
 function getPlatforms(game: PackageGame, metadata?: SteamAppMetadata) {
@@ -126,68 +126,68 @@ function getPlatforms(game: PackageGame, metadata?: SteamAppMetadata) {
   return game.platforms;
 }
 
-function getLanguagesLabel(metadata?: SteamAppMetadata) {
+function getLanguagesLabel(metadata?: SteamAppMetadata, t?: (key: string, fallback: string, opts?: Record<string, unknown>) => string) {
   const languages = metadata?.languages ?? [];
 
   if (languages.length === 0) {
-    return "Unknown";
+    return t ? t("store.details.unknown", "Unknown") : "Unknown";
   }
 
   if (languages.length <= 6) {
     return languages.join(", ");
   }
 
-  return `${languages.slice(0, 6).join(", ")} +${languages.length - 6} more`;
+  return t ? t("store.details.plus_x_more", "+{{count}} more", { count: languages.length - 6 }) : `${languages.slice(0, 6).join(", ")} +${languages.length - 6} more`;
 }
 
-function getDlcLabel(metadata?: SteamAppMetadata) {
+function getDlcLabel(metadata?: SteamAppMetadata, t?: (key: string, fallback: string, opts?: Record<string, unknown>) => string) {
   const count = metadata?.dlc_count ?? 0;
 
   if (count <= 0) {
-    return "Base Game Only";
+    return t ? t("store.details.base_game_only", "Base Game Only") : "Base Game Only";
   }
 
   if (count === 1) {
-    return "1 DLC Available";
+    return t ? t("store.details.dlc_available_1", "1 DLC Available") : "1 DLC Available";
   }
 
-  return `${count} DLCs Available`;
+  return t ? t("store.details.dlcs_available_x", "{{count}} DLCs Available", { count }) : `${count} DLCs Available`;
 }
 
-function getReviewLabel(summary?: SteamReviewSummary) {
+function getReviewLabel(summary?: SteamReviewSummary, t?: (key: string, fallback: string) => string) {
   if (!summary) {
-    return "Review summary unavailable";
+    return t ? t("store.details.review_unavailable", "Review summary unavailable") : "Review summary unavailable";
   }
 
   if (!summary.resolved) {
-    return "Review summary unavailable";
+    return t ? t("store.details.review_unavailable", "Review summary unavailable") : "Review summary unavailable";
   }
 
   if (summary.resolved && summary.total_reviews === 0) {
-    return "No reviews yet";
+    return t ? t("store.details.no_reviews_yet", "No reviews yet") : "No reviews yet";
   }
 
   if (typeof summary.positive_percent === "number") {
     return `${summary.review_score_desc} · ${summary.positive_percent}%`;
   }
 
-  return summary.review_score_desc || "N/A";
+  return summary.review_score_desc || (t ? t("store.details.na", "N/A") : "N/A");
 }
 
-function getReviewSubLabel(summary?: SteamReviewSummary) {
+function getReviewSubLabel(summary?: SteamReviewSummary, t?: (key: string, fallback: string) => string) {
   if (!summary) {
-    return "Steam review summary unavailable.";
+    return t ? t("store.details.steam_review_unavailable", "Steam review summary unavailable.") : "Steam review summary unavailable.";
   }
 
   if (!summary.resolved) {
-    return "Steam review summary unavailable.";
+    return t ? t("store.details.steam_review_unavailable", "Steam review summary unavailable.") : "Steam review summary unavailable.";
   }
 
   if (summary.resolved && summary.total_reviews === 0) {
-    return "No reviews available for this game.";
+    return t ? t("store.details.no_reviews_for_game", "No reviews available for this game.") : "No reviews available for this game.";
   }
 
-  return `${summary.total_reviews.toLocaleString()} reviews Â· ${summary.total_positive.toLocaleString()} positive`;
+  return `${summary.total_reviews.toLocaleString()} reviews · ${summary.total_positive.toLocaleString()} positive`;
 }
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
@@ -383,7 +383,7 @@ export default function StoreGameDetailsPage({
 
   const handleInstallRepack = useCallback(async (entry: RepackEntry, options: RepackInstallOptions) => {
     if (!DEBRID_INSTALL_ENABLED) {
-      showWarning("Debrid install is not enabled in settings.", { title: "Not available" });
+      showWarning(t("store.details.debrid_not_enabled", "Debrid install is not enabled in settings."), { title: t("store.details.not_available", "Not available") });
       return;
     }
     const uri =
@@ -391,7 +391,7 @@ export default function StoreGameDetailsPage({
         ? pickDirectDebridUri(entry.downloadUris)
         : pickMagnetDebridUri(entry.downloadUris);
     if (!uri) {
-      showWarning("No download URI available for this repack.", { title: "Not available" });
+      showWarning(t("store.details.no_download_uri", "No download URI available for this repack."), { title: t("store.details.not_available", "Not available") });
       return;
     }
     try {
@@ -406,12 +406,12 @@ export default function StoreGameDetailsPage({
         options.method,
         options,
       );
-      showSuccess(`Install started: ${entry.title}`, { title: "Debrid" });
+      showSuccess(t("store.details.install_started", "Install started: {{title}}", { title: entry.title }), { title: t("store.details.debrid", "Debrid") });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      showError(`Failed to start install: ${msg}`, { title: "Debrid" });
+      showError(t("store.details.install_failed", "Failed to start install: {{message}}", { message: msg }), { title: t("store.details.debrid", "Debrid") });
     }
-  }, [downloadQueue, game.appId, game.imageUrl, metadata?.name]);
+  }, [downloadQueue, game.appId, game.imageUrl, metadata?.name, t]);
 
   const handleSelectSourceKey = useCallback((sourceKey: string) => {
     onSelectSourceKey?.(sourceKey);
@@ -741,7 +741,7 @@ export default function StoreGameDetailsPage({
   }, [metadataLoading, game.appId]);
 
   const title = getTitle(game, metadata);
-  const developer = getDeveloper(game, metadata);
+  const developer = getDeveloper(game, metadata, t);
   const imageUrl = getBestImage(game, metadata);
 
   const isChecking = (effectiveSourceStatus === "checking" || effectiveSourceStatus === "idle") && !isBackgroundChecking;
@@ -943,15 +943,15 @@ export default function StoreGameDetailsPage({
   }, [metadata, refinedDrmInfo]);
 
   const platforms = getPlatforms(game, metadata);
-  const languagesLabel = getLanguagesLabel(metadata);
-  const dlcLabel = getDlcLabel(metadata);
+  const languagesLabel = getLanguagesLabel(metadata, t);
+  const dlcLabel = getDlcLabel(metadata, t);
   const dlcCount = metadata?.dlc_count ?? 0;
   const dlcAppIds = useMemo(
     () => metadata?.dlc_app_ids ?? [],
     [metadata?.dlc_app_ids],
   );
-  const reviewLabel = getReviewLabel(reviewSummary);
-  const reviewSubLabel = getReviewSubLabel(reviewSummary);
+  const reviewLabel = getReviewLabel(reviewSummary, t);
+  const reviewSubLabel = getReviewSubLabel(reviewSummary, t);
 
   const reviewsState = !reviewSummary ? "unavailable" : !reviewSummary.resolved ? "unavailable" : reviewSummary.total_reviews === 0 ? "no-reviews" : "available";
   if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][REVIEWS_STATE] appid=${game.appId} state=${reviewsState} total=${reviewSummary?.total_reviews ?? 0} resolved=${reviewSummary?.resolved ?? false} source=steam-appreviews`);

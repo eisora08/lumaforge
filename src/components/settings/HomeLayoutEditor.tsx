@@ -35,20 +35,22 @@ interface HeroSourceMeta {
   icon: React.ReactNode;
   color: string;
   description: string;
+  labelKey: string;
+  descriptionKey: string;
   disabled?: boolean;
 }
 
 const HERO_SOURCES: HeroSourceMeta[] = [
-  { id: "continuePlaying", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action" },
-  { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorite games" },
-  { id: "recentlyPlayed", label: "Recently Played", icon: <Clock className="h-4 w-4" />, color: "text-sky-400", description: "Games you played recently" },
-  { id: "topPlayed", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time" },
-  { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from your library and catalog" },
-  { id: "featured", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog" },
-  { id: "newNoteworthy", label: "New & Noteworthy", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Recently released or highlighted games" },
-  { id: "manualGames", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, color: "text-teal-400", description: "Your manually added games" },
-  { id: "steamGames", label: "Steam Games", icon: <Trophy className="h-4 w-4" />, color: "text-indigo-400", description: "Games from your Steam library" },
-  { id: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, color: "text-gray-400", description: "Custom game collections", disabled: true },
+  { id: "continuePlaying", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action", labelKey: "homeLayout.continue_playing", descriptionKey: "homeLayout.continue_playing_desc" },
+  { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorite games", labelKey: "homeLayout.favorites_label", descriptionKey: "homeLayout.favorites_desc" },
+  { id: "recentlyPlayed", label: "Recently Played", icon: <Clock className="h-4 w-4" />, color: "text-sky-400", description: "Games you played recently", labelKey: "homeLayout.recently_played_label", descriptionKey: "homeLayout.recently_played_desc" },
+  { id: "topPlayed", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time", labelKey: "homeLayout.top_played", descriptionKey: "homeLayout.top_played_desc" },
+  { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from your library and catalog", labelKey: "homeLayout.recommended", descriptionKey: "homeLayout.recommended_desc" },
+  { id: "featured", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog", labelKey: "homeLayout.featured_picks", descriptionKey: "homeLayout.featured_picks_desc" },
+  { id: "newNoteworthy", label: "New & Noteworthy", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Recently released or highlighted games", labelKey: "homeLayout.new_noteworthy", descriptionKey: "homeLayout.new_noteworthy_desc" },
+  { id: "manualGames", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, color: "text-teal-400", description: "Your manually added games", labelKey: "homeLayout.manual_games", descriptionKey: "homeLayout.manual_games_desc" },
+  { id: "steamGames", label: "Steam Games", icon: <Trophy className="h-4 w-4" />, color: "text-indigo-400", description: "Games from your Steam library", labelKey: "homeLayout.steam_games", descriptionKey: "homeLayout.steam_games_desc" },
+  { id: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, color: "text-gray-400", description: "Custom game collections", labelKey: "homeLayout.collections", descriptionKey: "homeLayout.collections_desc", disabled: true },
 ];
 
 const DEFAULT_HERO_SOURCES = ["continuePlaying", "favorites"];
@@ -63,20 +65,22 @@ interface SectionMeta {
   icon: React.ReactNode;
   color: string;
   description: string;
+  labelKey: string;
+  descriptionKey: string;
   heroSourceId?: string;
 }
 
 const DASHBOARD_SECTIONS: SectionMeta[] = [
-  { id: "continue-playing", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action", heroSourceId: "continuePlaying" },
-  { id: "in-progress", label: "In Progress", icon: <TrendingUp className="h-4 w-4" />, color: "text-amber-400", description: "Games you're currently playing" },
-  { id: "completed", label: "Completed", icon: <Check className="h-4 w-4" />, color: "text-emerald-400", description: "Games you've finished" },
-  { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorited games", heroSourceId: "favorites" },
-  { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from catalog", heroSourceId: "recommended" },
-  { id: "top-played", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time", heroSourceId: "topPlayed" },
-  { id: "featured-picks", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog", heroSourceId: "featured" },
-  { id: "top-picks", label: "Top Picks", icon: <Trophy className="h-4 w-4" />, color: "text-yellow-400", description: "Highly rated games from the catalog", heroSourceId: "topPicks" },
-  { id: "trending-right-now", label: "Trending Right Now", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Recent releases and new arrivals" },
-  { id: "store-highlights", label: "Store Highlights", icon: <Store className="h-4 w-4" />, color: "text-cyan-400", description: "Quick link to the store" },
+  { id: "continue-playing", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action", labelKey: "homeLayout.continue_playing", descriptionKey: "homeLayout.continue_playing_desc", heroSourceId: "continuePlaying" },
+  { id: "in-progress", label: "In Progress", icon: <TrendingUp className="h-4 w-4" />, color: "text-amber-400", description: "Games you're currently playing", labelKey: "homeLayout.in_progress", descriptionKey: "homeLayout.in_progress_desc" },
+  { id: "completed", label: "Completed", icon: <Check className="h-4 w-4" />, color: "text-emerald-400", description: "Games you've finished", labelKey: "homeLayout.completed", descriptionKey: "homeLayout.completed_desc" },
+  { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorited games", labelKey: "homeLayout.favorites_label", descriptionKey: "homeLayout.favorites_desc", heroSourceId: "favorites" },
+  { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from catalog", labelKey: "homeLayout.recommended", descriptionKey: "homeLayout.recommended_desc", heroSourceId: "recommended" },
+  { id: "top-played", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time", labelKey: "homeLayout.top_played", descriptionKey: "homeLayout.top_played_desc", heroSourceId: "topPlayed" },
+  { id: "featured-picks", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog", labelKey: "homeLayout.featured_picks", descriptionKey: "homeLayout.featured_picks_desc", heroSourceId: "featured" },
+  { id: "top-picks", label: "Top Picks", icon: <Trophy className="h-4 w-4" />, color: "text-yellow-400", description: "Highly rated games from the catalog", labelKey: "homeLayout.top_picks", descriptionKey: "homeLayout.top_picks_desc", heroSourceId: "topPicks" },
+  { id: "trending-right-now", label: "Trending Right Now", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Recent releases and new arrivals", labelKey: "homeLayout.trending_right_now", descriptionKey: "homeLayout.trending_right_now_desc" },
+  { id: "store-highlights", label: "Store Highlights", icon: <Store className="h-4 w-4" />, color: "text-cyan-400", description: "Quick link to the store", labelKey: "homeLayout.store_highlights", descriptionKey: "homeLayout.store_highlights_desc" },
 ];
 
 const DEFAULT_LIMITS: Record<string, number> = {
@@ -171,7 +175,10 @@ export default function HomeLayoutEditor() {
   const visibleCount = DASHBOARD_SECTIONS.filter((s) => isSectionVisible(s.id)).length;
 
   const selectedHeroSourceNames = heroSources
-    .map((id) => HERO_SOURCES.find((s) => s.id === id)?.label)
+    .map((id) => {
+      const source = HERO_SOURCES.find((s) => s.id === id);
+      return source ? t(source.labelKey, source.label) : undefined;
+    })
     .filter(Boolean)
     .join(", ");
 
@@ -293,7 +300,7 @@ export default function HomeLayoutEditor() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium text-(--color-text)">
-                                {source.label}
+                                {t(source.labelKey, source.label)}
                               </span>
                               {source.disabled && (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
@@ -303,7 +310,7 @@ export default function HomeLayoutEditor() {
                               )}
                             </div>
                             <p className="mt-0.5 text-[11px] text-(--color-muted)">
-                              {source.description}
+                              {t(source.descriptionKey, source.description)}
                             </p>
                           </div>
                         </button>
@@ -409,7 +416,7 @@ export default function HomeLayoutEditor() {
                     <div className={`flex items-center gap-2 ${visible ? section.color : "text-(--color-muted)"}`}>
                       {section.icon}
                       <span className="text-sm font-medium text-(--color-text)">
-                        {section.label}
+                        {t(section.labelKey, section.label)}
                       </span>
                     </div>
 
@@ -428,7 +435,7 @@ export default function HomeLayoutEditor() {
                     )}
 
                     <p className="ml-auto hidden text-[11px] text-(--color-muted) sm:block">
-                      {section.description}
+                      {t(section.descriptionKey, section.description)}
                     </p>
                   </div>
 

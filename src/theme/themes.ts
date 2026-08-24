@@ -6,6 +6,7 @@ export const themes: ThemeOption[] = [
     id: "crimson-dark",
     name: "Crimson Dark",
     description: "Tema oscuro premium con tonos vino y acento azul claro.",
+    descriptionKey: "settings.themes.crimson_dark.description",
     preview: {
       background: "#181114",
       surface: "#302b2f",
@@ -16,6 +17,7 @@ export const themes: ThemeOption[] = [
     id: "midnight-blue",
     name: "Midnight Blue",
     description: "Estilo launcher nocturno con tonos azules profundos.",
+    descriptionKey: "settings.themes.midnight_blue.description",
     preview: {
       background: "#0f172a",
       surface: "#1e293b",
@@ -26,6 +28,7 @@ export const themes: ThemeOption[] = [
     id: "steam-gray",
     name: "Steam Gray",
     description: "Inspirado en launchers clásicos con grises elegantes.",
+    descriptionKey: "settings.themes.steam_gray.description",
     preview: {
       background: "#171a21",
       surface: "#2a475e",
@@ -36,6 +39,7 @@ export const themes: ThemeOption[] = [
     id: "oled-black",
     name: "OLED Black",
     description: "Negro profundo para pantallas OLED y máximo contraste.",
+    descriptionKey: "settings.themes.oled_black.description",
     preview: {
       background: "#000000",
       surface: "#111111",
@@ -46,6 +50,7 @@ export const themes: ThemeOption[] = [
     id: "fluent",
     name: "Fluent",
     description: "Estilo Windows 11 con acento azul y superficies de vidrio. Ideal con Liquid Glass.",
+    descriptionKey: "settings.themes.fluent.description",
     preview: {
       background: "#1f1f1f",
       surface: "#2b2b2b",
@@ -142,25 +147,30 @@ export const surfaceModes: SurfaceModeOption[] = [
     id: "solid",
     name: "Solid",
     description: "Superficies sólidas, limpias y con máximo contraste.",
+    descriptionKey: "settings.surface_modes.solid.description",
   },
   {
     id: "tinted",
     name: "Tinted",
     description: "Superficies con tinte suave del tema activo.",
+    descriptionKey: "settings.surface_modes.tinted.description",
   },
   {
     id: "frosted",
     name: "Frosted",
     description: "Vidrio esmerilado oscuro con blur sutil. Premium sin distorsión.",
+    descriptionKey: "settings.surface_modes.frosted.description",
   },
   {
     id: "dark-glass",
     name: "Dark Glass",
     description: "Vidrio oscuro premium con blur moderado. Sutil y elegante.",
+    descriptionKey: "settings.surface_modes.dark_glass.description",
   },
   {
     id: "glass",
     name: "Glass",
     description: "Vidrio premium con blur intenso. Estilo lf-glass-strong.",
+    descriptionKey: "settings.surface_modes.glass.description",
   },
 ];

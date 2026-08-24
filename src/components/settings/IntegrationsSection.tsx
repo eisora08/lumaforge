@@ -35,8 +35,8 @@ import {
   IntegrationSettings,
   IntegrationSurface,
   ALL_SURFACES,
-  INTEGRATION_DISPLAY_NAMES,
-  INTEGRATION_DISPLAY_DESCRIPTIONS,
+  INTEGRATION_NAME_KEYS,
+  INTEGRATION_DESCRIPTION_KEYS,
 } from "../../types/integrations";
 import {
   getIntegrationSettings,
@@ -80,19 +80,19 @@ const INTEGRATION_COLORS: Record<IntegrationId, string> = {
 };
 
 const REFRESH_LABELS: Record<IntegrationId, string> = {
-  steam: "Scan Steam library",
-  epic: "Refresh Epic games",
-  manual: "Reload manual games",
-  lua: "Scan Lua packages",
-  debrid: "Refresh Debrid catalog",
+  steam: "integrations_section.scan_steam",
+  epic: "integrations_section.refresh_epic",
+  manual: "integrations_section.reload_manual",
+  lua: "integrations_section.scan_lua",
+  debrid: "integrations_section.refresh_debrid",
 };
 
-const DISABLE_CONFIRM: Record<IntegrationId, { title: string; description: string }> = {
-  steam: { title: "Disable Steam integration?", description: "Steam games will be hidden from Library, Sidebar and Console. All installed game data is preserved. You can re-enable anytime." },
-  epic: { title: "Disable Epic integration?", description: "Epic games will be hidden from Library, Sidebar and Console. All installed game data is preserved. You can re-enable anytime." },
-  manual: { title: "Disable Manual Games?", description: "Manually added games will be hidden from Library, Sidebar and Console. Your entries are preserved. You can re-enable anytime." },
-  lua: { title: "Disable Lua integration?", description: "Lua script packages will be hidden from Library, Sidebar and Console. Package files are preserved. You can re-enable anytime." },
-  debrid: { title: "Disable Debrid Repacks?", description: "Debrid repack entries will be hidden from Library, Sidebar and Console. Your catalog is preserved. You can re-enable anytime." },
+const DISABLE_CONFIRM: Record<IntegrationId, { titleKey: string; descKey: string }> = {
+  steam: { titleKey: "integrations_section.disable_steam_title", descKey: "integrations_section.disable_steam_desc" },
+  epic: { titleKey: "integrations_section.disable_epic_title", descKey: "integrations_section.disable_epic_desc" },
+  manual: { titleKey: "integrations_section.disable_manual_title", descKey: "integrations_section.disable_manual_desc" },
+  lua: { titleKey: "integrations_section.disable_lua_title", descKey: "integrations_section.disable_lua_desc" },
+  debrid: { titleKey: "integrations_section.disable_debrid_title", descKey: "integrations_section.disable_debrid_desc" },
 };
 
 type RefreshState = {
@@ -132,7 +132,7 @@ function IntegrationCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-bold text-(--color-text)">
-              {INTEGRATION_DISPLAY_NAMES[integrationId]}
+              {t(INTEGRATION_NAME_KEYS[integrationId], integrationId)}
             </h3>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
               settings.enabled
@@ -143,7 +143,7 @@ function IntegrationCard({
             </span>
           </div>
           <p className="mt-0.5 text-xs text-(--color-muted)">
-            {INTEGRATION_DISPLAY_DESCRIPTIONS[integrationId]}
+            {t(INTEGRATION_DESCRIPTION_KEYS[integrationId], integrationId)}
           </p>
           {statusInfo?.path && (
             <p className="mt-1 text-[10px] text-(--color-muted) truncate">
@@ -169,7 +169,7 @@ function IntegrationCard({
               ) : (
                 <RefreshCw className="h-3 w-3" />
               )}
-              {rs === "running" ? t("integrations_section.scanning", "Scanning...") : rs === "success" ? t("integrations_section.done", "Done") : REFRESH_LABELS[integrationId]}
+              {rs === "running" ? t("integrations_section.scanning", "Scanning...") : rs === "success" ? t("integrations_section.done", "Done") : t(REFRESH_LABELS[integrationId], REFRESH_LABELS[integrationId])}
             </button>
           )}
 
@@ -369,8 +369,8 @@ export default function IntegrationsSection() {
       {disableConfirmId && (
         <ConfirmModal
           open
-          title={t(`integrations_section.disable_${disableConfirmId}_title`, DISABLE_CONFIRM[disableConfirmId].title)}
-          description={t(`integrations_section.disable_${disableConfirmId}_desc`, DISABLE_CONFIRM[disableConfirmId].description)}
+          title={t(DISABLE_CONFIRM[disableConfirmId].titleKey)}
+          description={t(DISABLE_CONFIRM[disableConfirmId].descKey)}
           confirmLabel={t("integrations_section.disable", "Disable")}
           variant="warning"
           icon={<AlertTriangle className="h-5 w-5" />}

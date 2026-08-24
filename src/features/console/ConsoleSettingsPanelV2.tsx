@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   X, Shuffle, RefreshCw, Settings, LayoutGrid,
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
@@ -79,49 +80,49 @@ const THEME_OPTIONS: { value: ConsoleThemeMode; label: string }[] = THEME_KEYS.m
   label: CONSOLE_THEME_INFOS[k].label,
 }));
 
-const GLYPH_OPTIONS: { value: ConsoleInputHintStyle; label: string }[] = [
-  { value: "xbox", label: "Xbox" },
-  { value: "playstation", label: "PlayStation" },
-  { value: "keyboard", label: "Keyboard" },
-  { value: "auto", label: "Auto" },
+const GLYPH_OPTIONS: { value: ConsoleInputHintStyle; labelKey: string }[] = [
+  { value: "xbox", labelKey: "console_settings.glyph_xbox" },
+  { value: "playstation", labelKey: "console_settings.glyph_playstation" },
+  { value: "keyboard", labelKey: "console_settings.glyph_keyboard" },
+  { value: "auto", labelKey: "console_settings.glyph_auto" },
 ];
 
-const TEXTURE_OPTIONS: { value: ConsoleBackgroundTexture; label: string }[] = [
-  { value: "none", label: "None" },
-  { value: "grain-soft", label: "Grain Soft" },
-  { value: "vignette", label: "Vignette" },
-  { value: "blur", label: "Blur" },
+const TEXTURE_OPTIONS: { value: ConsoleBackgroundTexture; labelKey: string }[] = [
+  { value: "none", labelKey: "console_settings.texture_none" },
+  { value: "grain-soft", labelKey: "console_settings.texture_grain_soft" },
+  { value: "vignette", labelKey: "console_settings.texture_vignette" },
+  { value: "blur", labelKey: "console_settings.texture_blur" },
 ];
 
 const ANIM_DURATION_MS = 250;
 
-const TIME_FORMAT_OPTIONS: { value: string; label: string }[] = [
-  { value: "12h", label: "12h" },
-  { value: "24h", label: "24h" },
-  { value: "system", label: "System" },
-  { value: "hidden", label: "Hidden" },
+const TIME_FORMAT_OPTIONS: { value: string; labelKey: string }[] = [
+  { value: "12h", labelKey: "console_settings.time_12h" },
+  { value: "24h", labelKey: "console_settings.time_24h" },
+  { value: "system", labelKey: "console_settings.time_system" },
+  { value: "hidden", labelKey: "console_settings.time_hidden" },
 ];
 
-const LAUNCH_MODE_OPTIONS: { value: string; label: string }[] = [
-  { value: "console", label: "Console Mode" },
-  { value: "desktop", label: "Desktop" },
-  { value: "last-used", label: "Last Used" },
+const LAUNCH_MODE_OPTIONS: { value: string; labelKey: string }[] = [
+  { value: "console", labelKey: "console_settings.launch_console" },
+  { value: "desktop", labelKey: "console_settings.launch_desktop" },
+  { value: "last-used", labelKey: "console_settings.launch_last_used" },
 ];
 
-const WINDOW_MODE_OPTIONS: { value: string; label: string }[] = [
-  { value: "fullscreen", label: "Fullscreen" },
-  { value: "maximized", label: "Maximized" },
-  { value: "minimized", label: "Minimized" },
-  { value: "tray", label: "Tray" },
-  { value: "windowed", label: "Windowed" },
+const WINDOW_MODE_OPTIONS: { value: string; labelKey: string }[] = [
+  { value: "fullscreen", labelKey: "console_settings.window_fullscreen" },
+  { value: "maximized", labelKey: "console_settings.window_maximized" },
+  { value: "minimized", labelKey: "console_settings.window_minimized" },
+  { value: "tray", labelKey: "console_settings.window_tray" },
+  { value: "windowed", labelKey: "console_settings.window_windowed" },
 ];
 
 /* ── Power action confirm configs ── */
-const POWER_CONFIRM_CONFIGS: Record<string, { title: string; message: string }> = {
-  "power-off": { title: "Turn Off System?", message: "This will shut down your computer." },
-  "suspend": { title: "Suspend System?", message: "This will put your computer to sleep." },
-  "hibernate": { title: "Hibernate System?", message: "This will save state and power off your computer." },
-  "restart": { title: "Restart System?", message: "This will restart your computer." },
+const POWER_CONFIRM_CONFIGS: Record<string, { titleKey: string; messageKey: string }> = {
+  "power-off": { titleKey: "console_settings.power_off_title", messageKey: "console_settings.power_off_msg" },
+  "suspend": { titleKey: "console_settings.power_suspend_title", messageKey: "console_settings.power_suspend_msg" },
+  "hibernate": { titleKey: "console_settings.power_hibernate_title", messageKey: "console_settings.power_hibernate_msg" },
+  "restart": { titleKey: "console_settings.power_restart_title", messageKey: "console_settings.power_restart_msg" },
 };
 
 async function executePowerCommand(key: string): Promise<void> {
@@ -155,12 +156,14 @@ type SettingRowDef = {
   id: string;
   type: SettingRowType;
   label: string;
+  labelKey?: string;
   description?: string;
+  descriptionKey?: string;
   sliderMin?: number;
   sliderMax?: number;
   sliderStep?: number;
   sliderUnit?: string;
-  segOptions?: { value: string; label: string }[];
+  segOptions?: { value: string; labelKey: string }[];
   getValue: (s: ConsoleSettings) => string | number | boolean;
   onAction: (s: ConsoleSettings, key: "left" | "right" | "enter") => Partial<ConsoleSettings>;
 };
@@ -182,16 +185,16 @@ function patchSpotlightCardStyle(s: ConsoleSettings, patch: Partial<SpotlightCar
   return { spotlightCardStyle: { ...s.spotlightCardStyle, ...patch } };
 }
 
-const CARD_STYLE_OPTIONS: { value: string; label: string }[] = [
-  { value: "poster", label: "Poster" },
-  { value: "landscape", label: "Landscape" },
-  { value: "hero", label: "Hero" },
+const CARD_STYLE_OPTIONS: { value: string; labelKey: string }[] = [
+  { value: "poster", labelKey: "console_settings.card_poster" },
+  { value: "landscape", labelKey: "console_settings.card_landscape" },
+  { value: "hero", labelKey: "console_settings.card_hero" },
 ];
 
 const SETTING_ROWS_GRID: SettingRowDef[] = [
   {
-    id: "gridWidthPreset", type: "segmented", label: "Width Presets",
-    segOptions: WIDTH_SEG_OPTIONS,
+    id: "gridWidthPreset", type: "segmented", label: "Width Presets", labelKey: "console_settings.width_presets",
+    segOptions: WIDTH_SEG_OPTIONS.map(o => ({ value: o.value, labelKey: `console_settings.width_${o.value}` })),
     getValue: (s) => findNearestPreset(s.gridCardStyle.widthPreset, WIDTH_PRESETS).toString(),
     onAction: (s, k) => {
       const cur = findNearestPreset(s.gridCardStyle.widthPreset, WIDTH_PRESETS);
@@ -203,8 +206,8 @@ const SETTING_ROWS_GRID: SettingRowDef[] = [
     },
   },
   {
-    id: "gridCornerRadius", type: "segmented", label: "Corner Radius",
-    segOptions: RADIUS_SEG_OPTIONS,
+    id: "gridCornerRadius", type: "segmented", label: "Corner Radius", labelKey: "console_settings.corner_radius",
+    segOptions: RADIUS_SEG_OPTIONS.map(o => ({ value: o.value, labelKey: `console_settings.radius_${o.value}` })),
     getValue: (s) => findNearestPreset(s.gridCardStyle.cornerRadius, RADIUS_PRESETS).toString(),
     onAction: (s, k) => {
       const cur = findNearestPreset(s.gridCardStyle.cornerRadius, RADIUS_PRESETS);
@@ -216,24 +219,24 @@ const SETTING_ROWS_GRID: SettingRowDef[] = [
     },
   },
   {
-    id: "gridLandscapePosters", type: "toggle", label: "Landscape Posters",
-    description: "Wide landscape cards instead of tall poster cards",
+    id: "gridLandscapePosters", type: "toggle", label: "Landscape Posters", labelKey: "console_settings.landscape_posters",
+    descriptionKey: "console_settings.landscape_posters_desc",
     getValue: (s) => s.gridCardStyle.useLandscapeCards,
     onAction: (s) => patchGridCardStyle(s, { useLandscapeCards: !s.gridCardStyle.useLandscapeCards }),
   },
   {
-    id: "gridHideLabels", type: "toggle", label: "Hide Labels",
-    description: "Remove title labels from cards",
+    id: "gridHideLabels", type: "toggle", label: "Hide Labels", labelKey: "console_settings.hide_labels",
+    descriptionKey: "console_settings.hide_labels_desc",
     getValue: (s) => s.gridCardStyle.hideLabels,
     onAction: (s) => patchGridCardStyle(s, { hideLabels: !s.gridCardStyle.hideLabels }),
   },
-  { id: "gridPreview", type: "preview", label: "Live Preview", getValue: () => "", onAction: () => ({}) },
-  { id: "resetGrid", type: "button", label: "Reset Grid Card Style", getValue: () => "", onAction: (s) => patchGridCardStyle(s, { ...GRID_CARD_DEFAULTS }) },
+  { id: "gridPreview", type: "preview", label: "Live Preview", labelKey: "console_settings.live_preview", getValue: () => "", onAction: () => ({}) },
+  { id: "resetGrid", type: "button", label: "Reset Grid Card Style", labelKey: "console_settings.reset_grid", getValue: () => "", onAction: (s) => patchGridCardStyle(s, { ...GRID_CARD_DEFAULTS }) },
 ];
 
 const SETTING_ROWS_SPOTLIGHT: SettingRowDef[] = [
   {
-    id: "spCardStyle", type: "segmented", label: "Card Style",
+    id: "spCardStyle", type: "segmented", label: "Card Style", labelKey: "console_settings.card_style",
     segOptions: CARD_STYLE_OPTIONS,
     getValue: (s) => s.spotlightCardStyle.cardStyle,
     onAction: (s, k) => {
@@ -245,8 +248,8 @@ const SETTING_ROWS_SPOTLIGHT: SettingRowDef[] = [
     },
   },
   {
-    id: "spWidthPreset", type: "segmented", label: "Width Presets",
-    segOptions: WIDTH_SEG_OPTIONS,
+    id: "spWidthPreset", type: "segmented", label: "Width Presets", labelKey: "console_settings.width_presets",
+    segOptions: WIDTH_SEG_OPTIONS.map(o => ({ value: o.value, labelKey: `console_settings.width_${o.value}` })),
     getValue: (s) => findNearestPreset(s.spotlightCardStyle.widthPreset, WIDTH_PRESETS).toString(),
     onAction: (s, k) => {
       const cur = findNearestPreset(s.spotlightCardStyle.widthPreset, WIDTH_PRESETS);
@@ -258,8 +261,8 @@ const SETTING_ROWS_SPOTLIGHT: SettingRowDef[] = [
     },
   },
   {
-    id: "spCornerRadius", type: "segmented", label: "Corner Radius",
-    segOptions: RADIUS_SEG_OPTIONS,
+    id: "spCornerRadius", type: "segmented", label: "Corner Radius", labelKey: "console_settings.corner_radius",
+    segOptions: RADIUS_SEG_OPTIONS.map(o => ({ value: o.value, labelKey: `console_settings.radius_${o.value}` })),
     getValue: (s) => findNearestPreset(s.spotlightCardStyle.cornerRadius, RADIUS_PRESETS).toString(),
     onAction: (s, k) => {
       const cur = findNearestPreset(s.spotlightCardStyle.cornerRadius, RADIUS_PRESETS);
@@ -271,35 +274,36 @@ const SETTING_ROWS_SPOTLIGHT: SettingRowDef[] = [
     },
   },
   {
-    id: "spHideLabels", type: "toggle", label: "Hide Labels",
-    description: "Remove title labels from cards",
+    id: "spHideLabels", type: "toggle", label: "Hide Labels", labelKey: "console_settings.hide_labels",
+    descriptionKey: "console_settings.hide_labels_desc",
     getValue: (s) => s.spotlightCardStyle.hideLabels,
     onAction: (s) => patchSpotlightCardStyle(s, { hideLabels: !s.spotlightCardStyle.hideLabels }),
   },
   {
-    id: "spTrailerPreview", type: "toggle", label: "Trailer Preview",
-    description: "Show trailer/artwork preview in Spotlight",
+    id: "spTrailerPreview", type: "toggle", label: "Trailer Preview", labelKey: "console_settings.trailer_preview",
+    descriptionKey: "console_settings.trailer_preview_desc",
     getValue: (s) => s.spotlightCardStyle.showTrailerPreview,
     onAction: (s) => patchSpotlightCardStyle(s, { showTrailerPreview: !s.spotlightCardStyle.showTrailerPreview }),
   },
-  { id: "spPreview", type: "preview", label: "Live Preview", getValue: () => "", onAction: () => ({}) },
-  { id: "resetSpotlight", type: "button", label: "Reset Spotlight Card Style", getValue: () => "", onAction: (s) => patchSpotlightCardStyle(s, { ...SPOTLIGHT_CARD_DEFAULTS }) },
+  { id: "spPreview", type: "preview", label: "Live Preview", labelKey: "console_settings.live_preview", getValue: () => "", onAction: () => ({}) },
+  { id: "resetSpotlight", type: "button", label: "Reset Spotlight Card Style", labelKey: "console_settings.reset_spotlight", getValue: () => "", onAction: (s) => patchSpotlightCardStyle(s, { ...SPOTLIGHT_CARD_DEFAULTS }) },
 ];
 
 const SETTING_ROWS_SPOTLIGHT_CONTENT: SettingRowDef[] = [
-  { id: "scShowAboutGame", type: "toggle", label: "Show About Game", description: "Display About Game section in details panel", getValue: (s) => s.spotlightContent.showAboutGame, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showAboutGame: !s.spotlightContent.showAboutGame } }) },
-  { id: "scShowScreenshots", type: "toggle", label: "Show Screenshots", description: "Display screenshot carousel in details panel", getValue: (s) => s.spotlightContent.showScreenshots, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showScreenshots: !s.spotlightContent.showScreenshots } }) },
-  { id: "scShowTrailerPreview", type: "toggle", label: "Show Trailer Preview", description: "Display trailer/artwork video preview in details panel", getValue: (s) => s.spotlightContent.showTrailerPreview, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showTrailerPreview: !s.spotlightContent.showTrailerPreview } }) },
-  { id: "scShowReviews", type: "toggle", label: "Show Reviews", description: "Display review summary card in details panel", getValue: (s) => s.spotlightContent.showReviews, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showReviews: !s.spotlightContent.showReviews } }) },
-  { id: "scShowAchievements", type: "toggle", label: "Show Achievements", description: "Display achievement card in details panel", getValue: (s) => s.spotlightContent.showAchievements, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showAchievements: !s.spotlightContent.showAchievements } }) },
-  { id: "scShowMetadata", type: "toggle", label: "Show Metadata", description: "Display genres, developer, publisher, platforms, languages, requirements", getValue: (s) => s.spotlightContent.showMetadata, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showMetadata: !s.spotlightContent.showMetadata } }) },
-  { id: "resetSpotlightContent", type: "button", label: "Reset Content to Defaults", getValue: () => "", onAction: () => ({ spotlightContent: { ...SPOTLIGHT_CONTENT_DEFAULTS } }) },
+  { id: "scShowAboutGame", type: "toggle", label: "Show About Game", labelKey: "console_settings.show_about_game", descriptionKey: "console_settings.show_about_game_desc", getValue: (s) => s.spotlightContent.showAboutGame, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showAboutGame: !s.spotlightContent.showAboutGame } }) },
+  { id: "scShowScreenshots", type: "toggle", label: "Show Screenshots", labelKey: "console_settings.show_screenshots", descriptionKey: "console_settings.show_screenshots_desc", getValue: (s) => s.spotlightContent.showScreenshots, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showScreenshots: !s.spotlightContent.showScreenshots } }) },
+  { id: "scShowTrailerPreview", type: "toggle", label: "Show Trailer Preview", labelKey: "console_settings.show_trailer_preview", descriptionKey: "console_settings.show_trailer_preview_desc", getValue: (s) => s.spotlightContent.showTrailerPreview, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showTrailerPreview: !s.spotlightContent.showTrailerPreview } }) },
+  { id: "scShowReviews", type: "toggle", label: "Show Reviews", labelKey: "console_settings.show_reviews", descriptionKey: "console_settings.show_reviews_desc", getValue: (s) => s.spotlightContent.showReviews, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showReviews: !s.spotlightContent.showReviews } }) },
+  { id: "scShowAchievements", type: "toggle", label: "Show Achievements", labelKey: "console_settings.show_achievements", descriptionKey: "console_settings.show_achievements_desc", getValue: (s) => s.spotlightContent.showAchievements, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showAchievements: !s.spotlightContent.showAchievements } }) },
+  { id: "scShowMetadata", type: "toggle", label: "Show Metadata", labelKey: "console_settings.show_metadata", descriptionKey: "console_settings.show_metadata_desc", getValue: (s) => s.spotlightContent.showMetadata, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showMetadata: !s.spotlightContent.showMetadata } }) },
+  { id: "resetSpotlightContent", type: "button", label: "Reset Content to Defaults", labelKey: "console_settings.reset_content", getValue: () => "", onAction: () => ({ spotlightContent: { ...SPOTLIGHT_CONTENT_DEFAULTS } }) },
 ];
 
 const SETTING_ROWS_VISUALS: SettingRowDef[] = [
   {
-    id: "themeMode", type: "segmented", label: "Console Theme",
-    segOptions: THEME_OPTIONS, getValue: (s) => s.themeMode,
+    id: "themeMode", type: "segmented", label: "Console Theme", labelKey: "console_settings.console_theme",
+    segOptions: THEME_OPTIONS.map(o => ({ value: o.value, labelKey: `console_settings.theme_${o.value}` })),
+    getValue: (s) => s.themeMode,
     onAction: (s, k) => {
       const idx = THEME_OPTIONS.findIndex(o => o.value === s.themeMode);
       const next = THEME_OPTIONS[Math.min(THEME_OPTIONS.length - 1, idx + 1)];
@@ -309,8 +313,9 @@ const SETTING_ROWS_VISUALS: SettingRowDef[] = [
     },
   },
   {
-    id: "backgroundTexture", type: "segmented", label: "Background Texture",
-    segOptions: TEXTURE_OPTIONS, getValue: (s) => s.backgroundTexture,
+    id: "backgroundTexture", type: "segmented", label: "Background Texture", labelKey: "console_settings.bg_texture",
+    segOptions: TEXTURE_OPTIONS,
+    getValue: (s) => s.backgroundTexture,
     onAction: (s, k) => {
       const idx = TEXTURE_OPTIONS.findIndex(o => o.value === s.backgroundTexture);
       const next = TEXTURE_OPTIONS[Math.min(TEXTURE_OPTIONS.length - 1, idx + 1)];
@@ -319,12 +324,12 @@ const SETTING_ROWS_VISUALS: SettingRowDef[] = [
       return next ? { backgroundTexture: next.value } : {};
     },
   },
-  { id: "focusShine", type: "toggle", label: "Focus Shine Animation", description: "Glow sweep on focused cards", getValue: (s) => s.focusShine, onAction: (s) => ({ focusShine: !s.focusShine }) },
-  { id: "heroMotion", type: "toggle", label: "Hero Motion", description: "Slow Ken Burns effect on hero background", getValue: (s) => s.heroMotion, onAction: (s) => ({ heroMotion: !s.heroMotion }) },
+  { id: "focusShine", type: "toggle", label: "Focus Shine Animation", labelKey: "console_settings.focus_shine", descriptionKey: "console_settings.focus_shine_desc", getValue: (s) => s.focusShine, onAction: (s) => ({ focusShine: !s.focusShine }) },
+  { id: "heroMotion", type: "toggle", label: "Hero Motion", labelKey: "console_settings.hero_motion", descriptionKey: "console_settings.hero_motion_desc", getValue: (s) => s.heroMotion, onAction: (s) => ({ heroMotion: !s.heroMotion }) },
   {
-    id: "sidePanelPreset", type: "segmented", label: "Panel Size",
-    segOptions: PANEL_WIDTH_PRESETS.map(p => ({ label: p.label, value: p.value })),
-    description: "Auto adapts to 1080p/1440p/4K",
+    id: "sidePanelPreset", type: "segmented", label: "Panel Size", labelKey: "console_settings.panel_size",
+    segOptions: PANEL_WIDTH_PRESETS.map(p => ({ labelKey: p.label, value: p.value })),
+    descriptionKey: "console_settings.panel_size_desc",
     getValue: (s) => s.sidePanelPreset,
     onAction: (s, k) => {
       const idx = PANEL_WIDTH_PRESETS.findIndex(o => o.value === s.sidePanelPreset);
@@ -334,27 +339,28 @@ const SETTING_ROWS_VISUALS: SettingRowDef[] = [
       return next ? { sidePanelPreset: next.value } : {};
     },
   },
-  { id: "showTrailerPreview", type: "toggle", label: "Show Trailer Preview", description: "Show mini trailer/artwork preview in Spotlight", getValue: (s) => s.spotlightCardStyle.showTrailerPreview, onAction: (s) => patchSpotlightCardStyle(s, { showTrailerPreview: !s.spotlightCardStyle.showTrailerPreview }) },
-  { id: "spotlightCardWidth", type: "slider", label: "Spotlight Card Width", sliderMin: 200, sliderMax: 420, sliderStep: 10, sliderUnit: "px", getValue: (s) => s.spotlightCardStyle.widthPreset, onAction: (s, k) => patchSpotlightCardStyle(s, { widthPreset: k === "left" ? Math.max(200, s.spotlightCardStyle.widthPreset - 10) : Math.min(420, s.spotlightCardStyle.widthPreset + 10) }) },
-  { id: "spotlightCardGap", type: "slider", label: "Spotlight Card Gap", sliderMin: 8, sliderMax: 48, sliderStep: 2, sliderUnit: "px", getValue: (s) => s.spotlightCardGap, onAction: (s, k) => k === "left" ? { spotlightCardGap: Math.max(8, s.spotlightCardGap - 2) } : { spotlightCardGap: Math.min(48, s.spotlightCardGap + 2) } },
-  { id: "resetVisuals", type: "button", label: "Reset Visuals to Defaults", getValue: () => "", onAction: () => resetConsoleVisualSettings() },
+  { id: "showTrailerPreview", type: "toggle", label: "Show Trailer Preview", labelKey: "console_settings.show_trailer_preview", descriptionKey: "console_settings.show_trailer_preview_visuals_desc", getValue: (s) => s.spotlightCardStyle.showTrailerPreview, onAction: (s) => patchSpotlightCardStyle(s, { showTrailerPreview: !s.spotlightCardStyle.showTrailerPreview }) },
+  { id: "spotlightCardWidth", type: "slider", label: "Spotlight Card Width", labelKey: "console_settings.spotlight_width", sliderMin: 200, sliderMax: 420, sliderStep: 10, sliderUnit: "px", getValue: (s) => s.spotlightCardStyle.widthPreset, onAction: (s, k) => patchSpotlightCardStyle(s, { widthPreset: k === "left" ? Math.max(200, s.spotlightCardStyle.widthPreset - 10) : Math.min(420, s.spotlightCardStyle.widthPreset + 10) }) },
+  { id: "spotlightCardGap", type: "slider", label: "Spotlight Card Gap", labelKey: "console_settings.spotlight_gap", sliderMin: 8, sliderMax: 48, sliderStep: 2, sliderUnit: "px", getValue: (s) => s.spotlightCardGap, onAction: (s, k) => k === "left" ? { spotlightCardGap: Math.max(8, s.spotlightCardGap - 2) } : { spotlightCardGap: Math.min(48, s.spotlightCardGap + 2) } },
+  { id: "resetVisuals", type: "button", label: "Reset Visuals to Defaults", labelKey: "console_settings.reset_visuals", getValue: () => "", onAction: () => resetConsoleVisualSettings() },
 ];
 
 const SETTING_ROWS_MEDIA: SettingRowDef[] = [
-  { id: "useSteamGridDb", type: "toggle", label: "Use SteamGridDB", description: "Artwork from SteamGridDB (requires API key)", getValue: (s) => s.useSteamGridDb, onAction: (s) => ({ useSteamGridDb: !s.useSteamGridDb }) },
-  { id: "useSteamAppDetails", type: "toggle", label: "Use Steam AppDetails", description: "Images from Steam Store metadata", getValue: (s) => s.useSteamAppDetails, onAction: (s) => ({ useSteamAppDetails: !s.useSteamAppDetails }) },
-  { id: "useIgdb", type: "toggle", label: "Use IGDB", description: "Cover art from IGDB (requires Client ID + Secret)", getValue: (s) => s.useIgdb, onAction: (s) => ({ useIgdb: !s.useIgdb }) },
-  { id: "useRawg", type: "toggle", label: "Use RAWG", description: "Backgrounds from RAWG (requires API key)", getValue: (s) => s.useRawg, onAction: (s) => ({ useRawg: !s.useRawg }) },
-  { id: "trailerShow", type: "toggle", label: "Show Trailer Preview", description: "Show trailer/artwork preview in details panel", getValue: (s) => s.showTrailerPreview, onAction: (s) => ({ showTrailerPreview: !s.showTrailerPreview }) },
-  { id: "autoplayTrailers", type: "toggle", label: "Autoplay Trailers", description: "Start trailer automatically when entering details", getValue: (s) => s.autoplayTrailerPreviews, onAction: (s) => ({ autoplayTrailerPreviews: !s.autoplayTrailerPreviews }) },
-  { id: "preferDirectVideo", type: "toggle", label: "Prefer Direct Video", description: "Use MP4/WebM when available (fallback to HLS/DASH)", getValue: (s) => s.preferDirectVideo, onAction: (s) => ({ preferDirectVideo: !s.preferDirectVideo }) },
-  { id: "resetMedia", type: "button", label: "Reset Media to Defaults", getValue: () => "", onAction: () => resetConsoleMediaSettings() },
+  { id: "useSteamGridDb", type: "toggle", label: "Use SteamGridDB", labelKey: "console_settings.use_sgdb", descriptionKey: "console_settings.use_sgdb_desc", getValue: (s) => s.useSteamGridDb, onAction: (s) => ({ useSteamGridDb: !s.useSteamGridDb }) },
+  { id: "useSteamAppDetails", type: "toggle", label: "Use Steam AppDetails", labelKey: "console_settings.use_steam_details", descriptionKey: "console_settings.use_steam_details_desc", getValue: (s) => s.useSteamAppDetails, onAction: (s) => ({ useSteamAppDetails: !s.useSteamAppDetails }) },
+  { id: "useIgdb", type: "toggle", label: "Use IGDB", labelKey: "console_settings.use_igdb", descriptionKey: "console_settings.use_igdb_desc", getValue: (s) => s.useIgdb, onAction: (s) => ({ useIgdb: !s.useIgdb }) },
+  { id: "useRawg", type: "toggle", label: "Use RAWG", labelKey: "console_settings.use_rawg", descriptionKey: "console_settings.use_rawg_desc", getValue: (s) => s.useRawg, onAction: (s) => ({ useRawg: !s.useRawg }) },
+  { id: "trailerShow", type: "toggle", label: "Show Trailer Preview", labelKey: "console_settings.trailer_show", descriptionKey: "console_settings.trailer_show_desc", getValue: (s) => s.showTrailerPreview, onAction: (s) => ({ showTrailerPreview: !s.showTrailerPreview }) },
+  { id: "autoplayTrailers", type: "toggle", label: "Autoplay Trailers", labelKey: "console_settings.autoplay_trailers", descriptionKey: "console_settings.autoplay_trailers_desc", getValue: (s) => s.autoplayTrailerPreviews, onAction: (s) => ({ autoplayTrailerPreviews: !s.autoplayTrailerPreviews }) },
+  { id: "preferDirectVideo", type: "toggle", label: "Prefer Direct Video", labelKey: "console_settings.prefer_direct_video", descriptionKey: "console_settings.prefer_direct_video_desc", getValue: (s) => s.preferDirectVideo, onAction: (s) => ({ preferDirectVideo: !s.preferDirectVideo }) },
+  { id: "resetMedia", type: "button", label: "Reset Media to Defaults", labelKey: "console_settings.reset_media", getValue: () => "", onAction: () => resetConsoleMediaSettings() },
 ];
 
 const SETTING_ROWS_INPUT: SettingRowDef[] = [
   {
-    id: "inputHints", type: "segmented", label: "Input Hints Style",
-    segOptions: GLYPH_OPTIONS, getValue: (s) => s.inputHints,
+    id: "inputHints", type: "segmented", label: "Input Hints Style", labelKey: "console_settings.input_hints",
+    segOptions: GLYPH_OPTIONS,
+    getValue: (s) => s.inputHints,
     onAction: (s, k) => {
       const idx = GLYPH_OPTIONS.findIndex(o => o.value === s.inputHints);
       const next = GLYPH_OPTIONS[Math.min(GLYPH_OPTIONS.length - 1, idx + 1)];
@@ -363,15 +369,16 @@ const SETTING_ROWS_INPUT: SettingRowDef[] = [
       return next ? { inputHints: next.value } : {};
     },
   },
-  { id: "showButtonHints", type: "toggle", label: "Show Button Hints", getValue: (s) => s.showButtonHints, onAction: (s) => ({ showButtonHints: !s.showButtonHints }) },
-  { id: "showBottomHints", type: "toggle", label: "Show Bottom Hints", getValue: (s) => s.showBottomHints, onAction: (s) => ({ showBottomHints: !s.showBottomHints }) },
-  { id: "resetInput", type: "button", label: "Reset Input to Defaults", getValue: () => "", onAction: () => resetConsoleInputSettings() },
+  { id: "showButtonHints", type: "toggle", label: "Show Button Hints", labelKey: "console_settings.show_button_hints", getValue: (s) => s.showButtonHints, onAction: (s) => ({ showButtonHints: !s.showButtonHints }) },
+  { id: "showBottomHints", type: "toggle", label: "Show Bottom Hints", labelKey: "console_settings.show_bottom_hints", getValue: (s) => s.showBottomHints, onAction: (s) => ({ showBottomHints: !s.showBottomHints }) },
+  { id: "resetInput", type: "button", label: "Reset Input to Defaults", labelKey: "console_settings.reset_input", getValue: () => "", onAction: () => resetConsoleInputSettings() },
 ];
 
 const SETTING_ROWS_TIME: SettingRowDef[] = [
   {
-    id: "timeFormat", type: "segmented", label: "Time Format",
-    segOptions: TIME_FORMAT_OPTIONS, getValue: (s) => s.timeFormat,
+    id: "timeFormat", type: "segmented", label: "Time Format", labelKey: "console_settings.time_format",
+    segOptions: TIME_FORMAT_OPTIONS,
+    getValue: (s) => s.timeFormat,
     onAction: (s, k) => {
       const idx = TIME_FORMAT_OPTIONS.findIndex(o => o.value === s.timeFormat);
       const next = TIME_FORMAT_OPTIONS[Math.min(TIME_FORMAT_OPTIONS.length - 1, idx + 1)];
@@ -380,15 +387,16 @@ const SETTING_ROWS_TIME: SettingRowDef[] = [
       return next ? { timeFormat: next.value as ConsoleSettings["timeFormat"] } : {};
     },
   },
-  { id: "showSeconds", type: "toggle", label: "Show Seconds", description: "Display seconds in the clock", getValue: (s) => s.showSeconds, onAction: (s) => ({ showSeconds: !s.showSeconds }) },
-  { id: "showClock", type: "toggle", label: "Show Clock in HUD", description: "Display the clock in the top bar", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
-  { id: "resetTime", type: "button", label: "Reset Time to Defaults", getValue: () => "", onAction: () => resetConsoleTimeFormatSettings() },
+  { id: "showSeconds", type: "toggle", label: "Show Seconds", labelKey: "console_settings.show_seconds", descriptionKey: "console_settings.show_seconds_desc", getValue: (s) => s.showSeconds, onAction: (s) => ({ showSeconds: !s.showSeconds }) },
+  { id: "showClock", type: "toggle", label: "Show Clock in HUD", labelKey: "console_settings.show_clock_hud", descriptionKey: "console_settings.show_clock_hud_desc", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
+  { id: "resetTime", type: "button", label: "Reset Time to Defaults", labelKey: "console_settings.reset_time", getValue: () => "", onAction: () => resetConsoleTimeFormatSettings() },
 ];
 
 const SETTING_ROWS_STARTUP: SettingRowDef[] = [
   {
-    id: "launchMode", type: "segmented", label: "Launch Mode",
-    segOptions: LAUNCH_MODE_OPTIONS, getValue: (s) => s.launchMode,
+    id: "launchMode", type: "segmented", label: "Launch Mode", labelKey: "console_settings.launch_mode",
+    segOptions: LAUNCH_MODE_OPTIONS,
+    getValue: (s) => s.launchMode,
     onAction: (s, k) => {
       const idx = LAUNCH_MODE_OPTIONS.findIndex(o => o.value === s.launchMode);
       const next = LAUNCH_MODE_OPTIONS[Math.min(LAUNCH_MODE_OPTIONS.length - 1, idx + 1)];
@@ -398,8 +406,9 @@ const SETTING_ROWS_STARTUP: SettingRowDef[] = [
     },
   },
   {
-    id: "windowMode", type: "segmented", label: "Startup Window",
-    segOptions: WINDOW_MODE_OPTIONS, getValue: (s) => s.windowMode,
+    id: "windowMode", type: "segmented", label: "Startup Window", labelKey: "console_settings.startup_window",
+    segOptions: WINDOW_MODE_OPTIONS,
+    getValue: (s) => s.windowMode,
     onAction: (s, k) => {
       const idx = WINDOW_MODE_OPTIONS.findIndex(o => o.value === s.windowMode);
       const next = WINDOW_MODE_OPTIONS[Math.min(WINDOW_MODE_OPTIONS.length - 1, idx + 1)];
@@ -408,31 +417,31 @@ const SETTING_ROWS_STARTUP: SettingRowDef[] = [
       return next ? { windowMode: next.value as ConsoleSettings["windowMode"] } : {};
     },
   },
-  { id: "autostart", type: "toggle", label: "Start with Windows", description: "Automatically open LumaForge on system boot", getValue: (s) => s.autostart, onAction: (s) => ({ autostart: !s.autostart }) },
-  { id: "startMaximized", type: "toggle", label: "Start Maximized", description: "Launch window maximized on startup (applies on next launch)", getValue: (s) => s.startMaximized, onAction: (s) => ({ startMaximized: !s.startMaximized }) },
-  { id: "startInTray", type: "toggle", label: "Start in Tray", description: "Minimize to tray on startup (applies on next launch)", getValue: (s) => s.startInTray, onAction: (s) => ({ startInTray: !s.startInTray }) },
-  { id: "closeToTray", type: "toggle", label: "Close to Tray", description: "Closing the window minimizes to tray instead of quitting", getValue: (s) => s.closeToTray, onAction: (s) => ({ closeToTray: !s.closeToTray }) },
-  { id: "showDashboard", type: "toggle", label: "Show Dashboard", description: "Show dashboard on startup", getValue: (s) => s.showDashboard, onAction: (s) => ({ showDashboard: !s.showDashboard }) },
-  { id: "disableUpdate", type: "toggle", label: "Disable Update", description: "Prevent automatic app updates", getValue: (s) => s.disableUpdate, onAction: (s) => ({ disableUpdate: !s.disableUpdate }) },
-  { id: "resetStartup", type: "button", label: "Reset Startup to Defaults", getValue: () => "", onAction: () => resetConsoleStartupSettings() },
+  { id: "autostart", type: "toggle", label: "Start with Windows", labelKey: "console_settings.start_windows", descriptionKey: "console_settings.start_windows_desc", getValue: (s) => s.autostart, onAction: (s) => ({ autostart: !s.autostart }) },
+  { id: "startMaximized", type: "toggle", label: "Start Maximized", labelKey: "console_settings.start_maximized", descriptionKey: "console_settings.start_maximized_desc", getValue: (s) => s.startMaximized, onAction: (s) => ({ startMaximized: !s.startMaximized }) },
+  { id: "startInTray", type: "toggle", label: "Start in Tray", labelKey: "console_settings.start_in_tray", descriptionKey: "console_settings.start_in_tray_desc", getValue: (s) => s.startInTray, onAction: (s) => ({ startInTray: !s.startInTray }) },
+  { id: "closeToTray", type: "toggle", label: "Close to Tray", labelKey: "console_settings.close_to_tray", descriptionKey: "console_settings.close_to_tray_desc", getValue: (s) => s.closeToTray, onAction: (s) => ({ closeToTray: !s.closeToTray }) },
+  { id: "showDashboard", type: "toggle", label: "Show Dashboard", labelKey: "console_settings.show_dashboard", descriptionKey: "console_settings.show_dashboard_desc", getValue: (s) => s.showDashboard, onAction: (s) => ({ showDashboard: !s.showDashboard }) },
+  { id: "disableUpdate", type: "toggle", label: "Disable Update", labelKey: "console_settings.disable_update", descriptionKey: "console_settings.disable_update_desc", getValue: (s) => s.disableUpdate, onAction: (s) => ({ disableUpdate: !s.disableUpdate }) },
+  { id: "resetStartup", type: "button", label: "Reset Startup to Defaults", labelKey: "console_settings.reset_startup", getValue: () => "", onAction: () => resetConsoleStartupSettings() },
 ];
 
 const SETTING_ROWS_SYSTEM_BAR: SettingRowDef[] = [
-  { id: "showProfileHud", type: "toggle", label: "Show Profile", description: "Display avatar and name in the top bar", getValue: (s) => s.showProfileHud, onAction: (s) => ({ showProfileHud: !s.showProfileHud }) },
-  { id: "showClock", type: "toggle", label: "Show Clock", description: "Display the clock in the top bar", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
-  { id: "showNetworkIndicator", type: "toggle", label: "Network Indicator", description: "Show online/offline status in the top bar", getValue: (s) => s.showNetworkIndicator, onAction: (s) => ({ showNetworkIndicator: !s.showNetworkIndicator }) },
-  { id: "showControllerIndicator", type: "toggle", label: "Controller Indicator", description: "Show connected controller status in the top bar", getValue: (s) => s.showControllerIndicator, onAction: (s) => ({ showControllerIndicator: !s.showControllerIndicator }) },
-  { id: "resetSystemBar", type: "button", label: "Reset System Bar to Defaults", getValue: () => "", onAction: () => resetConsoleSystemBarSettings() },
+  { id: "showProfileHud", type: "toggle", label: "Show Profile", labelKey: "console_settings.show_profile", descriptionKey: "console_settings.show_profile_desc", getValue: (s) => s.showProfileHud, onAction: (s) => ({ showProfileHud: !s.showProfileHud }) },
+  { id: "showClock", type: "toggle", label: "Show Clock", labelKey: "console_settings.show_clock", descriptionKey: "console_settings.show_clock_desc", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
+  { id: "showNetworkIndicator", type: "toggle", label: "Network Indicator", labelKey: "console_settings.network_indicator", descriptionKey: "console_settings.network_indicator_desc", getValue: (s) => s.showNetworkIndicator, onAction: (s) => ({ showNetworkIndicator: !s.showNetworkIndicator }) },
+  { id: "showControllerIndicator", type: "toggle", label: "Controller Indicator", labelKey: "console_settings.controller_indicator", descriptionKey: "console_settings.controller_indicator_desc", getValue: (s) => s.showControllerIndicator, onAction: (s) => ({ showControllerIndicator: !s.showControllerIndicator }) },
+  { id: "resetSystemBar", type: "button", label: "Reset System Bar to Defaults", labelKey: "console_settings.reset_system_bar", getValue: () => "", onAction: () => resetConsoleSystemBarSettings() },
 ];
 
 const SETTING_ROWS_LANGUAGE: SettingRowDef[] = [
   {
-    id: "appLanguage", type: "segmented", label: "App Language",
-    segOptions: [{ value: "system", label: "Follow System" }],
+    id: "appLanguage", type: "segmented", label: "App Language", labelKey: "console_settings.app_language",
+    segOptions: [{ value: "system", labelKey: "console_settings.follow_system" }],
     getValue: () => "system",
     onAction: () => ({}),
   },
-  { id: "languageComingSoon", type: "button", label: "Coming Soon — Translations will be added after feature completion", getValue: () => "", onAction: () => { toast("Language support is coming soon — stay tuned!", { icon: "🌐" }); return {}; } },
+  { id: "languageComingSoon", type: "button", label: "Coming Soon — Translations will be added after feature completion", labelKey: "console_settings.language_coming_soon", getValue: () => "", onAction: () => { toast("Language support is coming soon — stay tuned!", { icon: "🌐" }); return {}; } },
 ];
 
 const SUBPAGE_ROWS: Record<string, SettingRowDef[]> = {
@@ -449,16 +458,16 @@ const SUBPAGE_ROWS: Record<string, SettingRowDef[]> = {
 };
 
 const SUBPAGE_TITLES: Record<string, string> = {
-  "grid-card-style": "Grid Card Style",
-  "spotlight-card-style": "Spotlight Card Style",
-  "spotlight-content": "Spotlight Content",
-  visuals: "Visuals",
-  media: "Media & Trailers",
-  input: "Input Settings",
-  time: "Time & Clock",
-  startup: "Startup",
-  "system-bar": "System Bar",
-  language: "Language",
+  "grid-card-style": "console_settings.grid_card_style",
+  "spotlight-card-style": "console_settings.spotlight_card_style",
+  "spotlight-content": "console_settings.spotlight_content",
+  visuals: "console_settings.visuals",
+  media: "console_settings.media",
+  input: "console_settings.input",
+  time: "console_settings.time",
+  startup: "console_settings.startup",
+  "system-bar": "console_settings.system_bar",
+  language: "console_settings.language",
 };
 
 // ============================================================
@@ -587,11 +596,12 @@ function SegmentedRow({
   label, options, value, isFocused,
 }: {
   label: string;
-  options: { value: string; label: string }[];
+  options: { value: string; labelKey: string }[];
   value: string;
   isFocused?: boolean;
 }) {
-  const currentLabel = options.find((o) => o.value === value)?.label ?? value;
+  const { t } = useTranslation();
+  const currentLabel = t(options.find((o) => o.value === value)?.labelKey ?? value, value);
   return (
     <div
       className={`flex items-center justify-between rounded-xl px-4 py-3 transition ${
@@ -727,16 +737,19 @@ function ConsoleSettingsSubPage({
   settingEditingId: string | null;
   subPageName?: string;
 }) {
+  const { t } = useTranslation();
   const renderRow = (row: SettingRowDef, i: number) => {
     const isFocused = focusedIndex === i;
     const isEditing = settingEditingId === row.id && row.type !== "toggle" && row.type !== "button";
     const viz = isFocused || isEditing;
+    const rowLabel = t(row.labelKey ?? row.label, row.label);
+    const rowDesc = row.descriptionKey ? t(row.descriptionKey, row.description ?? "") : row.description;
     switch (row.type) {
       case "slider":
         return (
           <SliderRow
             key={row.id}
-            label={row.label}
+            label={rowLabel}
             value={row.getValue(settings) as number}
             min={row.sliderMin!}
             max={row.sliderMax!}
@@ -750,8 +763,8 @@ function ConsoleSettingsSubPage({
         return (
           <ToggleRow
             key={row.id}
-            label={row.label}
-            description={row.description}
+            label={rowLabel}
+            description={rowDesc}
             enabled={row.getValue(settings) as boolean}
             onChange={() => onPatch(row.onAction(settings, "enter"))}
             isFocused={isFocused}
@@ -770,7 +783,7 @@ function ConsoleSettingsSubPage({
         return (
           <SegmentedRow
             key={row.id}
-            label={row.label}
+            label={rowLabel}
             options={row.segOptions!}
             value={row.getValue(settings) as string}
             isFocused={viz}
@@ -783,11 +796,10 @@ function ConsoleSettingsSubPage({
             onClick={() => onPatch(row.onAction(settings, "enter"))}
             className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${isFocused ? "ring-2 ring-amber-500/60" : ""}`}
           >
-            {row.label}
+            {rowLabel}
           </button>
         );
       case "preview": {
-        // Determine card style based on subPageName
         const isGrid = subPageName === "grid-card-style";
         const gs = settings.gridCardStyle;
         const ss = settings.spotlightCardStyle;
@@ -801,7 +813,7 @@ function ConsoleSettingsSubPage({
             hideLabels={previewHideLabels}
             isLandscape={previewLandscape}
             isFocused={viz}
-            label={isGrid ? "Grid Preview" : "Spotlight Preview"}
+            label={isGrid ? t("console_settings.grid_preview", "Grid Preview") : t("console_settings.spotlight_preview", "Spotlight Preview")}
           />
         );
       }
@@ -916,8 +928,8 @@ function ThemePickerSubPanel({
 type ToolActionEntry = {
   id: string;
   icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  description: string;
+  labelKey: string;
+  descKey: string;
   handler: () => Promise<void> | void;
 };
 
@@ -930,13 +942,14 @@ function ConsoleToolsSubPanel({
   itemCount: React.MutableRefObject<number>;
 }) {
   const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const { t } = useTranslation();
 
   const toolActions: ToolActionEntry[] = [
     {
       id: "open-app-data",
       icon: FolderOpen,
-      label: "Open App Data Folder",
-      description: "Browse cache, config, and data files",
+      labelKey: "console_settings.open_app_data",
+      descKey: "console_settings.open_app_data_desc",
       handler: async () => {
         setActionStatus("Opening…");
         try { await openAppDataFolder(); setActionStatus(null); } catch { setActionStatus(null); toast.error("Could not open app data folder"); }
@@ -945,8 +958,8 @@ function ConsoleToolsSubPanel({
     {
       id: "open-logs",
       icon: HardDrive,
-      label: "Open Logs Folder",
-      description: "View application logs for troubleshooting",
+      labelKey: "console_settings.open_logs",
+      descKey: "console_settings.open_logs_desc",
       handler: async () => {
         setActionStatus("Opening…");
         try { await openLogsFolder(); setActionStatus(null); } catch { setActionStatus(null); toast.error("Could not open logs folder"); }
@@ -955,8 +968,8 @@ function ConsoleToolsSubPanel({
     {
       id: "clear-cache",
       icon: Trash2,
-      label: "Clear Temp Cache",
-      description: "Remove temporary thumbnails and screenshots",
+      labelKey: "console_settings.clear_cache",
+      descKey: "console_settings.clear_cache_desc",
       handler: async () => {
         setActionStatus("Clearing…");
         try {
@@ -972,8 +985,8 @@ function ConsoleToolsSubPanel({
     {
       id: "system-info",
       icon: Info,
-      label: "System Information",
-      description: "OS, architecture, and runtime details",
+      labelKey: "console_settings.system_info",
+      descKey: "console_settings.system_info_desc",
       handler: async () => {
         setActionStatus("Loading…");
         try {
@@ -990,8 +1003,8 @@ function ConsoleToolsSubPanel({
     {
       id: "diagnostics",
       icon: Activity,
-      label: "Run Diagnostics",
-      description: "Check cache health and storage status",
+      labelKey: "console_settings.run_diagnostics",
+      descKey: "console_settings.run_diagnostics_desc",
       handler: async () => {
         setActionStatus("Running…");
         try {
@@ -1012,8 +1025,8 @@ function ConsoleToolsSubPanel({
 
   return (
     <div className="flex flex-col gap-2">
-      <SubPanelHeader title="Tools" onBack={onBack} />
-      <p className="mb-2 text-sm text-(--color-muted)/60">Utilities, diagnostics, and folder access</p>
+      <SubPanelHeader title={t("console_settings.tools", "Tools")} onBack={onBack} />
+      <p className="mb-2 text-sm text-(--color-muted)/60">{t("console_settings.tools_desc", "Utilities, diagnostics, and folder access")}</p>
       {toolActions.map((action, i) => {
         const Icon = action.icon;
         return (
@@ -1028,8 +1041,8 @@ function ConsoleToolsSubPanel({
               <Icon className={`h-5 w-5 ${actionStatus && focusedIndex === i ? "text-(--color-accent) animate-pulse" : "text-(--color-muted)"}`} />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-base font-semibold text-(--color-text)">{action.label}</div>
-              <div className="mt-0.5 text-sm text-(--color-muted)">{action.description}</div>
+              <div className="text-base font-semibold text-(--color-text)">{t(action.labelKey)}</div>
+              <div className="mt-0.5 text-sm text-(--color-muted)">{t(action.descKey)}</div>
             </div>
             {actionStatus && focusedIndex === i ? (
               <span className="shrink-0 text-xs text-(--color-accent)">{actionStatus}</span>
@@ -1049,57 +1062,57 @@ function ConsoleToolsSubPanel({
 const HELP_ITEMS: {
   key: string;
   icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-  sections: { label: string; hint: string }[];
+  titleKey: string;
+  descKey: string;
+  sections: { labelKey: string; hint: string }[];
 }[] = [
   {
     key: "navigation",
     icon: Gamepad2,
-    title: "Navigation",
-    description: "Move between sections, cards, and panels",
+    titleKey: "console_settings.help_navigation",
+    descKey: "console_settings.help_navigation_desc",
     sections: [
-      { label: "Move focus", hint: "[D-Pad / Arrows] Navigate" },
-      { label: "Select", hint: "[A / Enter] Confirm / Open" },
-      { label: "Back", hint: "[B / Esc] Cancel / Go back" },
-      { label: "Quick search", hint: "[Y] Search games" },
-      { label: "Profile", hint: "[View] Account & settings" },
+      { labelKey: "console_settings.help_move_focus", hint: "[D-Pad / Arrows] Navigate" },
+      { labelKey: "console_settings.help_select", hint: "[A / Enter] Confirm / Open" },
+      { labelKey: "console_settings.help_back", hint: "[B / Esc] Cancel / Go back" },
+      { labelKey: "console_settings.help_quick_search", hint: "[Y] Search games" },
+      { labelKey: "console_settings.help_profile", hint: "[View] Account & settings" },
     ],
   },
   {
     key: "media",
     icon: Image,
-    title: "Media & Details",
-    description: "Browse screenshots, trailers, and game info",
+    titleKey: "console_settings.help_media",
+    descKey: "console_settings.help_media_desc",
     sections: [
-      { label: "Browse media", hint: "[LB/RB] Prev / Next media" },
-      { label: "Play / pause", hint: "[A] Toggle video" },
-      { label: "Screenshots", hint: "[X] Open screenshot strip" },
-      { label: "Game details", hint: "[Menu] Open options menu" },
+      { labelKey: "console_settings.help_browse_media", hint: "[LB/RB] Prev / Next media" },
+      { labelKey: "console_settings.help_play_pause", hint: "[A] Toggle video" },
+      { labelKey: "console_settings.help_screenshots", hint: "[X] Open screenshot strip" },
+      { labelKey: "console_settings.help_game_details", hint: "[Menu] Open options menu" },
     ],
   },
   {
     key: "actions",
     icon: PlayCircle,
-    title: "Game Actions",
-    description: "Play, install, and manage your games",
+    titleKey: "console_settings.help_actions",
+    descKey: "console_settings.help_actions_desc",
     sections: [
-      { label: "Play / Stop", hint: "[A] Primary action" },
-      { label: "Return to game", hint: "D-Pad Right while running" },
-      { label: "Favorite toggle", hint: "D-Pad Right from primary" },
-      { label: "Options", hint: "[Menu] Open context menu" },
+      { labelKey: "console_settings.help_play_stop", hint: "[A] Primary action" },
+      { labelKey: "console_settings.help_return_game", hint: "D-Pad Right while running" },
+      { labelKey: "console_settings.help_favorite_toggle", hint: "D-Pad Right from primary" },
+      { labelKey: "console_settings.help_options", hint: "[Menu] Open context menu" },
     ],
   },
   {
     key: "settings",
     icon: Settings,
-    title: "Settings",
-    description: "Customize your console experience",
+    titleKey: "console_settings.help_settings",
+    descKey: "console_settings.help_settings_desc",
     sections: [
-      { label: "Console Settings", hint: "Press [X] on settings page" },
-      { label: "Layout", hint: "Grid columns, card size, gaps" },
-      { label: "Input", hint: "Xbox / PlayStation / Keyboard glyphs" },
-      { label: "Profile", hint: "Avatar, banner, display name" },
+      { labelKey: "console_settings.help_console_settings", hint: "Press [X] on settings page" },
+      { labelKey: "console_settings.help_layout", hint: "Grid columns, card size, gaps" },
+      { labelKey: "console_settings.help_input", hint: "Xbox / PlayStation / Keyboard glyphs" },
+      { labelKey: "console_settings.help_profile_settings", hint: "Avatar, banner, display name" },
     ],
   },
 ];
@@ -1112,12 +1125,13 @@ function ConsoleHelpSubPanel({
   onFocusChange: (i: number) => void;
   itemCount: React.MutableRefObject<number>;
 }) {
+  const { t } = useTranslation();
   const totalItems = HELP_ITEMS.length + 1;
   itemCount.current = totalItems;
 
   return (
     <div className="flex flex-col gap-2">
-      <SubPanelHeader title="Help & Shortcuts" onBack={onBack} />
+      <SubPanelHeader title={t("console_settings.help_shortcuts", "Help & Shortcuts")} onBack={onBack} />
       <div className="flex flex-col gap-3 px-2 pb-4">
         {HELP_ITEMS.map((item, i) => {
           const Icon = item.icon;
@@ -1134,13 +1148,13 @@ function ConsoleHelpSubPanel({
             >
               <div className="mb-2 flex items-center gap-2">
                 <Icon className={`h-5 w-5 ${isFocused ? "text-(--color-accent)" : "text-(--color-muted)"}`} />
-                <span className="text-sm font-semibold text-(--color-text)">{item.title}</span>
+                <span className="text-sm font-semibold text-(--color-text)">{t(item.titleKey)}</span>
               </div>
-              <p className="mb-2 text-xs text-(--color-muted)/70">{item.description}</p>
+              <p className="mb-2 text-xs text-(--color-muted)/70">{t(item.descKey)}</p>
               <div className="flex flex-col gap-1">
                 {item.sections.map((sec, si) => (
                   <div key={si} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-(--color-muted)">{sec.label}</span>
+                    <span className="text-(--color-muted)">{t(sec.labelKey)}</span>
                     <span className="rounded bg-(--color-surface)/40 px-1.5 py-0.5 text-[10px] text-(--color-muted)/70">
                       {sec.hint}
                     </span>
@@ -1154,7 +1168,7 @@ function ConsoleHelpSubPanel({
           focusedIndex === totalItems - 1 ? "ring-1 ring-(--color-muted)/30 bg-(--color-surface)/30" : ""
         }`}>
           <p className="text-xs text-(--color-muted)/40">
-            LumaForge Console Mode &middot; Press [B] or Esc to go back
+            {t("console_settings.footer_hint", "LumaForge Console Mode · Press [B] or Esc to go back")}
           </p>
         </div>
       </div>
@@ -1168,22 +1182,22 @@ function ConsoleHelpSubPanel({
 const MAIN_OPTIONS: {
   key: string;
   icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  description?: string;
+  labelKey: string;
+  descKey?: string;
   action: "sub" | "navigate" | "random" | "refresh" | "switch-view" | "power" | "coming-soon";
   subPage?: PanelPage;
 }[] = [
-  { key: "random", icon: Shuffle, label: "Pick Random Game", description: "Surprise me", action: "random" },
-  { key: "switch-view", icon: LayoutGrid, label: "Switch View", description: "Toggle Grid / Spotlight", action: "switch-view" },
-  { key: "refresh", icon: RefreshCw, label: "Update Library", description: "Rescan installed games", action: "refresh" },
-  { key: "settings", icon: Settings, label: "Console Settings", description: "Layout, visuals, input", action: "sub", subPage: "settings" },
-  { key: "tools", icon: Wrench, label: "Tools", description: "Utilities and diagnostics", action: "sub", subPage: "tools" },
-  { key: "desktop", icon: Monitor, label: "Switch to Desktop Mode", description: "Exit console mode", action: "navigate" },
-  { key: "power-off", icon: Power, label: "Turn Off System", description: "Shut down the system", action: "power" },
-  { key: "suspend", icon: Moon, label: "Suspend", description: "Sleep mode", action: "power" },
-  { key: "hibernate", icon: Zap, label: "Hibernate", description: "Save state and power off", action: "power" },
-  { key: "restart", icon: Sun, label: "Restart", description: "Reboot the system", action: "power" },
-  { key: "help", icon: HelpCircle, label: "Help", description: "Keyboard shortcuts & info", action: "sub", subPage: "help" },
+  { key: "random", icon: Shuffle, labelKey: "console_settings.pick_random", descKey: "console_settings.pick_random_desc", action: "random" },
+  { key: "switch-view", icon: LayoutGrid, labelKey: "console_settings.switch_view", descKey: "console_settings.switch_view_desc", action: "switch-view" },
+  { key: "refresh", icon: RefreshCw, labelKey: "console_settings.update_library", descKey: "console_settings.update_library_desc", action: "refresh" },
+  { key: "settings", icon: Settings, labelKey: "console_settings.title", descKey: "console_settings.title_desc", action: "sub", subPage: "settings" },
+  { key: "tools", icon: Wrench, labelKey: "console_settings.tools", descKey: "console_settings.tools_desc", action: "sub", subPage: "tools" },
+  { key: "desktop", icon: Monitor, labelKey: "console_settings.switch_desktop", descKey: "console_settings.switch_desktop_desc", action: "navigate" },
+  { key: "power-off", icon: Power, labelKey: "console_settings.power_off", descKey: "console_settings.power_off_desc", action: "power" },
+  { key: "suspend", icon: Moon, labelKey: "console_settings.power_suspend", descKey: "console_settings.power_suspend_desc", action: "power" },
+  { key: "hibernate", icon: Zap, labelKey: "console_settings.power_hibernate", descKey: "console_settings.power_hibernate_desc", action: "power" },
+  { key: "restart", icon: Sun, labelKey: "console_settings.power_restart", descKey: "console_settings.power_restart_desc", action: "power" },
+  { key: "help", icon: HelpCircle, labelKey: "console_settings.help", descKey: "console_settings.help_desc", action: "sub", subPage: "help" },
 ];
 
 // ============================================================
@@ -1198,17 +1212,18 @@ function SettingsCategoryGrid({
   onFocusChange: (i: number) => void;
   itemCount: React.MutableRefObject<number>;
 }) {
-  const cats: { key: PanelPage; icon: React.ComponentType<{ className?: string }>; label: string; description: string }[] = [
-    { key: "grid-card-style", icon: Grid3X3, label: "Grid Card Style", description: "Card width, radius, labels for Grid mode" },
-    { key: "spotlight-card-style", icon: LayoutGrid, label: "Spotlight Card Style", description: "Card style, presets, trailer for Spotlight" },
-    { key: "spotlight-content", icon: Image, label: "Spotlight Content", description: "Visibility toggles for content sections" },
-    { key: "visuals", icon: Maximize, label: "Visuals", description: "Theme, texture, effects" },
-    { key: "media", icon: Film, label: "Media", description: "Providers, trailers, playback" },
-    { key: "input", icon: Gamepad2, label: "Input", description: "Hints style, visibility" },
-    { key: "time", icon: Clock, label: "Time & Clock", description: "Time format, seconds, visibility" },
-    { key: "startup", icon: Rocket, label: "Startup", description: "Launch mode, window mode, autostart" },
-    { key: "system-bar", icon: Monitor, label: "System Bar", description: "Indicator visibility in top bar" },
-    { key: "language", icon: Globe, label: "Language", description: "App language (coming soon)" },
+  const { t } = useTranslation();
+  const cats: { key: PanelPage; icon: React.ComponentType<{ className?: string }>; labelKey: string; descKey: string }[] = [
+    { key: "grid-card-style", icon: Grid3X3, labelKey: "console_settings.grid_card_style", descKey: "console_settings.grid_card_style_desc" },
+    { key: "spotlight-card-style", icon: LayoutGrid, labelKey: "console_settings.spotlight_card_style", descKey: "console_settings.spotlight_card_style_desc" },
+    { key: "spotlight-content", icon: Image, labelKey: "console_settings.spotlight_content", descKey: "console_settings.spotlight_content_desc" },
+    { key: "visuals", icon: Maximize, labelKey: "console_settings.visuals", descKey: "console_settings.visuals_desc" },
+    { key: "media", icon: Film, labelKey: "console_settings.media", descKey: "console_settings.media_desc" },
+    { key: "input", icon: Gamepad2, labelKey: "console_settings.input", descKey: "console_settings.input_desc" },
+    { key: "time", icon: Clock, labelKey: "console_settings.time", descKey: "console_settings.time_desc" },
+    { key: "startup", icon: Rocket, labelKey: "console_settings.startup", descKey: "console_settings.startup_desc" },
+    { key: "system-bar", icon: Monitor, labelKey: "console_settings.system_bar", descKey: "console_settings.system_bar_desc" },
+    { key: "language", icon: Globe, labelKey: "console_settings.language", descKey: "console_settings.language_desc" },
   ];
 
   const gridRef = useRef<HTMLDivElement>(null);
@@ -1228,7 +1243,7 @@ function SettingsCategoryGrid({
 
   return (
     <div ref={gridRef} tabIndex={-1} className="flex flex-col gap-2 outline-none" onKeyDown={handleKeyDown}>
-      <SubPanelHeader title="Console Settings" onBack={onBack} />
+      <SubPanelHeader title={t("console_settings.title", "Console Settings")} onBack={onBack} />
       {cats.map((cat, i) => {
         const Icon = cat.icon;
         return (
@@ -1243,8 +1258,8 @@ function SettingsCategoryGrid({
               <Icon className="h-5 w-5 text-(--color-muted)" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-base font-semibold text-(--color-text)">{cat.label}</div>
-              <div className="mt-0.5 text-sm text-(--color-muted)">{cat.description}</div>
+              <div className="text-base font-semibold text-(--color-text)">{t(cat.labelKey)}</div>
+              <div className="mt-0.5 text-sm text-(--color-muted)">{t(cat.descKey)}</div>
             </div>
             <ChevronRight className="h-5 w-5 shrink-0 text-(--color-muted)/50" />
           </button>
@@ -1263,13 +1278,14 @@ export default function ConsoleSettingsPanelV2({
 }: Props) {
   const [profile] = useUserProfile();
   const { settings: desktopSettings, updateSetting: updateDesktopSetting } = useSettings();
+  const { t } = useTranslation();
   const [page, setPage] = useState<PanelPage>("main");
   const [subPage, setSubPage] = useState<PanelPage | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [settingEditingId, setSettingEditingId] = useState<string | null>(null);
   const [themePickerIndex, setThemePickerIndex] = useState(0);
   const [visible, setVisible] = useState(false);
-  const [powerConfirm, setPowerConfirm] = useState<{ key: string; title: string; message: string } | null>(null);
+  const [powerConfirm, setPowerConfirm] = useState<{ key: string; titleKey: string; messageKey: string } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
   const subItemCount = useRef(0);
@@ -1653,11 +1669,11 @@ export default function ConsoleSettingsPanelV2({
       } else if (subPage === "tools") {
         // ── Tools sub-page ──
         const toolRows: ToolActionEntry[] = [
-          { id: "open-app-data", icon: FolderOpen, label: "Open App Data Folder", description: "Browse cache, config, and data files", handler: async () => { try { await openAppDataFolder(); } catch { toast.error("Could not open app data folder"); } } },
-          { id: "open-logs", icon: HardDrive, label: "Open Logs Folder", description: "View application logs for troubleshooting", handler: async () => { try { await openLogsFolder(); } catch { toast.error("Could not open logs folder"); } } },
-          { id: "clear-cache", icon: Trash2, label: "Clear Temp Cache", description: "Remove temporary thumbnails and screenshots", handler: async () => { try { const c = await clearTempCache(); toast.success(`Cleared ${c} cache folder(s)`); } catch { toast.error("Failed to clear cache"); } } },
-          { id: "system-info", icon: Info, label: "System Information", description: "OS, architecture, and runtime details", handler: async () => { try { const info: SystemInfo = await getSystemInfo(); const exeName = info.exe_path?.split(/[/\\]/).pop(); toast.success(`System Info: ${info.os} ${info.arch} · ${exeName}`, { duration: 5000 }); } catch { toast.error("Could not fetch system info"); } } },
-          { id: "diagnostics", icon: Activity, label: "Run Diagnostics", description: "Check cache health and storage status", handler: async () => { try { await getSystemInfo(); toast.success("Diagnostics ran successfully", { duration: 5000 }); } catch { toast.error("Diagnostics failed"); } } },
+          { id: "open-app-data", icon: FolderOpen, labelKey: "console_settings.open_app_data", descKey: "console_settings.open_app_data_desc", handler: async () => { try { await openAppDataFolder(); } catch { toast.error("Could not open app data folder"); } } },
+          { id: "open-logs", icon: HardDrive, labelKey: "console_settings.open_logs", descKey: "console_settings.open_logs_desc", handler: async () => { try { await openLogsFolder(); } catch { toast.error("Could not open logs folder"); } } },
+          { id: "clear-cache", icon: Trash2, labelKey: "console_settings.clear_cache", descKey: "console_settings.clear_cache_desc", handler: async () => { try { const c = await clearTempCache(); toast.success(`Cleared ${c} cache folder(s)`); } catch { toast.error("Failed to clear cache"); } } },
+          { id: "system-info", icon: Info, labelKey: "console_settings.system_info", descKey: "console_settings.system_info_desc", handler: async () => { try { const info: SystemInfo = await getSystemInfo(); const exeName = info.exe_path?.split(/[/\\]/).pop(); toast.success(`System Info: ${info.os} ${info.arch} · ${exeName}`, { duration: 5000 }); } catch { toast.error("Could not fetch system info"); } } },
+          { id: "diagnostics", icon: Activity, labelKey: "console_settings.run_diagnostics", descKey: "console_settings.run_diagnostics_desc", handler: async () => { try { await getSystemInfo(); toast.success("Diagnostics ran successfully", { duration: 5000 }); } catch { toast.error("Diagnostics failed"); } } },
         ];
         switch (e.key) {
           case "ArrowUp":
@@ -1781,7 +1797,8 @@ export default function ConsoleSettingsPanelV2({
 
   const renderSubPage = () => {
     const rows = subPage ? SUBPAGE_ROWS[subPage] : undefined;
-    const title = subPage ? SUBPAGE_TITLES[subPage] ?? "" : "";
+    const titleKey = subPage ? SUBPAGE_TITLES[subPage] ?? "" : "";
+    const title = titleKey ? t(titleKey) : "";
     if (rows && title) {
       // ── Startup sub-page: sync 4 shared fields with Desktop settings ──
       const isStartup = subPage === "startup";
@@ -1855,8 +1872,8 @@ export default function ConsoleSettingsPanelV2({
         <OptionRow
           key={opt.key}
           icon={opt.icon}
-          label={opt.label}
-          description={opt.description}
+          label={t(opt.labelKey)}
+          description={opt.descKey ? t(opt.descKey) : undefined}
           hasArrow={opt.action === "sub"}
           disabled={opt.action === "coming-soon"}
           isFocused={focusedIndex === i}
@@ -2068,15 +2085,15 @@ export default function ConsoleSettingsPanelV2({
       {powerConfirm && (
         <ConfirmModal
           open={true}
-          title={powerConfirm.title}
-          description={powerConfirm.message}
+          title={t(powerConfirm.titleKey)}
+          description={t(powerConfirm.messageKey)}
           variant="danger"
           confirmLabel={
-            powerConfirm.key === "power-off" ? "Shut Down" :
-            powerConfirm.key === "suspend" ? "Suspend" :
-            powerConfirm.key === "hibernate" ? "Hibernate" : "Restart"
+            powerConfirm.key === "power-off" ? t("console_settings.power_shut_down", "Shut Down") :
+            powerConfirm.key === "suspend" ? t("console_settings.power_suspend", "Suspend") :
+            powerConfirm.key === "hibernate" ? t("console_settings.power_hibernate", "Hibernate") : t("console_settings.power_restart", "Restart")
           }
-          cancelLabel="Cancel"
+          cancelLabel={t("common.cancel", "Cancel")}
           onConfirm={() => {
             const key = powerConfirm.key;
             setPowerConfirm(null);

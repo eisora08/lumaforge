@@ -30,15 +30,20 @@ import {
   BackupSection as BackupSectionType,
   ALL_BACKUP_SECTIONS,
   SECTION_DISPLAY_NAMES,
+  SECTION_DISPLAY_NAME_KEYS,
   SECTION_AUDIT_STATUS,
   SECTION_AUDIT_NOTES,
+  SECTION_AUDIT_NOTE_KEYS,
   SECTION_READY_COUNT,
   SECTION_PARTIAL_COUNT,
   SECTION_PLACEHOLDER_COUNT,
   BACKUP_PRESETS,
+  BACKUP_PRESET_NAME_KEYS,
+  BACKUP_PRESET_DESC_KEYS,
   collectBackupData,
   validateManifestIntegrity,
   SECTION_MERGE_POLICIES,
+  MERGE_POLICY_LABELS,
   BackupManifest,
   BackupPreviewResult,
   BackupWriteSet,
@@ -81,10 +86,10 @@ function shortenBackupId(filename: string): string {
   return match ? match[1] : filename.replace("lumaforge-backup-", "").replace(".json", "");
 }
 
-const AUDIT_STATUS_STYLES: Record<SectionAuditStatus, { badge: string; label: string }> = {
-  implemented: { badge: "bg-emerald-500/15 text-emerald-400", label: "Ready" },
-  partial: { badge: "bg-amber-500/15 text-amber-400", label: "Partial" },
-  placeholder: { badge: "bg-zinc-500/15 text-zinc-500", label: "Planned" },
+const AUDIT_STATUS_STYLES: Record<SectionAuditStatus, { badge: string; labelKey: string }> = {
+  implemented: { badge: "bg-emerald-500/15 text-emerald-400", labelKey: "backup.status_ready" },
+  partial: { badge: "bg-amber-500/15 text-amber-400", labelKey: "backup.status_partial" },
+  placeholder: { badge: "bg-zinc-500/15 text-zinc-500", labelKey: "backup.status_planned" },
 };
 
 export default function BackupSection() {
@@ -607,8 +612,8 @@ export default function BackupSection() {
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-(--color-text)">{preset.name}</p>
-                  <p className="text-xs text-(--color-muted) mt-0.5">{preset.description}</p>
+                  <p className="text-sm font-medium text-(--color-text)">{t(BACKUP_PRESET_NAME_KEYS[preset.id] ?? preset.name, preset.name)}</p>
+                  <p className="text-xs text-(--color-muted) mt-0.5">{t(BACKUP_PRESET_DESC_KEYS[preset.id] ?? preset.description, preset.description)}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-(--color-muted)">{preset.sections.length} {t("backup.sections_count", "sections")}</span>
@@ -665,9 +670,9 @@ export default function BackupSection() {
                     ) : (
                       <div className="h-3 w-3 shrink-0 rounded-full border border-(--surface-active-border)" />
                     )}
-                    <span className="truncate flex-1">{SECTION_DISPLAY_NAMES[section]}</span>
+                    <span className="truncate flex-1">{t(SECTION_DISPLAY_NAME_KEYS[section], SECTION_DISPLAY_NAMES[section])}</span>
                     <span className={`text-[9px] px-1.5 py-0.5 rounded-full shrink-0 ${statusStyle.badge}`}>
-                      {statusStyle.label}
+                      {t(statusStyle.labelKey)}
                     </span>
                   </button>
                 );
@@ -807,7 +812,7 @@ export default function BackupSection() {
               <div className="grid grid-cols-2 gap-1.5">
                 {[...new Set(previewResult.manifest.files.map((f) => f.section))].map((section) => {
                   const isSelected = selectedRestoreSections.has(section);
-                  const display = SECTION_DISPLAY_NAMES[section as BackupSectionType] ?? section;
+                  const display = t(SECTION_DISPLAY_NAME_KEYS[section as BackupSectionType] ?? section, SECTION_DISPLAY_NAMES[section as BackupSectionType] ?? section);
                   return (
                     <button
                       key={section}
@@ -1102,12 +1107,12 @@ export default function BackupSection() {
                 return (
                   <div key={section} className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2">
                     <div className="flex-1 min-w-0">
-                      <span className="text-xs text-(--color-text)">{SECTION_DISPLAY_NAMES[section]}</span>
-                      <p className="text-[10px] text-(--color-muted) truncate">{SECTION_AUDIT_NOTES[section]}</p>
+                      <span className="text-xs text-(--color-text)">{t(SECTION_DISPLAY_NAME_KEYS[section], SECTION_DISPLAY_NAMES[section])}</span>
+                      <p className="text-[10px] text-(--color-muted) truncate">{t(SECTION_AUDIT_NOTE_KEYS[section], SECTION_AUDIT_NOTES[section])}</p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0 ml-2">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${statusStyle.badge}`}>
-                        {statusStyle.label}
+                        {t(statusStyle.labelKey)}
                       </span>
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${
                         policy === "merge" ? "bg-blue-500/15 text-blue-400" :
@@ -1116,7 +1121,7 @@ export default function BackupSection() {
                         policy === "dedup" ? "bg-amber-500/15 text-amber-400" :
                         "bg-violet-500/15 text-violet-400"
                       }`}>
-                        {policy}
+                        {t(MERGE_POLICY_LABELS[policy] ?? policy, policy)}
                       </span>
                     </div>
                   </div>
@@ -1138,7 +1143,7 @@ export default function BackupSection() {
                 const m = previewResult?.manifest;
                 const sectionCount = selectedRestoreSections?.size ?? 0;
                 const sectionNames = selectedRestoreSections
-                  ? [...selectedRestoreSections].map((s) => SECTION_DISPLAY_NAMES[s as BackupSectionType] ?? s).join(", ")
+                  ? [...selectedRestoreSections].map((s) => t(SECTION_DISPLAY_NAME_KEYS[s as BackupSectionType] ?? s, SECTION_DISPLAY_NAMES[s as BackupSectionType] ?? s)).join(", ")
                   : "";
                 const hasSettingsSection = selectedRestoreSections?.has("settings") ?? false;
                 const parts: string[] = [];

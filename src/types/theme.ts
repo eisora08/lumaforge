@@ -16,6 +16,7 @@ export type ThemeOption = {
   id: ThemeId;
   name: string;
   description: string;
+  descriptionKey?: string;
   preview: {
     background: string;
     surface: string;
@@ -27,4 +28,5 @@ export type SurfaceModeOption = {
   id: SurfaceMode;
   name: string;
   description: string;
+  descriptionKey?: string;
 };

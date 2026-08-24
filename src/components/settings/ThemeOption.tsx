@@ -1,4 +1,5 @@
 import { Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ThemeOption as ThemeOptionType } from "../../types/theme";
 
 type ThemeOptionProps = {
@@ -12,6 +13,7 @@ export default function ThemeOption({
   selected,
   onSelect,
 }: ThemeOptionProps) {
+  const { t } = useTranslation();
   return (
     <button
       onClick={() => onSelect(theme.id)}
@@ -51,7 +53,7 @@ export default function ThemeOption({
       </h3>
 
       <p className="mt-1 text-xs leading-5 text-(--color-muted)">
-        {theme.description}
+        {theme.descriptionKey ? t(theme.descriptionKey, theme.description) : theme.description}
       </p>
     </button>
   );

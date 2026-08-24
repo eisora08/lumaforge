@@ -4,6 +4,8 @@ export type HeroTransitionOption = {
   id: HeroTransitionId;
   label: string;
   description: string;
+  labelKey: string;
+  descriptionKey: string;
 };
 
 export type HeroTransitionSnapshot = {
@@ -15,16 +17,22 @@ export const HERO_TRANSITION_OPTIONS: HeroTransitionOption[] = [
     id: "crossfade",
     label: "Crossfade",
     description: "Fundido suave de dos capas entre imágenes (por defecto).",
+    labelKey: "settings.hero_transitions.crossfade.label",
+    descriptionKey: "settings.hero_transitions.crossfade.description",
   },
   {
     id: "kenburns",
     label: "Ken Burns",
     description: "Zoom y paneo lento y continuo sobre el arte del fondo.",
+    labelKey: "settings.hero_transitions.kenburns.label",
+    descriptionKey: "settings.hero_transitions.kenburns.description",
   },
   {
     id: "focus",
     label: "Enfoque",
     description: "Revelado de desenfoque a nitidez al cargar la imagen.",
+    labelKey: "settings.hero_transitions.focus.label",
+    descriptionKey: "settings.hero_transitions.focus.description",
   },
 ];
 

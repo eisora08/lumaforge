@@ -169,9 +169,9 @@ export default function AppLayout({
 }
 
 const STORE_TAB_LIST = [
-  { id: "discover" as const, label: "Discover" },
-  { id: "browse" as const, label: "Browse" },
-  { id: "repacks" as const, label: "Repacks" },
+  { id: "discover" as const, label: "Discover", labelKey: "store.tabs.discover" },
+  { id: "browse" as const, label: "Browse", labelKey: "store.tabs.browse" },
+  { id: "repacks" as const, label: "Repacks", labelKey: "store.tabs.repacks" },
 ];
 
 function TopBarShell({ activePage, onNavigate }: {

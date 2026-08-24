@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import AsyncImage from "../../common/AsyncImage";
 import HubcapProviderBadges from "../../settings/HubcapProviderBadges";
 import {
@@ -77,12 +78,12 @@ type StoreGameSummaryPanelProps = {
   repackSourceLabels?: string[];
 };
 
-function getSummaryBadges(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean, steamOwned: boolean) {
+function getSummaryBadges(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean, steamOwned: boolean, t: (key: string, fallback: string) => string) {
   const badges: { label: string; icon: typeof CheckCircle2; className: string }[] = [];
 
   if (isSteamInstalled || (installStatus === "active" && !luaInstalled)) {
     badges.push({
-      label: "Installed",
+      label: t("store.summary.installed_badge", "Installed"),
       icon: CheckCircle2,
       className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
     });
@@ -90,7 +91,7 @@ function getSummaryBadges(isSteamInstalled: boolean, installStatus: PackageInsta
 
   if (steamOwned) {
     badges.push({
-      label: "Owned",
+      label: t("store.summary.owned", "Owned"),
       icon: Gamepad2,
       className: "border-blue-500/20 bg-blue-500/10 text-blue-300",
     });
@@ -98,7 +99,7 @@ function getSummaryBadges(isSteamInstalled: boolean, installStatus: PackageInsta
 
   if (!isSteamInstalled && (installStatus === "active" || luaInstalled)) {
     badges.push({
-      label: "In Library",
+      label: t("store.summary.in_library", "In Library"),
       icon: Library,
       className: "border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-accent)",
     });
@@ -106,7 +107,7 @@ function getSummaryBadges(isSteamInstalled: boolean, installStatus: PackageInsta
 
   if (installStatus === "disabled") {
     badges.push({
-      label: "Disabled",
+      label: t("store.summary.disabled", "Disabled"),
       icon: PauseCircle,
       className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300",
     });
@@ -143,94 +144,95 @@ function getButtonConfig(
   onCheckForUpdates: (() => void) | undefined,
   onOpenSteam: (() => void) | undefined,
   sourceProgress: SourceProgress,
+  t: (key: string, fallback: string, opts?: Record<string, unknown>) => string,
 ): ButtonConfig {
   // Non-installed Lua games (orphaned config/lua files) always show "Install via Steam"
   // regardless of source status. Must be checked before isChecking to prevent
   // "Checking sources..." from short-circuiting the install button.
   if (luaInstalled && !isSteamInstalled) {
-    return { label: "Install via Steam", enabled: true, onClick: onOpenSteam, reason: "lua-not-installed-install-steam" };
+    return { label: t("store.summary.install_via_steam", "Install via Steam"), enabled: true, onClick: onOpenSteam, reason: "lua-not-installed-install-steam" };
   }
 
   if (isChecking) {
     const label = sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0
-      ? `Checking ${sourceProgress.completed}/${sourceProgress.total}...`
-      : "Checking sources...";
+      ? t("store.summary.checking_xy", "Checking {{completed}}/{{total}}...", { completed: sourceProgress.completed, total: sourceProgress.total })
+      : t("store.summary.checking_sources", "Checking sources...");
     return { label, enabled: false, onClick: undefined, reason: "checking-sources" };
   }
 
   // Steam-installed games: provider status always shown regardless of source checks
   if (isSteamInstalled) {
     if (steamOwned) {
-      return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
+      return { label: t("store.summary.already_in_account", "Already in account"), enabled: false, onClick: undefined, reason: "steam-owned" };
     }
     switch (providerCheckState) {
       case "update-available":
-        return { label: "Update Package", enabled: true, onClick: onDownload, reason: "update-available" };
+        return { label: t("store.summary.update_package", "Update Package"), enabled: true, onClick: onDownload, reason: "update-available" };
       case "no-data":
-        return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "no-provider-data" };
+        return { label: t("store.summary.check_for_updates", "Check for updates"), enabled: true, onClick: onCheckForUpdates, reason: "no-provider-data" };
       case "up-to-date":
-        return { label: "Up to date", enabled: false, onClick: undefined, reason: "up-to-date" };
+        return { label: t("store.summary.up_to_date", "Up to date"), enabled: false, onClick: undefined, reason: "up-to-date" };
       case "unknown":
-        return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "unknown-no-local-data" };
+        return { label: t("store.summary.check_again", "Check again"), enabled: true, onClick: onCheckForUpdates, reason: "unknown-no-local-data" };
       case "provider-updating":
-        return { label: "Provider updating", enabled: false, onClick: undefined, reason: "provider-updating" };
+        return { label: t("store.summary.provider_updating", "Provider updating"), enabled: false, onClick: undefined, reason: "provider-updating" };
       case "provider-needs-refresh":
-        return { label: "Provider needs refresh", enabled: false, onClick: undefined, reason: "provider-needs-refresh" };
+        return { label: t("store.summary.provider_needs_refresh", "Provider needs refresh"), enabled: false, onClick: undefined, reason: "provider-needs-refresh" };
       case "provider-unavailable":
-        return { label: "Provider unavailable", enabled: false, onClick: undefined, reason: "provider-unavailable" };
+        return { label: t("store.summary.provider_unavailable", "Provider unavailable"), enabled: false, onClick: undefined, reason: "provider-unavailable" };
       case "auth-required":
-        return { label: "Auth required", enabled: false, onClick: undefined, reason: "auth-required" };
+        return { label: t("store.summary.auth_required", "Auth required"), enabled: false, onClick: undefined, reason: "auth-required" };
       case "rate-limited":
-        return { label: "Rate limited", enabled: false, onClick: undefined, reason: "rate-limited" };
+        return { label: t("store.summary.rate_limited", "Rate limited"), enabled: false, onClick: undefined, reason: "rate-limited" };
       case "error":
-        return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "provider-error" };
+        return { label: t("store.summary.check_again", "Check again"), enabled: true, onClick: onCheckForUpdates, reason: "provider-error" };
       default:
-        return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "default" };
+        return { label: t("store.summary.check_for_updates", "Check for updates"), enabled: true, onClick: onCheckForUpdates, reason: "default" };
     }
   }
 
   // Non-installed / Lua-only games
   if (isNone) {
-    return { label: "No Sources Available", enabled: false, onClick: undefined, reason: "no-sources" };
+    return { label: t("store.summary.no_sources", "No Sources Available"), enabled: false, onClick: undefined, reason: "no-sources" };
   }
   if (isNeedsConfig) {
-    return { label: "Configure Providers", enabled: false, onClick: undefined, reason: "needs-configuration" };
+    return { label: t("store.summary.configure_providers", "Configure Providers"), enabled: false, onClick: undefined, reason: "needs-configuration" };
   }
   if (needsRetry) {
-    return { label: "Source check failed", enabled: false, onClick: undefined, reason: "source-check-failed" };
+    return { label: t("store.summary.source_check_failed", "Source check failed"), enabled: false, onClick: undefined, reason: "source-check-failed" };
   }
   if (steamOwned) {
-    return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
+    return { label: t("store.summary.already_in_account", "Already in account"), enabled: false, onClick: undefined, reason: "steam-owned" };
   }
   if (!canDownload) {
-    return { label: "Select a Source", enabled: false, onClick: undefined, reason: "no-source-selected" };
+    return { label: t("store.summary.select_source", "Select a Source"), enabled: false, onClick: undefined, reason: "no-source-selected" };
   }
-  let label = "Download";
-  if (selectedSource?.fileType === "lua") label = "Download Lua";
-  else if (selectedSource?.fileType === "zip") label = "Download Package";
+  let label = t("store.summary.download", "Download");
+  if (selectedSource?.fileType === "lua") label = t("store.summary.download_lua", "Download Lua");
+  else if (selectedSource?.fileType === "zip") label = t("store.summary.download_package", "Download Package");
   return { label, enabled: true, onClick: onDownload, reason: "download-ready" };
 }
 
-function getProviderStatusBadge(checkState: ProviderCheckState): { label: string; icon: typeof AlertTriangle; className: string } | null {
+function getProviderStatusBadge(checkState: ProviderCheckState, t: (key: string, fallback: string) => string): { label: string; icon: typeof AlertTriangle; className: string } | null {
   switch (checkState) {
     case "update-available":
-      return { label: "Update available", icon: Download, className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" };
+      return { label: t("store.summary.update_available", "Update available"), icon: Download, className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" };
     case "up-to-date":
-      return { label: "Up to date", icon: CheckCircle2, className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" };
+      return { label: t("store.summary.up_to_date", "Up to date"), icon: CheckCircle2, className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" };
     case "unknown":
-      return { label: "No local data", icon: AlertTriangle, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+      return { label: t("store.summary.no_local_data", "No local data"), icon: AlertTriangle, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
     case "provider-updating":
-      return { label: "Provider updating", icon: Clock, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+      return { label: t("store.summary.provider_updating", "Provider updating"), icon: Clock, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
     case "provider-needs-refresh":
-      return { label: "Needs refresh", icon: RefreshCw, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+      return { label: t("store.summary.needs_refresh", "Needs refresh"), icon: RefreshCw, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
     case "provider-unavailable":
-      return { label: "Provider unavailable", icon: RefreshCwOff, className: "border-red-500/20 bg-red-500/10 text-red-300" };
+      return { label: t("store.summary.provider_unavailable", "Provider unavailable"), icon: RefreshCwOff, className: "border-red-500/20 bg-red-500/10 text-red-300" };
     case "auth-required":
-      return { label: "Auth required", icon: ShieldAlert, className: "border-red-500/20 bg-red-500/10 text-red-300" };
+      return { label: t("store.summary.auth_required", "Auth required"), icon: ShieldAlert, className: "border-red-500/20 bg-red-500/10 text-red-300" };
     case "rate-limited":
-      return { label: "Rate limited", icon: Clock, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+      return { label: t("store.summary.rate_limited", "Rate limited"), icon: Clock, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
     case "error":
-      return { label: "Check error", icon: AlertTriangle, className: "border-red-500/20 bg-red-500/10 text-red-300" };
+      return { label: t("store.summary.check_error", "Check error"), icon: AlertTriangle, className: "border-red-500/20 bg-red-500/10 text-red-300" };
     default:
       return null;
   }
@@ -269,6 +271,7 @@ export default function StoreGameSummaryPanel({
   repackInstalled = false,
   repackSourceLabels = [],
 }: StoreGameSummaryPanelProps) {
+  const { t } = useTranslation();
   const isChecking = (sourceStatus === "checking" || sourceStatus === "idle") && !isBackgroundChecking;
   const isReady = sourceStatus === "ready" || availableSources > 0;
   const isNone = sourceStatus === "none" && availableSources === 0;
@@ -276,7 +279,7 @@ export default function StoreGameSummaryPanel({
   const isTimeout = sourceStatus === "timeout";
   const isNeedsConfig = sourceStatus === "needs-configuration";
 
-  const summaryBadges = getSummaryBadges(isSteamInstalled, installStatus, luaInstalled, steamOwned);
+  const summaryBadges = getSummaryBadges(isSteamInstalled, installStatus, luaInstalled, steamOwned, t);
   const canDownload = isReady && !!selectedSource?.available;
   const needsRetry = isError || isTimeout;
   const canRetry = onRefreshSources !== undefined && !isReady;
@@ -310,6 +313,7 @@ export default function StoreGameSummaryPanel({
     onCheckForUpdates,
     onOpenSteam,
     sourceProgress,
+    t,
   );
 
   if (verbose) {
@@ -318,7 +322,7 @@ export default function StoreGameSummaryPanel({
     );
   }
 
-  const providerStatusBadge = isInstalled ? getProviderStatusBadge(providerCheckState) : null;
+  const providerStatusBadge = isInstalled ? getProviderStatusBadge(providerCheckState, t) : null;
 
   if (verbose && (luaInstalled || isSteamInstalled)) {
     console.log(
@@ -404,7 +408,7 @@ export default function StoreGameSummaryPanel({
               repackInstalled && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Installed
+                  {t("store.summary.installed_badge", "Installed")}
                 </span>
               )
             ) : (
@@ -425,40 +429,40 @@ export default function StoreGameSummaryPanel({
             {!steamOwned && !isSteamInstalled && !luaInstalled && installStatus === "not-installed" && isReady && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-(--color-muted)">
                 <SquareArrowOutUpRight className="h-3.5 w-3.5" />
-                Not in Library
+                {t("store.summary.not_in_library", "Not in Library")}
               </span>
             )}
 
             {!steamOwned && !isNonInstalledLua && isChecking && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/15 px-2.5 py-1 text-xs font-medium text-yellow-300">
                 {sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0
-                  ? `Checking ${sourceProgress.completed}/${sourceProgress.total}`
-                  : "Checking sources..."}
+                  ? t("store.summary.checking_xy", "Checking {{completed}}/{{total}}...", { completed: sourceProgress.completed, total: sourceProgress.total })
+                  : t("store.summary.checking_sources", "Checking sources...")}
               </span>
             )}
 
             {!steamOwned && !isNonInstalledLua && isNone && !canRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
-                No Sources Available
+                {t("store.summary.no_sources", "No Sources Available")}
               </span>
             )}
 
             {!steamOwned && !isNonInstalledLua && isNeedsConfig && canRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300">
-                Provider configuration needed
+                {t("store.summary.provider_config_needed", "Provider configuration needed")}
               </span>
             )}
 
             {!steamOwned && !isNonInstalledLua && needsRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
-                Source check failed
+                {t("store.summary.source_check_failed", "Source check failed")}
               </span>
             )}
 
             {!steamOwned && !isNonInstalledLua && ((totalSources > 0 && !isChecking) || isBackgroundChecking) ? (
               <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
                 {availableSources}/{totalSources} Sources
-                {isBackgroundChecking && " · scanning..."}
+                {isBackgroundChecking && ` · ${t("store.summary.scanning", "scanning...")}`}
               </span>
             ) : null}
 
@@ -484,10 +488,10 @@ export default function StoreGameSummaryPanel({
   const downloadCard = steamOwned ? (
         <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
           <p className="text-sm font-medium text-(--color-text)">
-            This game is already in your Steam account.
+            {t("store.summary.this_game_in_steam_account", "This game is already in your Steam account.")}
           </p>
           <p className="mt-1 text-xs text-(--color-muted)">
-            {isInstalled ? "Installed and ready to play via Steam." : "You can install it from Steam at any time."}
+            {isInstalled ? t("store.summary.installed_ready_steam", "Installed and ready to play via Steam.") : t("store.summary.can_install_from_steam", "You can install it from Steam at any time.")}
           </p>
           <div className="mt-3 flex flex-col gap-2">
             <button
@@ -496,7 +500,7 @@ export default function StoreGameSummaryPanel({
               className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90"
             >
               <Library className="h-4 w-4" />
-              Steam Library
+              {t("store.summary.steam_library", "Steam Library")}
             </button>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -505,7 +509,7 @@ export default function StoreGameSummaryPanel({
                 className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                Steam
+                {t("store.summary.steam", "Steam")}
               </button>
               <button
                 type="button"
@@ -513,7 +517,7 @@ export default function StoreGameSummaryPanel({
                 className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
               >
                 <Database className="h-3.5 w-3.5" />
-                SteamDB
+                {t("store.summary.steamdb", "SteamDB")}
               </button>
             </div>
           </div>
@@ -521,10 +525,10 @@ export default function StoreGameSummaryPanel({
       ) : isNonInstalledLua ? (
         <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
           <p className="text-sm font-medium text-(--color-text)">
-            This package is already in your library.
+            {t("store.summary.this_package_in_library", "This package is already in your library.")}
           </p>
           <p className="mt-1 text-xs text-(--color-muted)">
-            Found in config/lua — You can install it from Steam at any time.
+            {t("store.summary.found_in_config_lua", "Found in config/lua — You can install it from Steam at any time.")}
           </p>
           <div className="mt-3 flex flex-col gap-2">
             <button
@@ -533,7 +537,7 @@ export default function StoreGameSummaryPanel({
               className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90"
             >
               <ExternalLink className="h-4 w-4" />
-              Install via Steam
+              {t("store.summary.install_via_steam", "Install via Steam")}
             </button>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -542,7 +546,7 @@ export default function StoreGameSummaryPanel({
                 className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                Steam
+                {t("store.summary.steam", "Steam")}
               </button>
               <button
                 type="button"
@@ -550,7 +554,7 @@ export default function StoreGameSummaryPanel({
                 className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
               >
                 <Database className="h-3.5 w-3.5" />
-                SteamDB
+                {t("store.summary.steamdb", "SteamDB")}
               </button>
             </div>
           </div>
@@ -561,26 +565,26 @@ export default function StoreGameSummaryPanel({
           <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-(--color-muted)">
-                Selected Source
+                {t("store.summary.selected_source", "Selected Source")}
               </span>
             </div>
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
               {sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0 ? (
                 <span>
-                  Checking providers {sourceProgress.completed}/{sourceProgress.total}
+                  {t("store.summary.checking_providers_xy", "Checking providers {{completed}}/{{total}}", { completed: sourceProgress.completed, total: sourceProgress.total })}
                   {sourceProgress.successful > 0 && (
                     <span className="ml-1 text-emerald-300/70">
-                      · Source found
+                      {t("store.summary.source_found", "· Source found")}
                     </span>
                   )}
                   {sourceProgress.completed < sourceProgress.total && (
                     <span className="ml-1 text-yellow-300/70">
-                      · Checking {sourceProgress.total - sourceProgress.completed} remaining
+                      {t("store.summary.checking_remaining", "· Checking {{remaining}} remaining", { remaining: sourceProgress.total - sourceProgress.completed })}
                     </span>
                   )}
                 </span>
               ) : (
-                <span>Awaiting provider response...</span>
+                <span>{t("store.summary.awaiting_provider", "Awaiting provider response...")}</span>
               )}
             </div>
           </div>
@@ -590,7 +594,7 @@ export default function StoreGameSummaryPanel({
           <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-(--color-muted)">
-                Selected Source
+                {t("store.summary.selected_source", "Selected Source")}
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-xs text-(--color-text)">
                 {(function () {
@@ -603,11 +607,11 @@ export default function StoreGameSummaryPanel({
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-text) flex-wrap">
               <span>{selectedSource.providerName}</span>
               <span className="text-xs text-emerald-300">
-                Ready
+                {t("store.summary.ready", "Ready")}
               </span>
               {isBackgroundChecking && (
                 <span className="text-xs text-yellow-300/70">
-                  Checking more sources...
+                  {t("store.summary.checking_more_sources", "Checking more sources...")}
                 </span>
               )}
               {selectedSource.providerName === "HubcapDB" && <HubcapProviderBadges surface="store-details" />}
@@ -619,20 +623,20 @@ export default function StoreGameSummaryPanel({
           <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-(--color-muted)">
-                Selected Source
+                {t("store.summary.selected_source", "Selected Source")}
               </span>
             </div>
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
               {isNone ? (
-                <span>None — no packages found</span>
+                <span>{t("store.summary.none_no_packages", "None — no packages found")}</span>
               ) : isNeedsConfig ? (
-                <span>Configure providers to search for sources</span>
+                <span>{t("store.summary.configure_to_search", "Configure providers to search for sources")}</span>
               ) : needsRetry ? (
-                <span>Check failed — retry below</span>
+                <span>{t("store.summary.check_failed_retry", "Check failed — retry below")}</span>
               ) : canRetry ? (
-                <span>Check sources to find packages</span>
+                <span>{t("store.summary.check_sources_find", "Check sources to find packages")}</span>
               ) : (
-                <span>None</span>
+                <span>{t("store.summary.none", "None")}</span>
               )}
             </div>
           </div>
@@ -642,10 +646,10 @@ export default function StoreGameSummaryPanel({
         {providerCheckState === "auth-required" && providerCheckReason === "missing-api-key" && (
           <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2">
             <p className="text-xs font-medium text-red-300">
-              HubcapDB API key required.
+              {t("store.summary.hubcap_api_key_required", "HubcapDB API key required.")}
             </p>
             <p className="mt-1 text-xs text-(--color-muted)">
-              Configure your HubcapDB API key in Settings {'>'} Providers.
+              {t("store.summary.configure_hubcap_in_settings", "Configure your HubcapDB API key in Settings > Providers.")}
             </p>
           </div>
         )}
@@ -653,7 +657,7 @@ export default function StoreGameSummaryPanel({
         {providerCheckState === "auth-required" && providerCheckReason === "unauthorized" && (
           <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2">
             <p className="text-xs font-medium text-red-300">
-              HubcapDB rejected the request. Check your API key.
+              {t("store.summary.hubcap_rejected", "HubcapDB rejected the request. Check your API key.")}
             </p>
           </div>
         )}
@@ -661,7 +665,7 @@ export default function StoreGameSummaryPanel({
         {providerCheckState === "auth-required" && providerCheckReason === "forbidden" && (
           <div className="mb-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-3 py-2">
             <p className="text-xs font-medium text-orange-300">
-              Your HubcapDB account does not have access to this package.
+              {t("store.summary.hubcap_no_access", "Your HubcapDB account does not have access to this package.")}
             </p>
           </div>
         )}
@@ -669,7 +673,7 @@ export default function StoreGameSummaryPanel({
         {providerCheckState === "rate-limited" && (
           <div className="mb-3 rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-3 py-2">
             <p className="text-xs font-medium text-yellow-300">
-              HubcapDB rate limit reached. Try again later.
+              {t("store.summary.hubcap_rate_limited", "HubcapDB rate limit reached. Try again later.")}
             </p>
           </div>
         )}
@@ -695,12 +699,12 @@ export default function StoreGameSummaryPanel({
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isChecking
-              ? "Checking sources..."
+              ? t("store.summary.checking_sources", "Checking sources...")
               : isReady
-                ? "Change Source"
+                ? t("store.summary.change_source", "Change Source")
                 : isNeedsConfig
-                  ? "Configure providers — Check below"
-                  : "Sources: None — Check below"}
+                  ? t("store.summary.configure_check_below", "Configure providers — Check below")
+                  : t("store.summary.sources_none_check", "Sources: None — Check below")}
           </button>
 
           {/* Check again / Retry / Checking... */}
@@ -712,7 +716,7 @@ export default function StoreGameSummaryPanel({
               className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              Check again
+              {t("store.summary.check_again", "Check again")}
             </button>
           )}
           {isProviderChecking && isInstalled && (
@@ -722,7 +726,7 @@ export default function StoreGameSummaryPanel({
               className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-muted) opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-              Checking...
+              {t("store.summary.checking", "Checking...")}
             </button>
           )}
 
@@ -735,7 +739,7 @@ export default function StoreGameSummaryPanel({
               }}
               className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-4 py-2 text-sm font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
             >
-              {isNeedsConfig ? "Configure & Check" : needsRetry || isNone ? "Retry Sources" : "Check sources"}
+              {isNeedsConfig ? t("store.summary.configure_check", "Configure & Check") : needsRetry || isNone ? t("store.summary.retry_sources", "Retry Sources") : t("store.summary.check_sources", "Check sources")}
             </button>
           )}
 
@@ -768,55 +772,55 @@ export default function StoreGameSummaryPanel({
       </h3>
 
         <div className="mt-3 space-y-2">
-          <SummaryLine label="AppID" value={game.appId} />
+          <SummaryLine label={t("store.summary.app_id", "AppID")} value={game.appId} />
           <SummaryLine
-            label="Status"
+            label={t("store.summary.status", "Status")}
             value={
               repackActive
                 ? repackInstalled
-                  ? "Installed"
-                  : "Not installed"
+                  ? t("store.summary.installed_badge", "Installed")
+                  : t("store.summary.not_installed", "Not installed")
                 : summaryBadges.length > 0
                   ? summaryBadges.map((b) => b.label).join(" + ")
                   : inLibrary
-                    ? "In Library"
+                    ? t("store.summary.in_library", "In Library")
                     : steamOwned
-                      ? "Owned"
-                      : "Not in Library"
+                      ? t("store.summary.owned", "Owned")
+                      : t("store.summary.not_in_library", "Not in Library")
             }
           />
           <SummaryLine
-            label="Sources"
+            label={t("store.summary.sources", "Sources")}
             value={
               repackActive
                 ? repackSourceLabels.length > 0
                   ? repackSourceLabels.join(" · ")
-                  : "Sin repacks"
+                  : t("store.summary.sin_repacks", "Sin repacks")
                 : steamOwned
-                  ? "Steam account"
+                  ? t("store.summary.steam_account", "Steam account")
                   : isNonInstalledLua
-                    ? "In library (Lua)"
+                    ? t("store.summary.in_library_lua", "In library (Lua)")
                     : isChecking
-                      ? "Checking..."
+                      ? t("store.summary.checking_ellipsis", "Checking...")
                       : isBackgroundChecking
-                        ? `${availableSources}/${totalSources} · scanning...`
+                        ? `${availableSources}/${totalSources} · ${t("store.summary.scanning", "scanning...")}`
                         : isReady
-                          ? `${availableSources}/${totalSources} available`
+                          ? t("store.summary.available", "{{available}}/{{total}} available", { available: availableSources, total: totalSources })
                           : isNeedsConfig
-                            ? "Configure providers"
+                            ? t("store.summary.configure_providers_label", "Configure providers")
                             : isNone
-                              ? "None found"
+                              ? t("store.summary.none_found", "None found")
                               : needsRetry
-                                ? "Check failed"
+                                ? t("store.summary.check_failed", "Check failed")
                                 : canRetry
-                                  ? "Check pending"
-                                  : "None"
+                                  ? t("store.summary.check_pending", "Check pending")
+                                  : t("store.summary.none", "None")
             }
           />
-          <SummaryLine label="Developer" value={developer} />
+          <SummaryLine label={t("store.summary.developer", "Developer")} value={developer} />
           {platforms.length > 0 && (
             <SummaryLine
-              label="Platforms"
+              label={t("store.summary.platforms", "Platforms")}
               value={platforms.join(", ")}
             />
           )}

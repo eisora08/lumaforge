@@ -131,3 +131,19 @@ export const INTEGRATION_DISPLAY_DESCRIPTIONS: Record<IntegrationId, string> = {
   lua: "Lua packages and scripts from the Steam Workshop ecosystem",
   debrid: "Debrid/Hydra streaming games from the repack catalog",
 };
+
+export const INTEGRATION_NAME_KEYS: Record<IntegrationId, string> = {
+  steam: "integrations_section.name_steam",
+  epic: "integrations_section.name_epic",
+  manual: "integrations_section.name_manual",
+  lua: "integrations_section.name_lua",
+  debrid: "integrations_section.name_debrid",
+};
+
+export const INTEGRATION_DESCRIPTION_KEYS: Record<IntegrationId, string> = {
+  steam: "integrations_section.desc_steam",
+  epic: "integrations_section.desc_epic",
+  manual: "integrations_section.desc_manual",
+  lua: "integrations_section.desc_lua",
+  debrid: "integrations_section.desc_debrid",
+};

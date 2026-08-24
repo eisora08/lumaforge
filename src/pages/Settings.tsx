@@ -473,10 +473,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                               : "text-(--color-text)"
                           }`}
                         >
-                          {opt.label}
+                          {t(opt.labelKey, opt.label)}
                         </span>
                         <span className="mt-1 block text-xs leading-relaxed text-(--color-muted)">
-                          {opt.description}
+                          {t(opt.descriptionKey, opt.description)}
                         </span>
                       </button>
                     ))}

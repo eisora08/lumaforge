@@ -29,7 +29,7 @@ type TopBarProps = {
   activePage: AppPage;
   onNavigate?: (page: AppPage, fromHistory?: boolean) => void;
   // Store tabs — only rendered when activePage === "store"
-  storeTabs?: { id: StoreTabId; label: string }[];
+  storeTabs?: { id: StoreTabId; label: string; labelKey?: string }[];
   activeStoreTab?: StoreTabId;
   onStoreTabChange?: (tab: StoreTabId) => void;
 };
@@ -339,7 +339,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
                   : "font-medium text-(--color-muted) hover:text-(--color-text)"
               }`}
             >
-              {tab.label}
+              {tab.labelKey ? t(tab.labelKey, tab.label) : tab.label}
               {activeStoreTab === tab.id && (
                 <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
               )}

@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Crosshair, Users } from "lucide-react";
 import { scanSteamLoginUsers } from "../../services/tauri";
 import type { SteamLoginUser } from "../../types/steamLoginUser";
@@ -10,6 +11,7 @@ type Props = {
 };
 
 export default function SteamAccountDetector({ steamRoot, currentSteamId64, onSelect }: Props) {
+  const { t } = useTranslation();
   const [accounts, setAccounts] = useState<SteamLoginUser[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +40,7 @@ export default function SteamAccountDetector({ steamRoot, currentSteamId64, onSe
     <div className="mt-4 space-y-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-3">
       <div className="flex items-center gap-2 text-xs text-(--color-accent)">
         <Users className="h-3.5 w-3.5" />
-        Tracked Steam Accounts
+        {t("settings.steam.tracked_accounts", "Tracked Steam Accounts")}
       </div>
 
       <button
@@ -48,7 +50,7 @@ export default function SteamAccountDetector({ steamRoot, currentSteamId64, onSe
         className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:opacity-50"
       >
         <Crosshair className="h-3.5 w-3.5" />
-        {loading ? "Scanning..." : "Detect Steam accounts"}
+        {loading ? t("settings.steam.scanning", "Scanning...") : t("settings.steam.detect_accounts", "Detect Steam accounts")}
       </button>
 
       {error && (
@@ -73,7 +75,7 @@ export default function SteamAccountDetector({ steamRoot, currentSteamId64, onSe
                 <span className="ml-2 text-(--color-muted)">({acc.steamId})</span>
               </span>
               {currentSteamId64 === acc.steamId && (
-                <span className="text-[9px] text-(--color-accent)">Active</span>
+                <span className="text-[9px] text-(--color-accent)">{t("settings.steam.active", "Active")}</span>
               )}
             </button>
           ))}

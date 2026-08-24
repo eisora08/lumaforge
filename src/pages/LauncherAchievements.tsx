@@ -61,48 +61,48 @@ const RARITY_ACCENT_BAR: Record<AchievementRarity, string> = {
 
 type ProgressInfo = { current: number; target: number; label: string } | null;
 
-function getAchievementProgress(id: string, ctx: EvaluationContextInput): ProgressInfo {
+function getAchievementProgress(id: string, ctx: EvaluationContextInput, t: (key: string, fallback: string) => string): ProgressInfo {
   switch (id) {
     // Library
-    case "starter-collection":  return { current: ctx.librarySize, target: 10, label: "Games in library" };
-    case "collector":           return { current: ctx.librarySize, target: 50, label: "Games in library" };
-    case "hoarder":             return { current: ctx.librarySize, target: 200, label: "Games in library" };
-    case "archivist":           return { current: ctx.librarySize, target: 500, label: "Games in library" };
+    case "starter-collection":  return { current: ctx.librarySize, target: 10, label: t("launcher_achievements.progress.games_in_library", "Games in library") };
+    case "collector":           return { current: ctx.librarySize, target: 50, label: t("launcher_achievements.progress.games_in_library", "Games in library") };
+    case "hoarder":             return { current: ctx.librarySize, target: 200, label: t("launcher_achievements.progress.games_in_library", "Games in library") };
+    case "archivist":           return { current: ctx.librarySize, target: 500, label: t("launcher_achievements.progress.games_in_library", "Games in library") };
     // Play
-    case "first-launch":        return { current: ctx.totalSessions, target: 1, label: "Play sessions" };
-    case "marathon-runner":     return { current: ctx.marathonSessions, target: 5, label: "Marathon sessions (4h+)" };
-    case "session-master":      return { current: ctx.totalSessions, target: 500, label: "Play sessions" };
-    case "night-owl":           return { current: ctx.nightOwlSessions, target: 10, label: "Sessions after midnight" };
-    case "early-bird":          return { current: ctx.earlyBirdSessions, target: 10, label: "Sessions before 7 AM" };
+    case "first-launch":        return { current: ctx.totalSessions, target: 1, label: t("launcher_achievements.progress.play_sessions", "Play sessions") };
+    case "marathon-runner":     return { current: ctx.marathonSessions, target: 5, label: t("launcher_achievements.progress.marathon_sessions", "Marathon sessions (4h+)") };
+    case "session-master":      return { current: ctx.totalSessions, target: 500, label: t("launcher_achievements.progress.play_sessions", "Play sessions") };
+    case "night-owl":           return { current: ctx.nightOwlSessions, target: 10, label: t("launcher_achievements.progress.sessions_after_midnight", "Sessions after midnight") };
+    case "early-bird":          return { current: ctx.earlyBirdSessions, target: 10, label: t("launcher_achievements.progress.sessions_before_7am", "Sessions before 7 AM") };
     // Completion
-    case "finisher":            return { current: ctx.completedGames, target: 1, label: "Games completed" };
-    case "closer":              return { current: ctx.completedGames, target: 5, label: "Games completed" };
-    case "backlog-slayer":      return { current: ctx.completedGames, target: 10, label: "Games completed" };
-    case "completionist":       return { current: ctx.completedGames, target: 25, label: "Games completed" };
+    case "finisher":            return { current: ctx.completedGames, target: 1, label: t("launcher_achievements.progress.games_completed", "Games completed") };
+    case "closer":              return { current: ctx.completedGames, target: 5, label: t("launcher_achievements.progress.games_completed", "Games completed") };
+    case "backlog-slayer":      return { current: ctx.completedGames, target: 10, label: t("launcher_achievements.progress.games_completed", "Games completed") };
+    case "completionist":       return { current: ctx.completedGames, target: 25, label: t("launcher_achievements.progress.games_completed", "Games completed") };
     // Streak
-    case "week-warrior":        return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 7, label: "Day play streak" };
-    case "fortnight-fighter":   return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 14, label: "Day play streak" };
-    case "monthly-dedication":  return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 30, label: "Day play streak" };
-    case "quarterly-commitment":return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 90, label: "Day play streak" };
-    case "year-of-gaming":      return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 365, label: "Day play streak" };
+    case "week-warrior":        return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 7, label: t("launcher_achievements.progress.day_play_streak", "Day play streak") };
+    case "fortnight-fighter":   return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 14, label: t("launcher_achievements.progress.day_play_streak", "Day play streak") };
+    case "monthly-dedication":  return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 30, label: t("launcher_achievements.progress.day_play_streak", "Day play streak") };
+    case "quarterly-commitment":return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 90, label: t("launcher_achievements.progress.day_play_streak", "Day play streak") };
+    case "year-of-gaming":      return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 365, label: t("launcher_achievements.progress.day_play_streak", "Day play streak") };
     // Exploration
-    case "genre-hopper":        return { current: ctx.genreCount, target: 5, label: "Genres played" };
-    case "renaissance-gamer":   return { current: ctx.genreCount, target: 10, label: "Genres played" };
-    case "hidden-gem-hunter":   return { current: ctx.gamesPlayed, target: 10, label: "Games played" };
+    case "genre-hopper":        return { current: ctx.genreCount, target: 5, label: t("launcher_achievements.progress.genres_played", "Genres played") };
+    case "renaissance-gamer":   return { current: ctx.genreCount, target: 10, label: t("launcher_achievements.progress.genres_played", "Genres played") };
+    case "hidden-gem-hunter":   return { current: ctx.gamesPlayed, target: 10, label: t("launcher_achievements.progress.games_played", "Games played") };
     // Session
-    case "session-centurion":   return { current: ctx.totalSessions, target: 100, label: "Play sessions" };
-    case "weekend-warrior":     return { current: ctx.weekendStreak, target: 4, label: "Consecutive weekends played" };
+    case "session-centurion":   return { current: ctx.totalSessions, target: 100, label: t("launcher_achievements.progress.play_sessions", "Play sessions") };
+    case "weekend-warrior":     return { current: ctx.weekendStreak, target: 4, label: t("launcher_achievements.progress.consecutive_weekends", "Consecutive weekends played") };
     // Fase 2 — Play
-    case "century-club":        return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 100, label: "Hours played" };
-    case "no-lifer":            return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 500, label: "Hours played" };
+    case "century-club":        return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 100, label: t("launcher_achievements.progress.hours_played", "Hours played") };
+    case "no-lifer":            return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 500, label: t("launcher_achievements.progress.hours_played", "Hours played") };
     // Fase 2 — Streak
-    case "daily-grinder":       return { current: ctx.currentStreak, target: 3, label: "Day play streak" };
+    case "daily-grinder":       return { current: ctx.currentStreak, target: 3, label: t("launcher_achievements.progress.day_play_streak", "Day play streak") };
     // Fase 2 — Exploration
-    case "multi-platform":      return { current: ctx.providerCount, target: 3, label: "Different sources played" };
-    case "lua-enthusiast":      return { current: ctx.luaGames, target: 5, label: "Lua games played" };
+    case "multi-platform":      return { current: ctx.providerCount, target: 3, label: t("launcher_achievements.progress.different_sources", "Different sources played") };
+    case "lua-enthusiast":      return { current: ctx.luaGames, target: 5, label: t("launcher_achievements.progress.lua_games_played", "Lua games played") };
     // Fase 2 — Session
-    case "speedrunner":         return { current: ctx.shortSessions, target: 10, label: "Sessions under 15 min" };
-    case "marathon-master":     return { current: ctx.marathonSessions, target: 20, label: "Marathon sessions (4h+)" };
+    case "speedrunner":         return { current: ctx.shortSessions, target: 10, label: t("launcher_achievements.progress.sessions_under_15min", "Sessions under 15 min") };
+    case "marathon-master":     return { current: ctx.marathonSessions, target: 20, label: t("launcher_achievements.progress.marathon_sessions", "Marathon sessions (4h+)") };
     default: return null;
   }
 }
@@ -208,7 +208,7 @@ export default function LauncherAchievements() {
 
   const selectedProgress = useMemo<ProgressInfo>(() => {
     if (!selectedAch || !evalCtx) return null;
-    return getAchievementProgress(selectedAch.id, evalCtx);
+    return getAchievementProgress(selectedAch.id, evalCtx, t);
   }, [selectedAch, evalCtx]);
 
   return (

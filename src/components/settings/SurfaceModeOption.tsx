@@ -1,4 +1,5 @@
 import { Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { SurfaceModeOption as SurfaceModeOptionType } from "../../types/theme";
 
 type SurfaceModeOptionProps = {
@@ -12,6 +13,7 @@ export default function SurfaceModeOption({
   selected,
   onSelect,
 }: SurfaceModeOptionProps) {
+  const { t } = useTranslation();
   return (
     <button
       onClick={() => onSelect(mode.id)}
@@ -34,7 +36,7 @@ export default function SurfaceModeOption({
       </div>
 
       <p className="text-xs leading-5 text-(--color-muted)">
-        {mode.description}
+        {mode.descriptionKey ? t(mode.descriptionKey, mode.description) : mode.description}
       </p>
     </button>
   );

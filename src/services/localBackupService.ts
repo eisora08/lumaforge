@@ -217,6 +217,21 @@ export const SECTION_DISPLAY_NAMES: Record<BackupSection, string> = {
   uiPreferences: "UI Preferences",
 };
 
+export const SECTION_DISPLAY_NAME_KEYS: Record<BackupSection, string> = {
+  settings: "backup.section_settings",
+  integrations: "backup.section_integrations",
+  favorites: "backup.section_favorites",
+  manualGames: "backup.section_manual_games",
+  playtime: "backup.section_playtime",
+  sessionHistory: "backup.section_session_history",
+  providerOverrides: "backup.section_provider_overrides",
+  profile: "backup.section_profile",
+  steamAchievementInputs: "backup.section_achievement_inputs",
+  customArtwork: "backup.section_custom_artwork",
+  steamLua: "backup.section_steam_lua",
+  uiPreferences: "backup.section_ui_preferences",
+};
+
 export const SECTION_DESCRIPTIONS: Record<BackupSection, string> = {
   settings: "Full app settings (paths, API keys, all fields) — secrets/credentials stripped from export",
   integrations: "Provider enable/disable and surface visibility",
@@ -230,6 +245,21 @@ export const SECTION_DESCRIPTIONS: Record<BackupSection, string> = {
   customArtwork: "Planned — custom artwork files are not included yet",
   steamLua: "Planned — Steam Lua files are not included until a validated file allowlist and safe restore flow are available",
   uiPreferences: "Theme, surface mode, and visual settings only — safe, never touches paths or keys",
+};
+
+export const SECTION_DESCRIPTION_KEYS: Record<BackupSection, string> = {
+  settings: "backup.section_desc_settings",
+  integrations: "backup.section_desc_integrations",
+  favorites: "backup.section_desc_favorites",
+  manualGames: "backup.section_desc_manual_games",
+  playtime: "backup.section_desc_playtime",
+  sessionHistory: "backup.section_desc_session_history",
+  providerOverrides: "backup.section_desc_provider_overrides",
+  profile: "backup.section_desc_profile",
+  steamAchievementInputs: "backup.section_desc_achievement_inputs",
+  customArtwork: "backup.section_desc_custom_artwork",
+  steamLua: "backup.section_desc_steam_lua",
+  uiPreferences: "backup.section_desc_ui_preferences",
 };
 
 export type SectionAuditStatus = "implemented" | "partial" | "placeholder";
@@ -262,6 +292,21 @@ export const SECTION_AUDIT_NOTES: Record<BackupSection, string> = {
   customArtwork: "Planned — reads game-activities, not real artwork files. No usable payload. Not selectable for backup.",
   steamLua: "Partial. Settings accessor wired at boot (Stage 1). Collector reads .lua/.lua.disabled files from disk via Rust with SHA-256 checksums. Export reads content via Rust and writes backup archive. Restore writes via Rust safety backup + checksummed write + Lua re-scan. Verified: settings accessor, collector, export, restore, post-restore re-scan. Missing: full rollback on partial restore failure.",
   uiPreferences: "Exports only visual fields from lumaforge-settings (28 keys) plus lumaforge-theme and lumaforge-surface-mode. Never touches steamRoot, API keys, or providers.",
+};
+
+export const SECTION_AUDIT_NOTE_KEYS: Record<BackupSection, string> = {
+  settings: "backup.audit_settings",
+  integrations: "backup.audit_integrations",
+  favorites: "backup.audit_favorites",
+  manualGames: "backup.audit_manual_games",
+  playtime: "backup.audit_playtime",
+  sessionHistory: "backup.audit_session_history",
+  providerOverrides: "backup.audit_provider_overrides",
+  profile: "backup.audit_profile",
+  steamAchievementInputs: "backup.audit_achievement_inputs",
+  customArtwork: "backup.audit_custom_artwork",
+  steamLua: "backup.audit_steam_lua",
+  uiPreferences: "backup.audit_ui_preferences",
 };
 
 export const SECTION_READY_COUNT = ALL_BACKUP_SECTIONS.filter((s) => SECTION_AUDIT_STATUS[s] === "implemented").length;
@@ -354,6 +399,22 @@ export const BACKUP_PRESETS: BackupPreset[] = [
     sections: [],
   },
 ];
+
+export const BACKUP_PRESET_NAME_KEYS: Record<string, string> = {
+  essentials: "backup.preset_essentials",
+  "game-activity": "backup.preset_game_activity",
+  customization: "backup.preset_customization",
+  full: "backup.preset_full",
+  custom: "backup.preset_custom",
+};
+
+export const BACKUP_PRESET_DESC_KEYS: Record<string, string> = {
+  essentials: "backup.preset_essentials_desc",
+  "game-activity": "backup.preset_game_activity_desc",
+  customization: "backup.preset_customization_desc",
+  full: "backup.preset_full_desc",
+  custom: "backup.preset_custom_desc",
+};
 
 // ── Result types ──
 
@@ -1072,6 +1133,15 @@ export const SECTION_MERGE_POLICIES: Record<string, "merge" | "replace" | "union
   steamLua: "replace",
   steamAchievementInputs: "replace",
   uiPreferences: "field-merge",
+};
+
+export const MERGE_POLICY_LABELS: Record<string, string> = {
+  merge: "backup.policy_merge",
+  replace: "backup.policy_replace",
+  union: "backup.policy_union",
+  dedup: "backup.policy_dedup",
+  custom: "backup.policy_custom",
+  "field-merge": "backup.policy_field_merge",
 };
 
 export function mergeSectionData(

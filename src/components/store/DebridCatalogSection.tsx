@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Package, Download, HardDrive, Star, Tag, Search, Loader2, RefreshCw, Play, Settings2 } from "lucide-react";
 import type { RepackGroupStat, RepackQueryResult } from "../../services/tauri";
 import {
@@ -52,6 +53,7 @@ type DebridCatalogSectionProps = {
 };
 
 export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalogSectionProps) {
+  const { t } = useTranslation();
   const [activeRepacker, setActiveRepacker] = useState<string | null>(null);
   const [games, setGames] = useState<RepackQueryResult[]>([]);
   const [libraryGameIds] = useState(() => {
@@ -99,7 +101,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
         }
       } catch (err) {
         console.error("[DEBRID_CATALOG] Failed to load:", err);
-        showError("Failed to load repack catalog");
+        showError(t("debrid.catalog.failed_load_catalog", "Failed to load repack catalog"));
       } finally {
         setLoading(false);
       }
@@ -160,8 +162,8 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
     return (
       <div className="flex flex-col items-center justify-center py-16 text-(--color-muted)">
         <Package className="mb-4 h-12 w-12 opacity-30" />
-        <p className="text-lg font-medium">Debrid Library Disabled</p>
-        <p className="mt-1 text-sm">Enable Debrid integration in Settings → Integrations.</p>
+        <p className="text-lg font-medium">{t("debrid.catalog.debrid_library_disabled", "Debrid Library Disabled")}</p>
+        <p className="mt-1 text-sm">{t("debrid.catalog.debrid_library_disabled_desc", "Enable Debrid integration in Settings → Integrations.")}</p>
       </div>
     );
   }
@@ -171,9 +173,9 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-(--color-text)">Repack Catalog</h2>
+          <h2 className="text-xl font-bold text-(--color-text)">{t("debrid.catalog.repack_catalog", "Repack Catalog")}</h2>
           <p className="text-sm text-(--color-muted)">
-            Debrid/Hydra repack sources — browse all or filter by repacker
+            {t("debrid.catalog.catalog_desc", "Debrid/Hydra repack sources — browse all or filter by repacker")}
           </p>
         </div>
       </div>
@@ -185,7 +187,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search repacks by title..."
+            placeholder={t("debrid.catalog.search_placeholder", "Search repacks by title...")}
             className="h-10 w-full rounded-xl border border-(--surface-active-border) bg-white/5 pl-10 pr-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-cyan-400"
           />
         </div>
@@ -194,7 +196,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
           className="flex h-10 items-center gap-2 rounded-xl bg-cyan-500/20 px-4 text-sm font-medium text-cyan-400 transition duration-150 hover:bg-cyan-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 active:scale-[0.97]"
         >
           <Search className="h-4 w-4" />
-          Search
+          {t("debrid.catalog.search", "Search")}
         </button>
       </form>
 
@@ -229,11 +231,11 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
       ) : displayGames.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-(--color-muted)">
           <Package className="mb-4 h-12 w-12 opacity-30" />
-          <p className="text-lg font-medium">No repacks found</p>
+          <p className="text-lg font-medium">{t("debrid.catalog.no_repacks_found", "No repacks found")}</p>
           <p className="mt-1 text-sm">
             {searchQuery
-              ? "Try a different search term"
-              : "Nothing in the catalog yet — add Hydra sources or import a repack feed in Settings"}
+              ? t("debrid.catalog.try_different_search", "Try a different search term")
+              : t("debrid.catalog.nothing_in_catalog", "Nothing in the catalog yet — add Hydra sources or import a repack feed in Settings")}
           </p>
         </div>
       ) : (
@@ -265,7 +267,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                Load More
+                {t("debrid.catalog.load_more", "Load More")}
               </button>
             </div>
           )}
@@ -284,6 +286,7 @@ type GameCardProps = {
 };
 
 function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
+  const { t } = useTranslation();
   const [localStatus, setLocalStatus] = useState(() => game.id ? getDebridGameStatus(game.id) : "not-downloaded");
   const [setupLoading, setSetupLoading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -352,7 +355,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
         ? pickDirectDebridUri(game.downloadUris)
         : pickMagnetDebridUri(game.downloadUris);
     if (!uri) {
-      showWarning("No download URI available for this repack.", { title: "Not available" });
+      showWarning(t("debrid.catalog.no_download_uri", "No download URI available for this repack."), { title: t("store.details.not_available", "Not available") });
       return;
     }
 
@@ -371,7 +374,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
       options,
     );
 
-    showSuccess("Download queued. Check the downloads icon in the top bar for progress.");
+    showSuccess(t("debrid.catalog.download_queued", "Download queued. Check the downloads icon in the top bar for progress."));
   }, [game, downloadQueue]);
 
   const handleRunSetup = useCallback(async (e: React.MouseEvent) => {
@@ -380,7 +383,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
 
     const pending = getPendingSetup(game.id);
     if (!pending) {
-      showError("No pending setup found. Try downloading again.");
+      showError(t("debrid.catalog.no_pending_setup", "No pending setup found. Try downloading again."));
       return;
     }
 
@@ -399,11 +402,11 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
         setLocalStatus("ready");
         setShowSuccessModal(true);
       } else {
-        showError(result.message || "Setup failed");
+        showError(result.message || t("debrid.catalog.setup_failed_msg", "Setup failed"));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      showError(`Setup failed: ${msg}`);
+      showError(t("debrid.catalog.setup_failed_error", "Setup failed: {{message}}", { message: msg }));
     } finally {
       setSetupLoading(false);
     }
@@ -486,13 +489,13 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
           {localStatus === "needs-setup" && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400">
               <Settings2 className="h-3 w-3" />
-              Setup needed
+              {t("debrid.catalog.setup_needed", "Setup needed")}
             </span>
           )}
           {inLibrary && (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-400">
               <Star className="h-3 w-3" />
-              In Library
+              {t("debrid.catalog.in_library", "In Library")}
             </span>
           )}
         </div>
@@ -518,13 +521,13 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-cyan-500/20 px-3 py-2 text-xs font-medium text-cyan-400 transition duration-150 hover:bg-cyan-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 active:scale-[0.97]"
             >
               <Download className="h-3.5 w-3.5" />
-              Download
+              {t("debrid.catalog.download", "Download")}
             </button>
           )}
           {localStatus === "downloading" && (
             <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-400">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Downloading...
+              {t("debrid.catalog.downloading", "Downloading...")}
             </div>
           )}
           {localStatus === "needs-setup" && (
@@ -539,7 +542,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
               ) : (
                 <Settings2 className="h-3.5 w-3.5" />
               )}
-              {setupLoading ? "Installing..." : "Run Setup"}
+              {setupLoading ? t("debrid.catalog.installing", "Installing...") : t("debrid.catalog.run_setup", "Run Setup")}
             </button>
           )}
           {localStatus === "ready" && (
@@ -549,7 +552,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-medium text-emerald-400 transition duration-150 hover:bg-emerald-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 active:scale-[0.97]"
             >
               <Play className="h-3.5 w-3.5" />
-              Play
+              {t("debrid.catalog.play", "Play")}
             </button>
           )}
         </div>

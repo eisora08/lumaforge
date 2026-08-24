@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { LayoutDashboard, Columns3, RotateCcw } from "lucide-react";
 import { useSettings } from "../../context/SettingsContext";
 import ToggleOption from "./ToggleOption";
@@ -11,6 +12,7 @@ type LayoutTab = "dashboard" | "library";
 
 interface WidthPreset {
   label: string;
+  labelKey?: string;
   description: string;
   dashboard: {
     dashboardContentWidth: number;
@@ -30,6 +32,7 @@ interface WidthPreset {
 const WIDTH_PRESETS: WidthPreset[] = [
   {
     label: "Compact",
+    labelKey: "settings.layout.preset_compact",
     description: "Dense, more cards visible",
     dashboard: {
       dashboardContentWidth: 1600,
@@ -47,6 +50,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Dense",
+    labelKey: "settings.layout.preset_dense",
     description: "Tight with slight breathing room",
     dashboard: {
       dashboardContentWidth: 1680,
@@ -64,6 +68,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Standard",
+    labelKey: "settings.layout.preset_standard",
     description: "Balanced size and spacing",
     dashboard: {
       dashboardContentWidth: 1760,
@@ -81,6 +86,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Balanced",
+    labelKey: "settings.layout.preset_balanced",
     description: "Comfortable cards, even spacing",
     dashboard: {
       dashboardContentWidth: 1840,
@@ -98,6 +104,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Comfort",
+    labelKey: "settings.layout.preset_comfort",
     description: "Larger cards, more space",
     dashboard: {
       dashboardContentWidth: 1920,
@@ -115,6 +122,7 @@ const WIDTH_PRESETS: WidthPreset[] = [
   },
   {
     label: "Large",
+    labelKey: "settings.layout.preset_large",
     description: "Maximum sizes, spacious",
     dashboard: {
       dashboardContentWidth: 2200,
@@ -133,12 +141,12 @@ const WIDTH_PRESETS: WidthPreset[] = [
 ];
 
 const RADIUS_PRESETS = [
-  { label: "Sharp", value: 4 },
-  { label: "Subtle", value: 8 },
-  { label: "Classic", value: 12 },
-  { label: "Rounded", value: 18 },
-  { label: "Pill", value: 999 },
-] as const;
+  { label: "Sharp", labelKey: "settings.layout.radius_sharp", value: 4 },
+  { label: "Subtle", labelKey: "settings.layout.radius_subtle", value: 8 },
+  { label: "Classic", labelKey: "settings.layout.radius_classic", value: 12 },
+  { label: "Rounded", labelKey: "settings.layout.radius_rounded", value: 18 },
+  { label: "Pill", labelKey: "settings.layout.radius_pill", value: 999 },
+];
 
 const DASHBOARD_DEFAULTS = {
   dashboardContentWidth: 1760,
@@ -276,6 +284,7 @@ function LivePreview({
   widthMode: string;
   artworkMode: string;
 }) {
+  const { t } = useTranslation();
   const SCALE = 0.28;
   const CONTAINER_W = 190;
   const sCardW = Math.min(Math.round(cardW * SCALE), CONTAINER_W);
@@ -289,12 +298,12 @@ function LivePreview({
     tab === "dashboard"
       ? null
       : artworkMode === "landscape"
-        ? "Landscape"
-        : "Poster";
+        ? t("settings.layout.landscape", "Landscape")
+        : t("settings.layout.poster", "Poster");
 
   return (
     <div className="lf-surface rounded-xl border p-4">
-      <SectionLabel>Live Preview</SectionLabel>
+      <SectionLabel>{t("settings.layout.live_preview", "Live Preview")}</SectionLabel>
 
       {/* Preview area — constrained, no overflow */}
       <div
@@ -357,22 +366,22 @@ function LivePreview({
               : "bg-(--color-accent)/10 text-(--color-accent)"
           }`}
         >
-          Labels: {labelsHidden ? "Hidden" : "Visible"}
+          Labels: {labelsHidden ? t("settings.layout.hidden", "Hidden") : t("settings.layout.visible", "Visible")}
         </span>
       </div>
 
       {/* Stats */}
       <div className="mt-3 space-y-1 border-t border-(--surface-active-border) pt-3">
-        <StatRow label="Card" value={`${cardW} × ${cardH}px`} />
+        <StatRow label={t("settings.layout.card", "Card")} value={`${cardW} × ${cardH}px`} />
         {tab === "dashboard" && (
-          <StatRow label="Featured" value={`${featuredW} × ${featuredH}px`} />
+          <StatRow label={t("settings.layout.featured", "Featured")} value={`${featuredW} × ${featuredH}px`} />
         )}
-        <StatRow label="Gap" value={`${gap}px`} />
-        <StatRow label="Radius" value={`${radius}px`} />
-        {modeLabel && <StatRow label="Mode" value={modeLabel} />}
+        <StatRow label={t("settings.layout.gap", "Gap")} value={`${gap}px`} />
+        <StatRow label={t("settings.layout.radius", "Radius")} value={`${radius}px`} />
+        {modeLabel && <StatRow label={t("settings.layout.mode", "Mode")} value={modeLabel} />}
         <StatRow
-          label="Width"
-          value={widthMode === "expanded" ? "Full" : "Contained"}
+          label={t("settings.layout.width", "Width")}
+          value={widthMode === "expanded" ? t("settings.layout.full", "Full") : t("settings.layout.contained", "Contained")}
         />
       </div>
     </div>
@@ -384,6 +393,7 @@ function LivePreview({
 /* ================================================================== */
 
 export default function CardLayoutEditor() {
+  const { t } = useTranslation();
   const { settings, updateSetting } = useSettings();
   const [tab, setTab] = useState<LayoutTab>("dashboard");
 
@@ -472,18 +482,17 @@ export default function CardLayoutEditor() {
         <div>
           <div className="flex items-center gap-2 text-sm font-semibold text-(--color-text)">
             <LayoutDashboard className="h-4 w-4 text-(--color-accent)" />
-            Card Layout
+            {t("settings.layout.card_layout", "Card Layout")}
           </div>
           <p className="mt-0.5 text-[11px] text-(--color-muted)">
-            Tune card size, spacing, artwork style, width mode, radius, and
-            labels.
+            {t("settings.layout.card_layout_desc", "Tune card size, spacing, artwork style, width mode, radius, and labels.")}
           </p>
         </div>
         <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
           {(
             [
-              { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
-              { key: "library", label: "Library", Icon: Columns3 },
+              { key: "dashboard", label: t("settings.layout.dashboard_tab", "Dashboard"), Icon: LayoutDashboard },
+              { key: "library", label: t("settings.layout.library_tab", "Library"), Icon: Columns3 },
             ] as const
           ).map(({ key, label, Icon }) => (
             <button
@@ -509,7 +518,7 @@ export default function CardLayoutEditor() {
 
           {/* ─── Card Size Presets ─────────────────────────── */}
           <div>
-            <SectionLabel>Card Size</SectionLabel>
+            <SectionLabel>{t("settings.layout.card_size", "Card Size")}</SectionLabel>
             <div className="mt-2 grid grid-cols-7 gap-1.5">
               {WIDTH_PRESETS.map((preset, idx) => {
                 const active = detectWidthPreset(tab, settings) === idx;
@@ -525,7 +534,7 @@ export default function CardLayoutEditor() {
                     }`}
                   >
                     <span className="text-[11px] font-semibold">
-                      {preset.label}
+                      {preset.labelKey ? t(preset.labelKey, preset.label) : preset.label}
                     </span>
                   </button>
                 );
@@ -536,9 +545,9 @@ export default function CardLayoutEditor() {
               {isCustom ? (
                 <p className="text-[11px] text-(--color-muted)">
                   <span className="font-medium text-(--color-accent)">
-                    Custom
+                    {t("settings.layout.custom", "Custom")}
                   </span>{" "}
-                  — adjust the sliders below
+                  — {t("settings.layout.adjust_sliders", "adjust the sliders below")}
                 </p>
               ) : (
                 <p className="text-[11px] text-(--color-muted)">
@@ -550,7 +559,7 @@ export default function CardLayoutEditor() {
 
           {/* ─── Width Mode (both targets) ─────────────────── */}
           <div>
-            <SectionLabel>Width Mode</SectionLabel>
+            <SectionLabel>{t("settings.layout.width_mode", "Width Mode")}</SectionLabel>
             <div className="mt-2 flex overflow-hidden rounded-lg border border-(--surface-active-border)">
               <button
                 type="button"
@@ -565,7 +574,7 @@ export default function CardLayoutEditor() {
                     : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                 }`}
               >
-                Contained
+                {t("settings.layout.contained", "Contained")}
               </button>
               <button
                 type="button"
@@ -576,23 +585,23 @@ export default function CardLayoutEditor() {
                     : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                 }`}
               >
-                Expanded
+                {t("settings.layout.expanded", "Expanded")}
               </button>
             </div>
             <p className="mt-1.5 text-[10px] text-(--color-muted)">
               {tab === "dashboard"
                 ? isExpanded
-                  ? "Dashboard fills the full window width."
+                  ? t("settings.layout.dashboard_full_width", "Dashboard fills the full window width.")
                   : `Max width: ${settings.dashboardContentWidth}px`
                 : isExpanded
-                  ? "Library grid uses all available width."
-                  : "Library grid is centered with a max width."}
+                  ? t("settings.layout.library_full_width", "Library grid uses all available width.")
+                  : t("settings.layout.library_centered", "Library grid is centered with a max width.")}
             </p>
           </div>
 
           {/* ─── Corner Radius ─────────────────────────────── */}
           <div>
-            <SectionLabel>Corner Radius</SectionLabel>
+            <SectionLabel>{t("settings.layout.corner_radius", "Corner Radius")}</SectionLabel>
             <div className="mt-2 grid grid-cols-5 gap-1.5">
               {RADIUS_PRESETS.map((preset) => {
                 const active = settings.cardCornerRadius === preset.value;
@@ -622,7 +631,7 @@ export default function CardLayoutEditor() {
                       />
                     </div>
                     <span className="text-[10px] font-semibold">
-                      {preset.label}
+                      {t(preset.labelKey, preset.label)}
                     </span>
                     <span className="block text-[8px] opacity-50">
                       {preset.value}px
@@ -636,15 +645,15 @@ export default function CardLayoutEditor() {
           {/* ─── Toggles ───────────────────────────────────── */}
           <div className="space-y-3">
             <ToggleOption
-              label="Hide card labels"
-              description="Hide the title text displayed below each card."
+              label={t("settings.layout.hide_card_labels", "Hide card labels")}
+              description={t("settings.layout.hide_card_labels_desc", "Hide the title text displayed below each card.")}
               enabled={settings.hideCardLabels}
               onChange={(v) => updateSetting("hideCardLabels", v)}
             />
             {tab === "library" && (
               <ToggleOption
-                label="Landscape artwork"
-                description="Use landscape artwork for library cards instead of portrait posters."
+                label={t("settings.layout.landscape_artwork", "Landscape artwork")}
+                description={t("settings.layout.landscape_artwork_desc", "Use landscape artwork for library cards instead of portrait posters.")}
                 enabled={settings.libraryCardArtworkMode === "landscape"}
                 onChange={(v) =>
                   updateSetting(
@@ -659,11 +668,11 @@ export default function CardLayoutEditor() {
           {/* ─── Custom sliders (hidden unless Custom) ─────── */}
           {isCustom && (
             <div className="space-y-2 rounded-xl border border-dashed border-(--surface-active-border) bg-white/[0.01] p-3">
-              <SectionLabel>Custom Values</SectionLabel>
+              <SectionLabel>{t("settings.layout.custom_values", "Custom Values")}</SectionLabel>
               {tab === "dashboard" ? (
                 <>
                   <Slider
-                    label="Content max width"
+                    label={t("settings.layout.content_max_width", "Content max width")}
                     value={settings.dashboardContentWidth}
                     min={1200}
                     max={2400}
@@ -671,7 +680,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("dashboardContentWidth", v)}
                   />
                   <Slider
-                    label="Featured card size"
+                    label={t("settings.layout.featured_card_size", "Featured card size")}
                     value={settings.dashboardFeaturedCardSize}
                     min={280}
                     max={480}
@@ -681,7 +690,7 @@ export default function CardLayoutEditor() {
                     }
                   />
                   <Slider
-                    label="Standard card size"
+                    label={t("settings.layout.standard_card_size", "Standard card size")}
                     value={settings.dashboardCardSize}
                     min={200}
                     max={400}
@@ -689,7 +698,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("dashboardCardSize", v)}
                   />
                   <Slider
-                    label="Card gap"
+                    label={t("settings.layout.card_gap", "Card gap")}
                     value={settings.dashboardGridGap}
                     min={8}
                     max={48}
@@ -700,7 +709,7 @@ export default function CardLayoutEditor() {
               ) : (
                 <>
                   <Slider
-                    label="Standard card size"
+                    label={t("settings.layout.standard_card_size", "Standard card size")}
                     value={settings.libraryCardSize}
                     min={160}
                     max={280}
@@ -708,7 +717,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("libraryCardSize", v)}
                   />
                   <Slider
-                    label="Card gap"
+                    label={t("settings.layout.card_gap", "Card gap")}
                     value={settings.libraryGridGap}
                     min={16}
                     max={48}
@@ -716,7 +725,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("libraryGridGap", v)}
                   />
                   <Slider
-                    label="Landscape card size"
+                    label={t("settings.layout.landscape_card_size", "Landscape card size")}
                     value={settings.libraryLandscapeCardSize}
                     min={160}
                     max={300}
@@ -726,7 +735,7 @@ export default function CardLayoutEditor() {
                     }
                   />
                   <Slider
-                    label="Landscape grid gap"
+                    label={t("settings.layout.landscape_grid_gap", "Landscape grid gap")}
                     value={settings.libraryLandscapeGap}
                     min={16}
                     max={56}
@@ -734,7 +743,7 @@ export default function CardLayoutEditor() {
                     onChange={(v) => updateSetting("libraryLandscapeGap", v)}
                   />
                   <Slider
-                    label="Filter panel width"
+                    label={t("settings.layout.filter_panel_width", "Filter panel width")}
                     value={settings.libraryFilterPanelWidth}
                     min={240}
                     max={360}
@@ -756,7 +765,9 @@ export default function CardLayoutEditor() {
               className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text)"
             >
               <RotateCcw className="h-3 w-3" />
-              Restore {tab === "dashboard" ? "dashboard" : "library"} defaults
+              {tab === "dashboard"
+                ? t("settings.layout.restore_dashboard_defaults", "Restore dashboard defaults")
+                : t("settings.layout.restore_library_defaults", "Restore library defaults")}
             </button>
           </div>
         </div>

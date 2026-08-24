@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import AsyncImage from "../common/AsyncImage";
 import {
   CheckCircle2,
@@ -35,10 +36,10 @@ function getFileIcon(fileType: PackageSource["fileType"]) {
   return FileText;
 }
 
-function getSourceStatus(source: PackageSource) {
+function getSourceStatus(source: PackageSource, t: (key: string, fallback: string) => string) {
   if (source.available) {
     return {
-      label: "Ready",
+      label: t("store.sourceSelector.ready", "Ready"),
       className: "text-(--color-success)",
       icon: CheckCircle2,
     };
@@ -46,14 +47,14 @@ function getSourceStatus(source: PackageSource) {
 
   if (source.requiresApiKey && !source.hasAuth) {
     return {
-      label: "Needs API key",
+      label: t("store.sourceSelector.needs_api_key", "Needs API key"),
       className: "text-(--color-warning)",
       icon: KeyRound,
     };
   }
 
   return {
-    label: "Unavailable",
+    label: t("store.sourceSelector.unavailable", "Unavailable"),
     className: "text-(--color-destructive)",
     icon: CircleX,
   };
@@ -63,15 +64,17 @@ function SourceRow({
   source,
   isSelected,
   onSelect,
+  t,
 }: {
   source: PackageSource;
   isSelected: boolean;
   onSelect: (sourceKey: string) => void;
+  t: (key: string, fallback: string) => string;
 }) {
   const sourceKey = getSourceKey(source);
 
   const FileIcon = getFileIcon(source.fileType);
-  const status = getSourceStatus(source);
+  const status = getSourceStatus(source, t);
   const StatusIcon = status.icon;
 
   return (
@@ -105,7 +108,7 @@ function SourceRow({
 
             {source.requiresApiKey && !source.hasAuth && (
               <span className="text-(--color-warning)/70">
-                API key required
+                {t("store.sourceSelector.api_key_required", "API key required")}
               </span>
             )}
           </div>
@@ -130,6 +133,8 @@ export default function StoreSourceSelectorModal({
   onDownloadSource,
   onOpenDetails,
 }: StoreSourceSelectorModalProps) {
+  const { t } = useTranslation();
+
   if (!open || !game) return null;
 
   const providerSources = game.sources;
@@ -152,10 +157,10 @@ export default function StoreSourceSelectorModal({
     : null;
 
   function getDownloadLabel() {
-    if (!selectedSourceForDownload) return "Download";
-    if (selectedSourceForDownload.fileType === "lua") return "Download Lua";
-    if (selectedSourceForDownload.fileType === "zip") return "Download Package";
-    return "Download";
+    if (!selectedSourceForDownload) return t("store.sourceSelector.download", "Download");
+    if (selectedSourceForDownload.fileType === "lua") return t("store.sourceSelector.download_lua", "Download Lua");
+    if (selectedSourceForDownload.fileType === "zip") return t("store.sourceSelector.download_package", "Download Package");
+    return t("store.sourceSelector.download", "Download");
   }
 
   return (
@@ -188,7 +193,7 @@ export default function StoreSourceSelectorModal({
               </h2>
 
               <p className="mt-0.5 text-sm text-(--color-muted)">
-                AppID {game.appId}
+                {t("store.sourceSelector.app_id", "AppID")} {game.appId}
               </p>
             </div>
           </div>
@@ -205,12 +210,12 @@ export default function StoreSourceSelectorModal({
         <div className="max-h-[420px] overflow-y-auto border-t border-(--surface-active-border) px-5 py-4 lf-scroll-area">
           {providerSources.length === 0 ? (
             <p className="py-6 text-center text-sm text-(--color-muted)">
-              No sources available for this game.
+              {t("store.sourceSelector.no_sources_available", "No sources available for this game.")}
             </p>
           ) : (
             <div className="space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-(--color-muted)">
-                Providers
+                {t("store.sourceSelector.providers", "Providers")}
               </p>
               {providerSources.map((source) => (
                 <SourceRow
@@ -221,6 +226,7 @@ export default function StoreSourceSelectorModal({
                     setSelectedKey(sourceKey);
                     onSelectSource?.(sourceKey);
                   }}
+                  t={t}
                 />
               ))}
             </div>
@@ -236,7 +242,7 @@ export default function StoreSourceSelectorModal({
             }}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) transition hover:bg-white/10"
           >
-            Details
+            {t("store.sourceSelector.details", "Details")}
           </button>
 
           <button
