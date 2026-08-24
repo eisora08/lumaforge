@@ -9,7 +9,6 @@ import {
   FolderOpen,
   Gamepad2,
   Heart,
-  Clock,
   Loader2,
   Play,
   RefreshCw,
@@ -66,7 +65,6 @@ import type { SyncIndexItem } from "../../types/syncIndex";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
-import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtimeService";
 import GameEditDialog from "./GameEditDialog";
 import ToolsModal from "../tools/ToolsModal";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
@@ -220,10 +218,6 @@ function GameLauncherTileInner({
   );
 
   const developer = game.metadata?.developer || game.metadata?.publishers?.[0];
-  const playtimeEntry = getPlaytimeEntryByAppId(game.appId);
-  const playtimeText = playtimeEntry && playtimeEntry.totalPlaytimeSeconds > 0
-    ? formatPlaytime(playtimeEntry.totalPlaytimeSeconds)
-    : null;
 
   // Source trace log â€” emitted once per instance per game
   const DEBUG_NAME_SOURCE_TRACE = false;
@@ -540,7 +534,7 @@ function GameLauncherTileInner({
           </Tooltip>
         </div>
 
-        {/* Hover overlay — full info */}
+        {/* Hover overlay — developer + genre only (detailed info in GameHoverPreview) */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none">
           <div className="absolute bottom-0 left-0 right-0 p-2.5">
             <h3 className="lf-card-title line-clamp-1 text-[13px] font-semibold text-white">{displayTitle}</h3>
@@ -554,45 +548,13 @@ function GameLauncherTileInner({
                 </span>
               ))}
             </div>
-            <div className="mt-1 flex items-center gap-2">
-              {playtimeText && (
-                <span className="flex items-center gap-1 text-[10px] text-white/50">
-                  <Clock className="h-2.5 w-2.5" />
-                  {playtimeText}
-                </span>
-              )}
-              {(() => {
-                const srcBadge = game.hasLua
-                  ? { label: "LUA", cls: "bg-emerald-500/30 text-emerald-300" }
-                  : game.source === "epic"
-                    ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300" }
-                    : game.source === "debrid"
-                      ? { label: "DEBRID", cls: "bg-cyan-500/30 text-cyan-300" }
-                      : game.source === "manual"
-                        ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
-                        : game.source === "steam"
-                          ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
-                          : null;
-                if (!srcBadge) return null;
-                return (
-                  <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
-                    {srcBadge.label}
-                  </span>
-                );
-              })()}
-            </div>
           </div>
         </div>
 
-        {/* Top badges — always visible */}
+        {/* Update badge — always visible (important notification) */}
         {luaUpdateStatus === "update-available" && game.steamInstalled && (
           <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-black">
             {t("game_tile.update", "Update")}
-          </span>
-        )}
-        {game.source === "debrid" && game.repacker && (
-          <span className="absolute right-2 top-2 rounded-full bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-cyan-400 ring-1 ring-cyan-500/30">
-            {game.repacker.toUpperCase()}
           </span>
         )}
       </div>

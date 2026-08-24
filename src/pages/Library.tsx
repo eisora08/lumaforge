@@ -850,7 +850,7 @@ export default function LibraryPage({ onNavigate }: Props) {
         filterPopupOpen && popupPos ? (
           <div className="fixed inset-0 z-40" onClick={() => setFilterPopupOpen(false)}>
             <div
-              className="absolute z-50 w-64 rounded-2xl border border-(--surface-active-border) bg-(--surface-base) p-4 shadow-2xl shadow-black/40"
+              className="absolute z-50 w-64 rounded-2xl border border-(--surface-active-border) lf-surface p-4 shadow-2xl shadow-black/40"
               style={{ top: popupPos.top, left: popupPos.left }}
               onClick={(e) => e.stopPropagation()}
             >

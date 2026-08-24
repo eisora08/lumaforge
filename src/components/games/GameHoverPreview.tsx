@@ -222,6 +222,45 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
               {[game.metadata.developer, game.metadata.publishers?.[0]].filter(Boolean).join(" · ")}
             </p>
           )}
+
+          {/* Genre pills */}
+          {game.metadata?.genres && game.metadata.genres.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {game.metadata.genres.slice(0, 3).map((genre) => (
+                <span key={genre} className="rounded bg-white/15 px-1.5 py-0.5 text-[9px] text-white/70">
+                  {genre}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Source + repacker badges */}
+          <div className="mt-1.5 flex items-center gap-1.5">
+            {(() => {
+              const srcBadge = game.hasLua
+                ? { label: "LUA", cls: "bg-emerald-500/30 text-emerald-300" }
+                : game.source === "epic"
+                  ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300" }
+                  : game.source === "debrid"
+                    ? { label: "DEBRID", cls: "bg-cyan-500/30 text-cyan-300" }
+                    : game.source === "manual"
+                      ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
+                      : game.source === "steam"
+                        ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
+                        : null;
+              if (!srcBadge) return null;
+              return (
+                <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
+                  {srcBadge.label}
+                </span>
+              );
+            })()}
+            {game.repacker && (
+              <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-cyan-300">
+                {game.repacker}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
