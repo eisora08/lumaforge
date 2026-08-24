@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   FolderSearch,
   Gamepad2,
@@ -28,6 +29,7 @@ const DEBUG_LUA_DELETE = false;
 
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
+  const { t } = useTranslation();
   const { games, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
   const { settings } = useSettings();
   const session = useGameSession();
@@ -168,12 +170,12 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
                   <Gamepad2 className="h-3.5 w-3.5" />
-                  Games
+                  {t("library_page.title", "Games")}
                 </div>
-                <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Juegos</h1>
+                <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">{t("library_page.title", "Juegos")}</h1>
                 <p className="mt-1 text-sm text-(--color-muted)">
                   {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
-                  {loading && !initialLoading && " · scanning..."}
+                  {loading && !initialLoading && ` · ${t("library_page.scanning", "scanning...")}`}
                 </p>
               </div>
 
@@ -183,10 +185,10 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                   onClick={() => refresh()}
                   disabled={loading}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Scan"
+                  title={t("library_page.scan", "Scan")}
                 >
                   <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                  <span className="hidden sm:inline">{loading ? "Scanning..." : "Scan"}</span>
+                  <span className="hidden sm:inline">{loading ? t("library_page.scanning", "Scanning...") : t("library_page.scan", "Scan")}</span>
                 </button>
 
                 <button
@@ -197,10 +199,10 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                       ? "border-(--color-accent)/30 bg-(--color-accent)/10 text-(--color-accent)"
                       : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
                   }`}
-                  title="Filters"
+                  title={t("library_page.filters", "Filters")}
                 >
                   <SlidersHorizontal className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Filters</span>
+                  <span className="hidden sm:inline">{t("library_page.filters", "Filters")}</span>
                 </button>
               </div>
             </div>
@@ -231,8 +233,8 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
             ) : filteredGames.length === 0 ? (
               <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
                 <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
-                <h2 className="mt-4 font-semibold text-(--color-text)">No games match</h2>
-                <p className="mt-1.5 text-sm text-(--color-muted)">Try adjusting your filter or scan for games.</p>
+                <h2 className="mt-4 font-semibold text-(--color-text)">{t("library_page.no_results_title", "No games match")}</h2>
+                <p className="mt-1.5 text-sm text-(--color-muted)">{t("library_page.no_results_desc", "Try adjusting your filter or scan for games.")}</p>
               </div>
             ) : (
               <div className={
@@ -258,10 +260,10 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
         {showFilters && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowFilters(false)}>
             <div className="w-80 rounded-2xl border border-(--surface-active-border) bg-(--color-bg) p-5" onClick={(e) => e.stopPropagation()}>
-              <h3 className="mb-4 text-sm font-bold text-(--color-text)">Filters</h3>
+              <h3 className="mb-4 text-sm font-bold text-(--color-text)">{t("library_page.filters", "Filters")}</h3>
               <div className="space-y-3">
                 <div>
-                  <p className="mb-1.5 text-xs text-(--color-muted)">Source</p>
+                  <p className="mb-1.5 text-xs text-(--color-muted)">{t("library_page.source", "Source")}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {filters.filter((f) => f.count > 0).map((f) => (
                       <button
@@ -285,7 +287,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                 onClick={() => { setFilter("all"); setShowFilters(false); }}
                 className="mt-4 w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/10"
               >
-                Reset
+                {t("library_page.reset_filters", "Reset")}
               </button>
             </div>
           </div>

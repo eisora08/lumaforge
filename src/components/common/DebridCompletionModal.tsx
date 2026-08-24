@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import PackageInstallSuccessModal from "./PackageInstallSuccessModal";
 import {
   getPendingCompletion,
@@ -15,6 +16,7 @@ type Props = {
 };
 
 export default function DebridCompletionModal({ onNavigateToLibrary }: Props) {
+  const { t } = useTranslation();
   const [completion, setCompletion] = useState(() => getPendingCompletion());
   const completionRef = useRef(completion);
   completionRef.current = completion;
@@ -40,14 +42,14 @@ export default function DebridCompletionModal({ onNavigateToLibrary }: Props) {
       // Show native file picker for the game executable
       try {
         const selected = await open({
-          title: "Select game executable",
+          title: t("debrid.select_exe"),
           filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
           defaultPath: "C:\\",
           multiple: false,
         });
         if (selected) {
           updateDebridGame(info.providerGameId, info.installDir, selected);
-          showSuccess("Game executable set. Ready to play!");
+          showSuccess(t("debrid.exe_set"));
           onNavigateToLibrary?.(info.appId ?? info.providerGameId);
         } else {
           // User cancelled — re-show modal
@@ -55,7 +57,7 @@ export default function DebridCompletionModal({ onNavigateToLibrary }: Props) {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        showError(`File picker failed: ${msg}`);
+        showError(t("debrid.file_picker_failed", { error: msg }));
         setCompletion(info);
       }
       return;
@@ -71,11 +73,11 @@ export default function DebridCompletionModal({ onNavigateToLibrary }: Props) {
         updateDebridGame(info.providerGameId, info.installDir, result.executablePath ?? undefined);
         onNavigateToLibrary?.(info.appId ?? info.providerGameId);
       } else {
-        showError(result.message || "Setup failed");
+        showError(result.message || t("debrid.setup_failed"));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      showError(`Setup failed: ${msg}`);
+      showError(t("debrid.setup_failed") + `: ${msg}`);
     }
   }, [onNavigateToLibrary]);
 
@@ -94,7 +96,7 @@ export default function DebridCompletionModal({ onNavigateToLibrary }: Props) {
         jobId={`debrid-completion-${completion.providerGameId}`}
         imageUrl={completion.imageUrl}
         providerName={completion.repacker ?? "Debrid"}
-        primaryButtonLabel={completion.needsExePath ? "Select Executable" : "Install Now"}
+        primaryButtonLabel={completion.needsExePath ? t("debrid.select_executable") : t("debrid.install_now")}
         onViewInLibrary={handleInstallNow}
         onContinueBrowsing={handleContinueBrowsing}
       />

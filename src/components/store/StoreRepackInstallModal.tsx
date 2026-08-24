@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import {
   Box,
   Download,
@@ -53,6 +54,7 @@ export default function StoreRepackInstallModal({
   onClose,
   onConfirm,
 }: StoreRepackInstallModalProps) {
+  const { t } = useTranslation();
   const [method, setMethod] = useState<DebridInstallMethod>("direct");
   const [provider, setProvider] = useState<ProviderId | undefined>(
     configuredProviders[0],
@@ -77,20 +79,20 @@ export default function StoreRepackInstallModal({
     if (directUri) {
       options.push({
         method: "direct",
-        label: "Descarga directa",
-        description: "HTTP directo (gofile.io, etc.)",
+        label: t("repack_install.direct", "Descarga directa"),
+        description: t("repack_install.direct_desc", "HTTP directo (gofile.io, etc.)"),
       });
     }
     if (magnetUri) {
       options.push({
         method: "debrid",
-        label: "Resolver con Debrid",
-        description: "Resuelve el magnet vía proveedor",
+        label: t("repack_install.debrid", "Resolver con Debrid"),
+        description: t("repack_install.debrid_desc", "Resuelve el magnet vía proveedor"),
       });
       options.push({
         method: "torrent",
-        label: "Descargar vía torrent",
-        description: "Cliente integrado (librqbit)",
+        label: t("repack_install.torrent", "Descargar vía torrent"),
+        description: t("repack_install.torrent_desc", "Cliente integrado (librqbit)"),
       });
     }
     return options;
@@ -140,7 +142,7 @@ export default function StoreRepackInstallModal({
       ? `${resolvedAppDataDir}/games/debrid`
       : undefined;
     const dir = await pickFolder(
-      "Elige la carpeta de destino",
+      t("repack_install.pick_folder", "Elige la carpeta de destino"),
       destDir.trim() || root || undefined,
     );
     if (dir) setDestDir(dir);
@@ -179,7 +181,7 @@ export default function StoreRepackInstallModal({
             </div>
             <div className="min-w-0">
               <h2 className="line-clamp-1 text-lg font-bold text-(--color-text)">
-                Instalar repack
+                {t("repack_install.title", "Instalar repack")}
               </h2>
               <p className="mt-0.5 line-clamp-1 text-sm text-(--color-muted)">
                 {entry.title}
@@ -204,7 +206,7 @@ export default function StoreRepackInstallModal({
           {/* Método de descarga */}
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-(--color-muted)">
-              Método de descarga
+              {t("repack_install.method", "Método de descarga")}
             </p>
             {methodOptions.length > 1 ? (
               <div className="mt-2 space-y-1.5">
@@ -231,7 +233,7 @@ export default function StoreRepackInstallModal({
                           </span>
                           <p className="text-xs text-(--color-muted)">
                             {opt.description}
-                            {disabled ? " · Configura un proveedor en Ajustes" : ""}
+                            {disabled ? ` · ${t("repack_install.configure_provider", "Configura un proveedor en Ajustes")}` : ""}
                           </p>
                         </div>
                         {active && (
@@ -244,7 +246,7 @@ export default function StoreRepackInstallModal({
               </div>
             ) : (
               <p className="mt-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2.5 text-sm text-(--color-text)">
-                {methodOptions[0]?.label ?? "Sin enlaces de descarga"}
+                {methodOptions[0]?.label ?? t("repack_install.no_links", "Sin enlaces de descarga")}
               </p>
             )}
           </div>
@@ -253,7 +255,7 @@ export default function StoreRepackInstallModal({
           {method === "debrid" && (
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-(--color-muted)">
-                Proveedor Debrid
+                {t("repack_install.provider", "Proveedor Debrid")}
               </p>
               <div className="mt-2 grid grid-cols-2 gap-1.5">
                 {configuredProviders.map((p) => {
@@ -280,14 +282,14 @@ export default function StoreRepackInstallModal({
           {/* Ruta de destino */}
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-(--color-muted)">
-              Ruta de destino
+              {t("repack_install.dest", "Ruta de destino")}
             </p>
             <div className="mt-2 flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3">
               <button
                 type="button"
                 onClick={() => void handlePickFolder()}
-                title="Elegir carpeta"
-                aria-label="Elegir carpeta"
+                title={t("repack_install.pick_folder", "Elegir carpeta")}
+                aria-label={t("repack_install.pick_folder", "Elegir carpeta")}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
               >
                 <FolderOpen className="h-4 w-4" />
@@ -301,7 +303,7 @@ export default function StoreRepackInstallModal({
               />
             </div>
             <p className="mt-1 text-[10px] text-(--color-muted)">
-              Ruta donde se descargará el repack (por defecto games/debrid).
+              {t("repack_install.dest_desc", "Ruta donde se descargará el repack (por defecto games/debrid).")}
             </p>
           </div>
 
@@ -316,7 +318,7 @@ export default function StoreRepackInstallModal({
               />
               <span className="flex items-center gap-1.5 text-sm text-(--color-text)">
                 <Box className="h-4 w-4 text-(--color-muted)" />
-                Extraer automáticamente tras la descarga
+                {t("repack_install.auto_extract", "Extraer automáticamente tras la descarga")}
               </span>
             </label>
             <label
@@ -333,7 +335,7 @@ export default function StoreRepackInstallModal({
               />
               <span className="flex items-center gap-1.5 text-sm text-(--color-text)">
                 <Trash2 className="h-4 w-4 text-(--color-muted)" />
-                Eliminar el .rar/.zip tras la extracción exitosa
+                {t("repack_install.delete_archive", "Eliminar el .rar/.zip tras la extracción exitosa")}
               </span>
             </label>
           </div>
@@ -345,7 +347,7 @@ export default function StoreRepackInstallModal({
             onClick={onClose}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) transition hover:bg-white/10"
           >
-            Cancelar
+            {t("repack_install.cancel", "Cancelar")}
           </button>
 
           <button

@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { LucideIcon } from "lucide-react";
 import {
   Upload,
@@ -103,6 +104,7 @@ export default function GameMediaRoleRow({
   onRemove,
   onPreviewError,
 }: GameMediaRoleRowProps) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
@@ -127,19 +129,19 @@ export default function GameMediaRoleRow({
             <span className="text-sm font-medium text-(--color-text)">{label}</span>
             {previewStatus === "set" ? (
               <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                Set
+                {t("game_edit.status_set", "Set")}
               </span>
             ) : previewStatus === "missing" ? (
               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-400">
-                Missing
+                {t("game_edit.status_missing", "Missing")}
               </span>
             ) : previewStatus === "loading" ? (
               <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-medium text-blue-400">
-                Checking…
+                {t("game_edit.status_checking", "Checking…")}
               </span>
             ) : (
               <span className="rounded-full bg-zinc-500/15 px-2 py-0.5 text-[10px] font-medium text-zinc-400">
-                Unset
+                {t("game_edit.status_unset", "Unset")}
               </span>
             )}
           </div>
@@ -173,7 +175,7 @@ export default function GameMediaRoleRow({
           className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
         >
           <Upload className="h-3.5 w-3.5" />
-          Choose File
+          {t("game_edit.choose_file", "Choose File")}
         </button>
         <button
           type="button"
@@ -182,7 +184,7 @@ export default function GameMediaRoleRow({
           className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
         >
           <Link className="h-3.5 w-3.5" />
-          Set URL
+          {t("game_edit.set_url", "Set URL")}
         </button>
         <div className="relative">
           <button
@@ -192,12 +194,12 @@ export default function GameMediaRoleRow({
             className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
           >
             <ChevronDown className="h-3.5 w-3.5" />
-            {isBrowsing ? "Fetching..." : "Browse"}
+            {isBrowsing ? t("game_edit.fetching", "Fetching...") : t("game_edit.browse", "Browse")}
           </button>
           {browseOpen && (
             <div className="absolute left-0 top-full z-10 mt-1 w-52 rounded-xl border border-(--color-border) bg-(--color-bg) py-1 shadow-xl">
               <SourceOption
-                label="Current Local"
+                label={t("game_edit.source_local", "Current Local")}
                 icon={FolderOpen}
                 disabled={!currentPath}
                 onClick={() => onSourcePick("local")}
@@ -207,17 +209,17 @@ export default function GameMediaRoleRow({
                 icon={Image}
                 disabled={!sourceAvailability.sgdb}
                 hint={!sourceAvailability.sgdb
-                  ? "API key not configured"
+                  ? t("game_edit.api_key_not_configured", "API key not configured")
                   : isManual && !sourceAvailability.steam
-                    ? "Search by game name"
+                    ? t("game_edit.search_by_name", "Search by game name")
                     : undefined}
                 onClick={() => onSourcePick("sgdb")}
               />
               <SourceOption
-                label="Steam Official Assets"
+                label={t("game_edit.source_steam", "Steam Official Assets")}
                 icon={Globe}
                 disabled={!sourceAvailability.steam}
-                hint={!sourceAvailability.steam ? (isManual ? "Link a Steam App ID first" : "No metadata") : undefined}
+                hint={!sourceAvailability.steam ? (isManual ? t("game_edit.link_steam_appid_first", "Link a Steam App ID first") : t("game_edit.no_metadata", "No metadata")) : undefined}
                 onClick={() => onSourcePick("steam")}
               />
               {sourceAvailability.igdb && (
@@ -236,7 +238,7 @@ export default function GameMediaRoleRow({
               )}
               <div className="my-1 border-t border-(--color-border)" />
               <SourceOption
-                label="Web Search"
+                label={t("game_edit.source_web_search", "Web Search")}
                 icon={SearchIcon}
                 onClick={onOpenWebSearch}
               />
@@ -246,7 +248,7 @@ export default function GameMediaRoleRow({
                 onClick={() => onSourcePick("url")}
               />
               <SourceOption
-                label="Local File"
+                label={t("game_edit.source_local_file", "Local File")}
                 icon={Upload}
                 onClick={() => onSourcePick("file")}
               />
@@ -261,7 +263,7 @@ export default function GameMediaRoleRow({
             className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-400 transition hover:bg-rose-500/20 disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Remove
+            {t("game_edit.remove", "Remove")}
           </button>
         )}
       </div>
@@ -283,7 +285,7 @@ export default function GameMediaRoleRow({
             className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3 py-1.5 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Check className="h-3.5 w-3.5" />
-            Download
+            {t("game_edit.download", "Download")}
           </button>
         </div>
       )}

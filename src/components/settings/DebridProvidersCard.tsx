@@ -1,5 +1,6 @@
 import { Cloud, ExternalLink, RefreshCw, Loader2, CheckCircle2, AlertCircle, Trash2, Plus, List, FileText, Download, Rss } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import type { DebridProviderConfig } from "../../types/settings";
 import { checkProviderStatus } from "../../services/debridProviderService";
 import { getHydraSources, addHydraSource, removeHydraSource, toggleHydraSource, importRepackFeed, fetchAndImportHydraSource, refreshAllHydraSources, getImportedFeeds, removeImportedFeed } from "../../services/hydraSourceService";
@@ -23,6 +24,7 @@ type DebridProvidersCardProps = {
 };
 
 export default function DebridProvidersCard({ config, onChange }: DebridProvidersCardProps) {
+  const { t } = useTranslation();
   const [statuses, setStatuses] = useState<ProviderStatusState>({});
   const [statusMessages, setStatusMessages] = useState<Record<string, string>>({});
   const [hydraSources, setHydraSources] = useState<HydraSourceConfig[]>([]);
@@ -55,7 +57,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
   const handleTestProvider = useCallback(async (providerId: string, apiKey: string) => {
     if (!apiKey.trim()) {
       setStatuses((prev) => ({ ...prev, [providerId]: "error" }));
-      setStatusMessages((prev) => ({ ...prev, [providerId]: "No API key configured" }));
+      setStatusMessages((prev) => ({ ...prev, [providerId]: t("debrid.no_api_key", "No API key configured") }));
       return;
     }
 
@@ -68,13 +70,13 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
       setStatuses((prev) => ({ ...prev, [providerId]: "valid" }));
       setStatusMessages((prev) => ({
         ...prev,
-        [providerId]: `${result.accountName || result.accountEmail || "Connected"} · ${result.premiumUntil ? "Premium" : "OK"}`,
+        [providerId]: `${result.accountName || result.accountEmail || t("debrid.connected", "Connected")} · ${result.premiumUntil ? t("debrid.premium", "Premium") : "OK"}`,
       }));
     } else {
       setStatuses((prev) => ({ ...prev, [providerId]: "invalid" }));
       setStatusMessages((prev) => ({
         ...prev,
-        [providerId]: result.error || "Invalid API key",
+        [providerId]: result.error || t("debrid.invalid_api_key", "Invalid API key"),
       }));
     }
 
@@ -90,13 +92,13 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
     try {
       const name = newSourceName.trim() || newSourceUrl.trim();
       await addHydraSource(name, newSourceUrl.trim());
-      showSuccess("Hydra source added successfully");
+      showSuccess(t("debrid.source_added", "Hydra source added successfully"));
       setNewSourceUrl("");
       setNewSourceName("");
       const sources = await getHydraSources(true);
       setHydraSources(sources);
     } catch (err) {
-      showError(err instanceof Error ? err.message : "Failed to add source");
+      showError(err instanceof Error ? err.message : t("debrid.failed_add_source", "Failed to add source"));
     } finally {
       setAddingSource(false);
     }
@@ -108,10 +110,10 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
       setConfirmingDeleteId(null);
       const sources = await getHydraSources(true);
       setHydraSources(sources);
-      showSuccess("Hydra source removed");
+      showSuccess(t("debrid.source_removed", "Hydra source removed"));
       await refreshDebridGames();
     } catch (err) {
-      showError("Failed to remove source");
+      showError(t("debrid.failed_remove_source", "Failed to remove source"));
     }
   }, []);
 
@@ -121,7 +123,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
       const sources = await getHydraSources(true);
       setHydraSources(sources);
     } catch (err) {
-      showError("Failed to toggle source");
+      showError(t("debrid.failed_toggle_source", "Failed to toggle source"));
     }
   }, []);
 
@@ -130,13 +132,16 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
     try {
       const result = await fetchAndImportHydraSource(source.id, source.url, source.name);
       showSuccess(
-        `Source refreshed: ${result.importedCount} nuevos, ${result.updatedCount} actualizados (${result.totalCount} total)`,
+        t("debrid.source_refreshed", "Source refreshed: {{imported}} new, {{updated}} updated ({{total}} total)")
+          .replace("{{imported}}", String(result.importedCount))
+          .replace("{{updated}}", String(result.updatedCount))
+          .replace("{{total}}", String(result.totalCount)),
       );
       const sources = await getHydraSources(true);
       setHydraSources(sources);
       await refreshDebridGames();
     } catch (err) {
-      showError(err instanceof Error ? err.message : "Failed to refresh source");
+      showError(err instanceof Error ? err.message : t("debrid.failed_refresh_source", "Failed to refresh source"));
       const sources = await getHydraSources(true);
       setHydraSources(sources);
     } finally {
@@ -150,12 +155,17 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
       const results = await refreshAllHydraSources();
       const imported = results.reduce((sum, r) => sum + (r.importedCount || 0), 0);
       const updated = results.reduce((sum, r) => sum + (r.updatedCount || 0), 0);
-      showSuccess(`Refresh all: ${imported} nuevos, ${updated} actualizados (${results.length} fuentes)`);
+      showSuccess(
+        t("debrid.refresh_all_result", "Refresh all: {{imported}} new, {{updated}} updated ({{sources}} sources)")
+          .replace("{{imported}}", String(imported))
+          .replace("{{updated}}", String(updated))
+          .replace("{{sources}}", String(results.length)),
+      );
       const sources = await getHydraSources(true);
       setHydraSources(sources);
       await refreshDebridGames();
     } catch (err) {
-      showError(err instanceof Error ? err.message : "Failed to refresh sources");
+      showError(err instanceof Error ? err.message : t("debrid.failed_refresh_sources", "Failed to refresh sources"));
     } finally {
       setRefreshingAll(false);
     }
@@ -168,13 +178,15 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
     try {
       const result = await importRepackFeed(feedContents.trim());
       showSuccess(
-        `Feed importado: ${result.importedCount} nuevos, ${result.updatedCount} actualizados`,
+        t("debrid.feed_imported", "Feed imported: {{imported}} new, {{updated}} updated")
+          .replace("{{imported}}", String(result.importedCount))
+          .replace("{{updated}}", String(result.updatedCount)),
       );
       setFeedContents("");
       await refreshDebridGames();
       await loadImportedFeeds();
     } catch (err) {
-      showError(err instanceof Error ? err.message : "Failed to import feed");
+      showError(err instanceof Error ? err.message : t("debrid.failed_import_feed", "Failed to import feed"));
     } finally {
       setImportingFeed(false);
     }
@@ -185,11 +197,11 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
       try {
         await removeImportedFeed(name);
         setConfirmingDeleteFeedName(null);
-        showSuccess("Feed importado eliminado");
+        showSuccess(t("debrid.feed_removed", "Imported feed removed"));
         await loadImportedFeeds();
         await refreshDebridGames();
       } catch (err) {
-        showError(err instanceof Error ? err.message : "Failed to remove feed");
+        showError(err instanceof Error ? err.message : t("debrid.failed_remove_feed", "Failed to remove feed"));
       }
     },
     [loadImportedFeeds],
@@ -220,10 +232,10 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
         <div>
           <div className="flex items-center gap-2">
             <Cloud className="h-4 w-4 text-cyan-400" />
-            <h3 className="font-semibold text-(--color-text)">Debrid Providers</h3>
+            <h3 className="font-semibold text-(--color-text)">{t("debrid.providers_title", "Debrid Providers")}</h3>
           </div>
           <p className="mt-1 text-xs leading-5 text-(--color-muted)">
-            API keys for debrid services. Configure at least one to download repacks.
+            {t("debrid.providers_desc", "API keys for debrid services. Configure at least one to download repacks.")}
           </p>
         </div>
       </div>
@@ -241,7 +253,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                 <span className={`text-sm font-medium ${provider.color}`}>{provider.label}</span>
                 {apiKey.trim() && (
                   <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-400">
-                    Configured
+                    {t("debrid.configured", "Configured")}
                   </span>
                 )}
               </div>
@@ -289,7 +301,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                 className="mt-1 inline-flex items-center gap-1 text-[10px] text-(--color-muted) underline transition hover:text-(--color-accent)"
               >
                 <ExternalLink className="h-3 w-3" />
-                Get API key
+                {t("debrid.get_api_key", "Get API key")}
               </button>
             </div>
           );
@@ -301,7 +313,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <List className="h-4 w-4 text-cyan-400" />
-            <h4 className="text-sm font-medium text-(--color-text)">Hydra Sources</h4>
+            <h4 className="text-sm font-medium text-(--color-text)">{t("debrid.hydra_sources", "Hydra Sources")}</h4>
           </div>
           {hydraSources.length > 0 && (
             <button
@@ -309,14 +321,14 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
               onClick={handleRefreshAll}
               disabled={refreshingAll}
               className="flex h-8 items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:opacity-50"
-              title="Fetch new content from all enabled sources"
+              title={t("debrid.refresh_all_title", "Fetch new content from all enabled sources")}
             >
               {refreshingAll ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <RefreshCw className="h-3.5 w-3.5" />
               )}
-              Refresh all
+              {t("debrid.refresh_all", "Refresh all")}
             </button>
           )}
         </div>
@@ -325,7 +337,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
           <input
             value={newSourceName}
             onChange={(e) => setNewSourceName(e.target.value)}
-            placeholder="Source name (optional)"
+            placeholder={t("debrid.source_name_placeholder", "Source name (optional)")}
             className="h-10 w-1/3 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-cyan-400"
           />
           <input
@@ -345,13 +357,13 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
             ) : (
               <Plus className="h-4 w-4" />
             )}
-            Add
+              {t("debrid.add", "Add")}
           </button>
         </div>
 
         {hydraSources.length === 0 ? (
           <p className="text-xs text-(--color-muted)">
-            No Hydra sources configured. Add a URL above to populate the repack catalog.
+            {t("debrid.no_hydra_sources", "No Hydra sources configured. Add a URL above to populate the repack catalog.")}
           </p>
         ) : (
           <div className="space-y-3">
@@ -383,7 +395,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                           <p className="text-sm font-medium text-(--color-text)">{source.name}</p>
                           {!source.enabled && (
                             <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">
-                              Disabled
+                              {t("debrid.source_disabled", "Disabled")}
                             </span>
                           )}
                         </div>
@@ -397,7 +409,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
                       {source.gameCount !== undefined && (
-                        <span className="text-xs text-(--color-muted)">{source.gameCount} games</span>
+                        <span className="text-xs text-(--color-muted)">{t("debrid.source_games", "{{count}} games").replace("{{count}}", String(source.gameCount))}</span>
                       )}
                       {source.lastFetchedAt && (
                         <span className="text-[10px] text-(--color-muted)">
@@ -413,23 +425,23 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                       onClick={() => handleRefreshSource(source)}
                       disabled={isRefreshing}
                       className="flex h-8 items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:opacity-50"
-                      title="Fetch new content from this source"
-                    >
-                      {isRefreshing ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      )}
-                      Actualizar
-                    </button>
-                    {isConfirmingDelete ? (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveSource(source.id)}
-                        className="flex h-8 items-center gap-1.5 rounded-lg bg-red-500/15 px-3 text-xs font-medium text-red-400 transition hover:bg-red-500/25"
-                      >
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        ¿Eliminar?
+              title={t("debrid.fetch_source_title", "Fetch new content from this source")}
+            >
+              {isRefreshing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              {t("debrid.update", "Update")}
+            </button>
+            {isConfirmingDelete ? (
+              <button
+                type="button"
+                onClick={() => handleRemoveSource(source.id)}
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-red-500/15 px-3 text-xs font-medium text-red-400 transition hover:bg-red-500/25"
+              >
+                <AlertCircle className="h-3.5 w-3.5" />
+                {t("debrid.confirm_delete", "¿Eliminar?")}
                       </button>
                     ) : (
                       <button
@@ -453,16 +465,15 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
       <div className="mt-6">
         <div className="mb-1 flex items-center gap-2">
           <Rss className="h-4 w-4 text-cyan-400" />
-          <h4 className="text-sm font-medium text-(--color-text)">Feeds importados</h4>
+          <h4 className="text-sm font-medium text-(--color-text)">{t("debrid.imported_feeds", "Imported feeds")}</h4>
         </div>
         <p className="mb-3 text-xs leading-5 text-(--color-muted)">
-          Feeds pegados con "Importar feed". No tienen URL de refresco; bórralos para
-          quitar sus juegos del catálogo.
+          {t("debrid.imported_feeds_desc", "Feeds pasted via \"Import feed\". They have no refresh URL; delete them to remove their games from the catalog.")}
         </p>
 
         {importedFeeds.length === 0 ? (
           <p className="text-xs text-(--color-muted)">
-            No hay feeds importados. Usa "Importar feed repack" abajo para pegar un feed JSON.
+            {t("debrid.no_imported_feeds", "No imported feeds. Use \"Import repack feed\" below to paste a JSON feed.")}
           </p>
         ) : (
           <div className="space-y-3">
@@ -479,13 +490,13 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                       <p className="text-sm font-medium text-(--color-text)">{feed.name}</p>
                       {feed.lastUpdated && (
                         <p className="text-[10px] text-(--color-muted)">
-                          Actualizado: {new Date(feed.lastUpdated).toLocaleDateString()}
+                          {t("debrid.updated", "Updated:")}: {new Date(feed.lastUpdated).toLocaleDateString()}
                         </p>
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
                       <span className="text-xs text-(--color-muted)">
-                        {feed.gameCount} games
+                        {t("debrid.source_games", "{{count}} games").replace("{{count}}", String(feed.gameCount))}
                       </span>
                     </div>
                   </div>
@@ -498,14 +509,14 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                         className="flex h-8 items-center gap-1.5 rounded-lg bg-red-500/15 px-3 text-xs font-medium text-red-400 transition hover:bg-red-500/25"
                       >
                         <AlertCircle className="h-3.5 w-3.5" />
-                        ¿Eliminar?
+                        {t("debrid.confirm_delete", "¿Eliminar?")}
                       </button>
                     ) : (
                       <button
                         type="button"
                         onClick={() => setConfirmingDeleteFeedName(feed.name)}
                         className="flex h-8 w-8 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-red-500/10 hover:text-red-400"
-                        title="Remove imported feed"
+                        title={t("debrid.remove_source_title", "Remove source")}
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -521,11 +532,10 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
       <div className="mt-6">
         <div className="mb-2 flex items-center gap-2">
           <FileText className="h-4 w-4 text-cyan-400" />
-          <h4 className="text-sm font-medium text-(--color-text)">Importar feed repack</h4>
+          <h4 className="text-sm font-medium text-(--color-text)">{t("debrid.import_repack_feed", "Import repack feed")}</h4>
         </div>
         <p className="mb-2 text-xs leading-5 text-(--color-muted)">
-          Pega el JSON scrapeado (fitgirl/steamrip) o un artefacto Hydra. Los enlaces de
-          descarga del feed se conservan intactos para el instalador Debrid.
+          {t("debrid.import_feed_desc", "Paste scraped JSON (fitgirl/steamrip) or a Hydra artifact. Download links in the feed are preserved intact for the Debrid installer.")}
         </p>
         <textarea
           value={feedContents}
@@ -545,7 +555,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
           ) : (
             <Download className="h-4 w-4" />
           )}
-          Importar
+          {t("debrid.import", "Import")}
         </button>
       </div>
 
@@ -556,7 +566,7 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
           onClick={() => openExternalUrl("https://library.hydra.wiki/sources/")}
           className="underline transition hover:text-(--color-accent)"
         >
-          Get Hydra Source
+          {t("debrid.get_hydra_source", "Get Hydra Source")}
         </button>
       </div>
     </div>

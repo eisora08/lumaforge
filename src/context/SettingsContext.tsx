@@ -104,6 +104,8 @@ export const defaultSettings: AppSettings = {
   closeToTray: false,
   showDashboardOnStartup: true,
   disableAutoUpdates: false,
+
+  language: "es",
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);

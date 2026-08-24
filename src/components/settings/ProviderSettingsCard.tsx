@@ -5,6 +5,7 @@ import {
   ShieldCheck,
   ExternalLink,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import {
   ApiProviderDefinition,
@@ -25,6 +26,7 @@ export default function ProviderSettingsCard({
   onChange,
   badgeContent,
 }: ProviderSettingsCardProps) {
+  const { t } = useTranslation();
 
   function updateField<K extends keyof ApiProviderUserSettings>(
     key: K,
@@ -76,7 +78,7 @@ export default function ProviderSettingsCard({
             <Link className="h-4 w-4 text-(--color-muted)" />
 
             <span className="text-sm font-medium text-(--color-text)">
-              Base URL
+              {t("providerSettings.base_url", "Base URL")}
             </span>
           </div>
 
@@ -94,7 +96,7 @@ export default function ProviderSettingsCard({
               <KeyRound className="h-4 w-4 text-(--color-muted)" />
 
               <span className="text-sm font-medium text-(--color-text)">
-                API Key
+                {t("providerSettings.api_key", "API Key")}
               </span>
             </div>
 
@@ -102,7 +104,7 @@ export default function ProviderSettingsCard({
               type="password"
               value={settings.apiKey}
               onChange={(event) => updateField("apiKey", event.target.value)}
-              placeholder="No configurada"
+              placeholder={t("providerSettings.api_key_placeholder", "Not configured")}
               className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
             />
             {provider.apiKeyUrl && (
@@ -112,7 +114,7 @@ export default function ProviderSettingsCard({
                 className="mt-2 inline-flex items-center gap-1.5 text-xs text-(--color-accent) hover:underline"
               >
                 <ExternalLink className="h-3 w-3" />
-                Get API Key
+                {t("providerSettings.get_api_key", "Get API Key")}
               </button>
             )}
           </label>
@@ -123,7 +125,7 @@ export default function ProviderSettingsCard({
             <ShieldCheck className="h-4 w-4 text-(--color-muted)" />
 
             <span className="text-sm font-medium text-(--color-text)">
-              Capacidades
+              {t("providerSettings.capabilities", "Capabilities")}
             </span>
           </div>
 
@@ -141,7 +143,7 @@ export default function ProviderSettingsCard({
 
         <div>
           <p className="mb-2 text-sm font-medium text-(--color-text)">
-            Tipos soportados
+            {t("providerSettings.supported_types", "Supported types")}
           </p>
 
           <div className="flex flex-wrap gap-2">

@@ -1,4 +1,5 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { Search, X, Gamepad2 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
@@ -64,6 +65,7 @@ function sortScored(a: Scored, b: Scored): number {
 export default function ConsoleSearchOverlay({
   open, games, onClose, onSelectGame, inputHints,
 }: Props) {
+  const { t } = useTranslation();
   const hints = useMemo(() => getConsoleInputHints(inputHints), [inputHints]);
   const [query, setQuery] = useState("");
   const [focusIndex, setFocusIndex] = useState(0);
@@ -479,7 +481,7 @@ export default function ConsoleSearchOverlay({
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Start typing to search your library…"
+              placeholder={t("console_settings.search_placeholder", "Start typing to search your library…")}
               className="min-w-0 flex-1 bg-transparent text-lg font-medium text-(--color-text) placeholder:text-(--color-muted)/40 outline-none"
               autoComplete="off"
               spellCheck={false}
@@ -489,7 +491,7 @@ export default function ConsoleSearchOverlay({
                 type="button"
                 onClick={() => setQuery("")}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-(--color-muted)/60 hover:bg-white/[0.14] hover:text-(--color-muted) transition"
-                aria-label="Clear search"
+                aria-label={t("console_settings.clear_search", "Clear search")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -513,22 +515,22 @@ export default function ConsoleSearchOverlay({
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <Search className="h-10 w-10 text-(--color-muted)/20" />
               <p className="text-base text-(--color-muted)/50 font-medium">
-                Start typing to search your library
+                {t("console_settings.search_empty_hint", "Start typing to search your library")}
               </p>
             </div>
           ) : results.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-2">
               <Gamepad2 className="h-10 w-10 text-(--color-muted)/20" />
-              <p className="text-base text-(--color-muted)/60 font-medium">No games found</p>
+              <p className="text-base text-(--color-muted)/60 font-medium">{t("console_settings.no_games_found", "No games found")}</p>
               <p className="text-sm text-(--color-muted)/40">
-                Try a different search term
+                {t("console_settings.search_try_different", "Try a different search term")}
               </p>
               <button
                 type="button"
                 onClick={() => setQuery("")}
                 className="mt-3 rounded-lg bg-(--color-surface)/60 px-4 py-2 text-sm font-medium text-(--color-muted)/70 ring-1 ring-(--color-border)/30 hover:bg-(--color-surface) transition"
               >
-                Clear search
+                {t("console_settings.clear_search", "Clear search")}
               </button>
             </div>
           ) : (
@@ -584,7 +586,7 @@ export default function ConsoleSearchOverlay({
                     <div className="flex shrink-0 gap-1.5">
                       {isInstalled && (
                         <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black">
-                          Installed
+                          {t("settings.installed", "Installed")}
                         </span>
                       )}
                       {isLua && (
@@ -608,7 +610,7 @@ export default function ConsoleSearchOverlay({
                 <HintPill label={hints.navigate} />
                 <HintPill label={hints.select} primary />
                 <HintPill label={hints.delete} />
-                <HintPill label="[Y] Results" />
+                <HintPill label={`[Y] ${t("console_settings.results", "Results")}`} />
                 <HintPill label={hints.back} />
               </>
             ) : (
@@ -616,9 +618,9 @@ export default function ConsoleSearchOverlay({
                 <HintPill label={hints.navigate} />
                 <HintPill label={hints.select} primary />
                 {gamepadDetected && <HintPill label={hints.delete} />}
-                {gamepadDetected && <HintPill label="[Y] Keyboard" />}
+                {gamepadDetected && <HintPill label={`[Y] ${t("console_settings.keyboard", "Keyboard")}`} />}
                 <HintPill label={hints.back} />
-                <HintPill label="[⌨] Type" />
+                <HintPill label={`[⌨] ${t("console_settings.type", "Type")}`} />
               </>
             )}
           </div>

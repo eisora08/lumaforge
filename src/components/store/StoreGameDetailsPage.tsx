@@ -1,4 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { FileArchive, Languages, Package, Puzzle, Star, ShieldAlert } from "lucide-react";
 
 import type { PackageGame, PackageSource, RepackEntry } from "../../types/package";
@@ -216,6 +217,7 @@ export default function StoreGameDetailsPage({
   onSelectSourceKey,
   onRefreshSources,
 }: StoreGameDetailsPageProps) {
+  const { t } = useTranslation();
   const { settings } = useSettings();
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
@@ -1019,8 +1021,8 @@ export default function StoreGameDetailsPage({
     } catch (error) {
       console.error(error);
 
-      showError("No se pudo abrir Steam.", {
-        title: "Error abriendo enlace",
+      showError(t("store.could_not_open_steam", "No se pudo abrir Steam."), {
+        title: t("store.error_opening_link", "Error abriendo enlace"),
       });
     }
   }
@@ -1031,8 +1033,8 @@ export default function StoreGameDetailsPage({
     } catch (error) {
       console.error(error);
 
-      showError("No se pudo abrir SteamDB.", {
-        title: "Error abriendo enlace",
+      showError(t("store.could_not_open_steamdb", "No se pudo abrir SteamDB."), {
+        title: t("store.error_opening_link", "Error abriendo enlace"),
       });
     }
   }
@@ -1043,8 +1045,8 @@ export default function StoreGameDetailsPage({
     } catch (error) {
       console.error(error);
 
-      showError("No se pudo abrir Steam Library.", {
-        title: "Error abriendo enlace",
+      showError(t("store.could_not_open_steam_library", "No se pudo abrir Steam Library."), {
+        title: t("store.error_opening_link", "Error abriendo enlace"),
       });
     }
   }
@@ -1283,30 +1285,30 @@ export default function StoreGameDetailsPage({
             {metadataLoading && (
               <div className="flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-2.5 text-xs text-(--color-muted)">
                 <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-(--color-accent) border-t-transparent" />
-                Loading details from Steam...
+                {t("store.loading_details", "Loading details from Steam...")}
               </div>
             )}
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <InfoBlock
                 icon={Star}
-                label="Review Score"
+                label={t("store.review_score", "Review Score")}
                 value={reviewLabel}
                 description={reviewSubLabel}
               />
 
               <InfoBlock
                 icon={Puzzle}
-                label="DLC Content"
+                label={t("store.dlc_content", "DLC Content")}
                 value={dlcLabel}
-                description="Detected from Steam metadata."
+                description={t("store.detected_from_steam", "Detected from Steam metadata.")}
               />
 
               <InfoBlock
                 icon={Languages}
-                label="Languages"
+                label={t("store.languages", "Languages")}
                 value={languagesLabel}
-                description="Supported languages from Steam metadata."
+                description={t("store.supported_languages", "Supported languages from Steam metadata.")}
               />
             </div>
 
@@ -1315,8 +1317,8 @@ export default function StoreGameDetailsPage({
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs text-amber-300">
                   <ShieldAlert className="h-3.5 w-3.5" />
                   {drmInfo.hasDenuvo
-                    ? "Denuvo Anti-Tamper"
-                    : "3rd-party DRM"}
+                    ? t("store.denuvo", "Denuvo Anti-Tamper")
+                    : t("store.third_party_drm", "3rd-party DRM")}
                 </span>
               </div>
             )}
@@ -1329,7 +1331,7 @@ export default function StoreGameDetailsPage({
             {repackTabVisible && (
               <div
                 role="tablist"
-                aria-label="Vista de detalles"
+                aria-label={t("store.details_view", "Vista de detalles")}
                 className="grid grid-cols-2 gap-1 rounded-xl border border-(--surface-active-border) bg-(--color-surface)/60 p-1 backdrop-blur-sm"
               >
                 <button
@@ -1344,7 +1346,7 @@ export default function StoreGameDetailsPage({
                   }`}
                 >
                   <Package className="h-3.5 w-3.5" />
-                  Package
+                  {t("store.package", "Package")}
                 </button>
                 <button
                   type="button"
@@ -1358,7 +1360,7 @@ export default function StoreGameDetailsPage({
                   }`}
                 >
                   <FileArchive className="h-3.5 w-3.5" />
-                  Repack
+                  {t("store.repack", "Repack")}
                   {repackEntries.length > 0 && (
                     <span className="rounded-full bg-(--color-accent)/20 px-1.5 text-[10px] font-bold leading-4 text-(--color-accent)">
                       {repackEntries.length}

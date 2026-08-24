@@ -5,10 +5,19 @@ import es from "./es.json";
 
 const savedLang = (() => {
   try {
-    return localStorage.getItem("lumaforge-lang");
+    // Try dedicated key first
+    const dedicated = localStorage.getItem("lumaforge-lang");
+    if (dedicated) return dedicated;
+    // Fallback: read from AppSettings
+    const raw = localStorage.getItem("lumaforge-settings");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.language === "es" || parsed.language === "en") return parsed.language;
+    }
   } catch {
-    return null;
+    // ignore
   }
+  return null;
 })();
 
 i18n.use(initReactI18next).init({

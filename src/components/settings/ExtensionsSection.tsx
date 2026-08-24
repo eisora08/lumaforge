@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { CheckCircle, XCircle, AlertTriangle, Eye, EyeOff, Info } from "lucide-react";
 import SettingsSection from "./SettingsSection";
 import {
@@ -21,19 +22,6 @@ import {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-function statusLabel(status: ExtensionRuntimeRecord["status"]): string {
-  switch (status) {
-    case "enabled": return "Enabled";
-    case "available": return "Available";
-    case "disabled": return "Disabled";
-    case "incompatible": return "Incompatible";
-    case "invalid": return "Invalid";
-    case "error": return "Error";
-    case "registered": return "Registered";
-    default: return status;
-  }
-}
 
 function statusColor(status: ExtensionRuntimeRecord["status"]): string {
   switch (status) {
@@ -62,6 +50,7 @@ function statusIcon(status: ExtensionRuntimeRecord["status"]) {
 // =============================================================================
 
 export default function ExtensionsSection() {
+  const { t } = useTranslation();
   const [snap, setSnap] = useState<ExtensionRuntimeSnapshot>(() => snapshot());
 
   useEffect(() => {
@@ -80,22 +69,22 @@ export default function ExtensionsSection() {
 
   return (
     <SettingsSection
-      title="Extensions"
-      description="Manage installed extensions and their active contributions."
+      title={t("extensions.title", "Extensions")}
+      description={t("extensions.desc", "Manage installed extensions and their active contributions.")}
     >
       {/* Overview counts */}
       <div className="mb-5 grid grid-cols-5 gap-3">
-        <StatCard label="Total" value={snap.total} />
-        <StatCard label="Enabled" value={snap.enabledCount} color="text-emerald-400" />
-        <StatCard label="Disabled" value={snap.disabledCount} color="text-zinc-500" />
-        <StatCard label="Incompatible" value={snap.incompatibleCount} color="text-amber-400" />
-        <StatCard label="Invalid" value={snap.invalidCount} color="text-rose-400" />
+        <StatCard label={t("extensions.total", "Total")} value={snap.total} />
+        <StatCard label={t("extensions.enabled", "Enabled")} value={snap.enabledCount} color="text-emerald-400" />
+        <StatCard label={t("extensions.disabled", "Disabled")} value={snap.disabledCount} color="text-zinc-500" />
+        <StatCard label={t("extensions.incompatible", "Incompatible")} value={snap.incompatibleCount} color="text-amber-400" />
+        <StatCard label={t("extensions.invalid", "Invalid")} value={snap.invalidCount} color="text-rose-400" />
       </div>
 
       {/* Extension list */}
       {snap.total === 0 ? (
         <div className="py-8 text-center text-sm text-(--color-muted)">
-          No extensions registered.
+          {t("extensions.no_extensions", "No extensions registered.")}
         </div>
       ) : (
         <div className="space-y-2">
@@ -111,8 +100,7 @@ export default function ExtensionsSection() {
 
       {/* Footer info */}
       <p className="mt-4 text-xs text-(--color-muted)">
-        Extensions are registered declaratively. Enable or disable to control
-        which contributions are active in LumaForge.
+        {t("extensions.footer_desc", "Extensions are registered declaratively. Enable or disable to control which contributions are active in LumaForge.")}
       </p>
     </SettingsSection>
   );
@@ -142,6 +130,7 @@ function ExtensionRow({
   record: ExtensionRuntimeRecord;
   onToggle: (r: ExtensionRuntimeRecord) => void;
 }) {
+  const { t } = useTranslation();
   const canToggle =
     record.validation.valid &&
     record.compatibility.compatible &&
@@ -165,7 +154,7 @@ function ExtensionRow({
           </span>
           {record.builtIn && (
             <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-medium text-sky-400">
-              Built-in
+              {t("extensions.built_in", "Built-in")}
             </span>
           )}
         </div>
@@ -186,7 +175,14 @@ function ExtensionRow({
 
       {/* Status label */}
       <span className={`flex-shrink-0 text-xs font-medium ${statusColor(record.status)}`}>
-        {statusLabel(record.status)}
+        {record.status === "enabled" ? t("extensions.enabled", "Enabled") :
+         record.status === "available" ? t("extensions.available", "Available") :
+         record.status === "disabled" ? t("extensions.disabled", "Disabled") :
+         record.status === "incompatible" ? t("extensions.incompatible", "Incompatible") :
+         record.status === "invalid" ? t("extensions.invalid", "Invalid") :
+         record.status === "error" ? t("extensions.error", "Error") :
+         record.status === "registered" ? t("extensions.registered", "Registered") :
+         record.status}
       </span>
 
       {/* Toggle */}
@@ -194,7 +190,7 @@ function ExtensionRow({
         onClick={() => onToggle(record)}
         disabled={!canToggle}
         className="flex-shrink-0 rounded-lg p-1.5 text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text) disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--color-muted)"
-        title={record.status === "enabled" ? "Disable extension" : "Enable extension"}
+        title={record.status === "enabled" ? t("extensions.disable_extension", "Disable extension") : t("extensions.enable_extension", "Enable extension")}
       >
         {record.status === "enabled"
           ? <EyeOff className="h-4 w-4" />

@@ -1,4 +1,5 @@
 import { useMemo, useEffect, useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft, ChevronLeft, ChevronRight, Trophy, Heart, Gamepad2, Play, Square, HardDrive, CheckCircle2,
   Star, Languages, Layers, Download, RefreshCw, Search, FileSearch, Loader2, MoreHorizontal,
@@ -47,16 +48,16 @@ const DEBUG = false;
 const DEBUG_CONSOLE_PLAY = false;
 const DEBUG_CONSOLE_DETAILS_ACTION = false;
 
-function getBlockedReason(action: string): string {
+function getBlockedReason(action: string, t: (key: string, fallback: string) => string): string {
   switch (action) {
-    case "install": return "Install required";
-    case "update": return "Update required";
-    case "download": return "Download required";
-    case "missing-path": return "Game files missing";
-    case "uninstalling": return "Game is being uninstalled";
-    case "open-steam": return "Open in Steam to play";
-    case "open-lua-folder": return "Configure Lua script to play";
-    default: return "This game is not playable yet";
+    case "install": return t("console_settings.install_required", "Install required");
+    case "update": return t("console_settings.update_required", "Update required");
+    case "download": return t("console_settings.download_required", "Download required");
+    case "missing-path": return t("console_settings.game_files_missing", "Game files missing");
+    case "uninstalling": return t("console_settings.game_being_uninstalled", "Game is being uninstalled");
+    case "open-steam": return t("console_settings.open_steam_to_play", "Open in Steam to play");
+    case "open-lua-folder": return t("console_settings.configure_lua_to_play", "Configure Lua script to play");
+    default: return t("console_settings.not_playable_yet", "This game is not playable yet");
   }
 }
 const ENTER_DURATION = 280;
@@ -143,6 +144,7 @@ const REVIEW_COLORS: Record<string, { bg: string; text: string; border: string }
 const DEFAULT_REVIEW_COLOR = { bg: "bg-white/5", text: "text-(--color-muted)", border: "border-white/[0.04]" };
 
 export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen, gamepadDisabled = false, quickMenuOpen = false, railGames, railIndex, onNavigateRail }: Props) {
+  const { t } = useTranslation();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
   const { settings: appSettings } = useSettings();
@@ -338,7 +340,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     const action = getLauncherGamePrimaryAction(game);
     if (action !== "play" || !game.isPlayable) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_BLOCKED] appid=${game.appId ?? "manual"} action=${action}`);
-      showWarning(getBlockedReason(action), { id: `console-details-blocked-${game.appId ?? game.id}`, duration: 3000 });
+      showWarning(getBlockedReason(action, t), { id: `console-details-blocked-${game.appId ?? game.id}`, duration: 3000 });
       return;
     }
     onPlayGame?.(game);
@@ -802,10 +804,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   } = useConsoleAchievements(appIdStr);
 
   const gameStatus = useMemo(() => {
-    if (isPerfected) return { label: "Completed", color: "text-emerald-400", Icon: CircleCheck };
-    if (playtimeSeconds > 0) return { label: "In Progress", color: "text-blue-400", Icon: Clock };
-    return { label: "Never Played", color: "text-white/40", Icon: CircleDashed };
-  }, [playtimeSeconds, isPerfected]);
+    if (isPerfected) return { label: t("console_settings.completed", "Completed"), color: "text-emerald-400", Icon: CircleCheck };
+    if (playtimeSeconds > 0) return { label: t("console_settings.in_progress", "In Progress"), color: "text-blue-400", Icon: Clock };
+    return { label: t("console_settings.never_played", "Never Played"), color: "text-white/40", Icon: CircleDashed };
+  }, [playtimeSeconds, isPerfected, t]);
 
   const releaseYear = useMemo(() => {
     if (!game?.metadata?.release_date) return null;
@@ -854,15 +856,15 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     : DEFAULT_REVIEW_COLOR;
 
   /* ── Custom hint labels ── */
-  const browseMediaHint = "[←/→] Browse media";
-  const seekHint = "[LT/RT] Seek video";
+  const browseMediaHint = `[←/→] ${t("console_settings.browse_media", "Browse media")}`;
+  const seekHint = `[LT/RT] ${t("console_settings.seek_video", "Seek video")}`;
   const playTrailerHint = useMemo(() => {
     if (gamepadActive) {
       const isPs = settings.inputHints === "playstation" || (settings.inputHints === "auto" && navigator.platform?.toLowerCase().includes("mac"));
-      return isPs ? "[✕] Play trailer" : "[A] Play trailer";
+      return isPs ? `[✕] ${t("console_settings.play_trailer", "Play trailer")}` : `[A] ${t("console_settings.play_trailer", "Play trailer")}`;
     }
-    return "[Enter] Play trailer";
-  }, [gamepadActive, settings.inputHints]);
+    return `[Enter] ${t("console_settings.play_trailer", "Play trailer")}`;
+  }, [gamepadActive, settings.inputHints, t]);
 
   /* ── Hints dinámicos según zona ── */
   const dynamicHints = useMemo(() => {
@@ -950,14 +952,14 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           <div className={`${surfaceBg} absolute inset-0 rounded-3xl`} />
           <div className="relative z-10 flex flex-col items-center gap-4 px-8">
             <Gamepad2 className="h-14 w-14 text-(--color-muted)/30" />
-            <p className="text-lg font-semibold text-(--color-text)">Unable to load game details</p>
-            <p className="text-sm text-(--color-muted)">No game selected</p>
+            <p className="text-lg font-semibold text-(--color-text)">{t("console_settings.unable_to_load", "Unable to load game details")}</p>
+            <p className="text-sm text-(--color-muted)">{t("console_settings.no_game_selected", "No game selected")}</p>
             <button
               type="button"
               onClick={handleClose}
               className="rounded-lg bg-(--color-accent) px-6 py-2.5 text-sm font-medium text-(--color-accent-text) transition hover:brightness-110"
             >
-              Go Back
+              {t("console_settings.go_back", "Go Back")}
             </button>
           </div>
         </div>
@@ -1012,10 +1014,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           {gamepadActive ? (
             <>
               <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-white/15 text-[9px] font-bold leading-none">{hints.back.startsWith("[") ? hints.back.split("]")[0].slice(1) : "B"}</span>
-              Back
+              {t("console_settings.back", "Back")}
             </>
           ) : (
-            <><ArrowLeft className="h-3.5 w-3.5" /> Back</>
+            <><ArrowLeft className="h-3.5 w-3.5" /> {t("console_settings.back", "Back")}</>
           )}
         </button>
         {onNavigateRail && railGames && railIndex != null && railGames.length > 1 && (
@@ -1095,7 +1097,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-(--color-muted)/60 lg:text-[11px]">
                   <span className="inline-flex items-center gap-1"><HardDrive className="h-3 w-3" />{getGameDiskSize(game)}</span>
-                  {game.steamInstalled && <span className="rounded bg-emerald-500/80 px-1.5 py-0.5 font-semibold text-black">Installed</span>}
+                  {game.steamInstalled && <span className="rounded bg-emerald-500/80 px-1.5 py-0.5 font-semibold text-black">{t("settings.installed", "Installed")}</span>}
                   {game.isLuaActive && <span className="rounded bg-violet-500/80 px-1.5 py-0.5 font-semibold text-white">Lua</span>}
                   {game.source === "debrid" && game.repacker && (
                     <span className="rounded bg-cyan-500/80 px-1.5 py-0.5 font-semibold text-black">{game.repacker.toUpperCase()}</span>
@@ -1119,7 +1121,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 </span>
               )}
               {!reviewSummary && reviewIsLoading && (
-                <span className="text-[10px] text-(--color-muted)/50">Loading reviews…</span>
+                <span className="text-[10px] text-(--color-muted)/50">{t("console_settings.loading_reviews", "Loading reviews…")}</span>
               )}
               {genres?.map((g) => (
                 <span key={g} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-(--color-muted) ring-1 ring-white/10 lg:text-[11px]">{g}</span>
@@ -1129,15 +1131,15 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             {/* Stats: Time Played / Last Played / Status */}
             <div className="mt-2 grid grid-cols-2 gap-1.5 lg:grid-cols-3">
               <div className="rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
-                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Time Played</span>
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">{t("console_settings.time_played", "Time Played")}</span>
                 <span className="block truncate text-[12px] font-semibold text-white/85 lg:text-[13px]">{playtimeDisplay}</span>
               </div>
               <div className="rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
-                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Last Played</span>
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">{t("console_settings.last_played", "Last Played")}</span>
                 <span className="block truncate text-[12px] font-semibold text-white/85 lg:text-[13px]">{lastPlayedStr}</span>
               </div>
               <div className="col-span-2 rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06] lg:col-span-1">
-                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Status</span>
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">{t("console_settings.status", "Status")}</span>
                 <span className={`inline-flex items-center gap-1 text-[12px] font-semibold lg:text-[13px] ${gameStatus.color}`}>
                   <gameStatus.Icon className="h-3 w-3" />
                   {gameStatus.label}
@@ -1151,7 +1153,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center gap-1 text-[10px] font-medium text-white/60 lg:text-[11px]">
                     <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
-                    Achievements
+                    {t("console_settings.achievements", "Achievements")}
                   </span>
                   <span className="text-[10px] font-semibold tabular-nums text-white/70 lg:text-[11px]">
                     {effectiveUnlocked}/{effectiveTotal} ({effectivePercent}%)
@@ -1180,7 +1182,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                     onClick={handleStop}
                     className={`w-full rounded-xl bg-red-500 py-3 text-sm font-bold text-white shadow-lg transition hover:brightness-110 ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === 0 ? "scale-[1.02] ring-2 ring-(--color-accent) ring-offset-2" : ""}`}
                   >
-                    <Square className="mr-2 inline h-4 w-4 fill-current" /> Stop
+                    <Square className="mr-2 inline h-4 w-4 fill-current" /> {t("console_settings.stop", "Stop")}
                   </button>
                   {/* Return — subIndex 1 */}
                   {gameSession?.pid != null && (
@@ -1189,17 +1191,17 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       onClick={handleReturn}
                       className={`w-full rounded-xl border border-white/20 py-3 text-sm font-medium text-white transition hover:bg-white/10 ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === 1 ? "scale-[1.02] ring-2 ring-(--color-accent) ring-offset-2" : ""}`}
                     >
-                      <Play className="mr-2 inline h-4 w-4" /> Return
+                      <Play className="mr-2 inline h-4 w-4" /> {t("console_settings.return", "Return")}
                     </button>
                   )}
                 </div>
               ) : isLaunching ? (
                 <button type="button" disabled className="w-full rounded-xl bg-(--color-accent) py-3 text-sm font-bold text-(--color-accent-text) shadow-xl shadow-(--color-accent)/25 opacity-50 cursor-not-allowed">
-                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Launching…
+                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {t("console_settings.launching", "Launching…")}
                 </button>
               ) : isStopping ? (
                 <button type="button" disabled className="w-full rounded-xl bg-red-500/60 py-3 text-sm font-bold text-white opacity-50 cursor-not-allowed">
-                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Stopping…
+                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {t("console_settings.stopping", "Stopping…")}
                 </button>
               ) : actionInFlight ? (
                 <button type="button" disabled className="w-full rounded-xl bg-(--color-accent)/70 py-3 text-sm font-bold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed">
@@ -1232,7 +1234,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40 text-white"
                       : "border-white/20 text-white/60 hover:bg-white/10"
                   }`}
-                  title="More options"
+                  title={t("console_settings.more_options", "More options")}
                 >
                   <MoreHorizontal className="h-4 w-4" />
                 </button>
@@ -1244,7 +1246,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40 text-white"
                       : "border-white/20 text-white/60 hover:bg-white/10"
                   }`}
-                  title={muted ? "Unmute video" : "Mute video"}
+                  title={muted ? t("console_settings.unmute_video", "Unmute video") : t("console_settings.mute_video", "Mute video")}
                 >
                   {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 </button>
@@ -1254,7 +1256,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs transition-all duration-150 ${
                     isFav ? "text-rose-400" : "text-white/60"
                   } ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === (isRunning ? 4 : 3) ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40" : "border-white/20 hover:bg-white/10"}`}
-                  title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+                  title={isFav ? t("console_settings.remove_from_favorites", "Remove from Favorites") : t("console_settings.add_to_favorites", "Add to Favorites")}
                 >
                   <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
                 </button>
@@ -1276,7 +1278,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 <div className="mt-auto space-y-1 border-t border-white/[0.06] pt-2 text-[10px] text-(--color-muted)/60 lg:text-[11px]">
                   {publisher && publisher !== developer && (
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="uppercase tracking-wider text-white/35">Pub</span>
+                      <span className="uppercase tracking-wider text-white/35">{t("console_settings.publisher_abbr", "Pub")}</span>
                       <span className="truncate text-right">{publisher}</span>
                     </div>
                   )}
@@ -1349,7 +1351,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onNavigateRail("prev"); }}
                 className="pointer-events-auto absolute left-[clamp(8px,2vw,28px)] top-1/2 z-20 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-black/55 px-2 py-3 text-white/80 shadow-xl shadow-black/40 ring-1 ring-white/10 backdrop-blur-md transition-all duration-200 hover:bg-(--color-accent)/80 hover:text-white hover:shadow-(--color-accent)/30 hover:ring-(--color-accent)/40"
-                title="Previous game"
+                title={t("console_settings.previous_game", "Previous game")}
               >
                 <ChevronLeft className="h-5 w-5" />
                 {gamepadActive && <span className="text-[8px] font-bold tracking-wider text-white/50">LB</span>}
@@ -1361,7 +1363,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onNavigateRail("next"); }}
                 className="pointer-events-auto absolute right-[clamp(8px,2vw,28px)] top-1/2 z-20 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-black/55 px-2 py-3 text-white/80 shadow-xl shadow-black/40 ring-1 ring-white/10 backdrop-blur-md transition-all duration-200 hover:bg-(--color-accent)/80 hover:text-white hover:shadow-(--color-accent)/30 hover:ring-(--color-accent)/40"
-                title="Next game"
+                title={t("console_settings.next_game", "Next game")}
               >
                 <ChevronRight className="h-5 w-5" />
                 {gamepadActive && <span className="text-[8px] font-bold tracking-wider text-white/50">RB</span>}

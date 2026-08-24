@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   LayoutDashboard,
   RotateCcw,
@@ -104,6 +105,7 @@ const ROTATE_PRESETS = [
 /* ================================================================== */
 
 export default function HomeLayoutEditor() {
+  const { t } = useTranslation();
   const { settings, updateSetting } = useSettings();
   const [activeTab, setActiveTab] = useState<LayoutTab>("hero");
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
@@ -175,14 +177,14 @@ export default function HomeLayoutEditor() {
 
   return (
     <SettingsSection
-      title="Home Layout"
-      description="Customize which sections appear on your dashboard, hero behavior, and rendering strategy."
+      title={t("homeLayout.title", "Home Layout")}
+      description={t("homeLayout.desc", "Customize which sections appear on your dashboard, hero behavior, and rendering strategy.")}
     >
       {/* Tab bar */}
       <div className="mb-5 flex gap-1 rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-1">
         {([
-          { id: "hero" as LayoutTab, label: "Hero", icon: <Sparkles className="h-3.5 w-3.5" /> },
-          { id: "sections" as LayoutTab, label: "Sections", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+          { id: "hero" as LayoutTab, label: t("homeLayout.tab_hero", "Hero"), icon: <Sparkles className="h-3.5 w-3.5" /> },
+          { id: "sections" as LayoutTab, label: t("homeLayout.tab_sections", "Sections"), icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
         ]).map((tab) => (
           <button
             key={tab.id}
@@ -203,9 +205,9 @@ export default function HomeLayoutEditor() {
       {/* ── Hero Tab ──────────────────────────────────────────── */}
       {activeTab === "hero" && (
         <div className="space-y-4">
-          <ToggleOption
-            label="Show Hero Section"
-            description="Display the featured game hero at the top of the dashboard."
+              <ToggleOption
+                label={t("homeLayout.show_hero", "Show Hero Section")}
+                description={t("homeLayout.show_hero_desc", "Display the featured game hero at the top of the dashboard.")}
             enabled={settings.dashboardHeroEnabled}
             onChange={(v) => updateSetting("dashboardHeroEnabled", v)}
           />
@@ -217,10 +219,10 @@ export default function HomeLayoutEditor() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-(--color-text)">
-                      Hero Sources
+                      {t("homeLayout.hero_sources", "Hero Sources")}
                     </p>
                     <p className="mt-0.5 text-xs text-(--color-muted)">
-                      {heroSources.length} of {heroMaxSources} selected
+                      {t("homeLayout.hero_sources_selected", "{{selected}} of {{max}} selected").replace("{{selected}}", String(heroSources.length)).replace("{{max}}", String(heroMaxSources))}
                     </p>
                   </div>
                   <button
@@ -228,7 +230,7 @@ export default function HomeLayoutEditor() {
                     onClick={() => setSourcesExpanded(!sourcesExpanded)}
                     className="inline-flex items-center gap-1.5 text-xs text-(--color-muted) transition hover:text-(--color-text)"
                   >
-                    {sourcesExpanded ? "Hide" : "Change"}
+                    {sourcesExpanded ? t("homeLayout.hide", "Hide") : t("homeLayout.change", "Change")}
                     {sourcesExpanded ? (
                       <ChevronUp className="h-3.5 w-3.5" />
                     ) : (
@@ -240,7 +242,7 @@ export default function HomeLayoutEditor() {
                 {/* Selected source names */}
                 {!sourcesExpanded && (
                   <p className="mt-2 text-xs text-(--color-text)">
-                    {selectedHeroSourceNames || "No sources selected"}
+                    {selectedHeroSourceNames || t("homeLayout.no_sources_selected", "No sources selected")}
                   </p>
                 )}
 
@@ -249,7 +251,7 @@ export default function HomeLayoutEditor() {
                   <div className="mt-3 space-y-1.5">
                     {heroSources.length >= heroMaxSources && (
                       <p className="mb-2 text-[11px] text-amber-400/80">
-                        Only {heroMaxSources} hero source{heroMaxSources !== 1 ? "s" : ""} can be selected. Deselect one first.
+                        {t("homeLayout.max_hero_sources", "Only 1 hero source can be selected. Deselect one first.")}
                       </p>
                     )}
                     {HERO_SOURCES.map((source) => {
@@ -296,7 +298,7 @@ export default function HomeLayoutEditor() {
                               {source.disabled && (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
                                   <Lock className="h-2.5 w-2.5" />
-                                  Coming later
+                                  {t("collections.coming_soon", "Coming soon")}
                                 </span>
                               )}
                             </div>
@@ -312,8 +314,8 @@ export default function HomeLayoutEditor() {
               </div>
 
               <ToggleOption
-                label="Auto-Rotate Hero"
-                description="Cycle through candidates from your selected hero sources."
+                label={t("homeLayout.auto_rotate", "Auto-Rotate Hero")}
+                description={t("homeLayout.auto_rotate_desc", "Cycle through candidates from your selected hero sources.")}
                 enabled={settings.dashboardHeroAutoRotate}
                 onChange={(v) => updateSetting("dashboardHeroAutoRotate", v)}
               />
@@ -321,7 +323,7 @@ export default function HomeLayoutEditor() {
               {settings.dashboardHeroAutoRotate && (
                 <div className="lf-surface rounded-2xl border p-4">
                   <p className="mb-3 text-sm font-medium text-(--color-text)">
-                    Rotation Interval
+                    {t("homeLayout.rotation_interval", "Rotation Interval")}
                   </p>
                   <div className="flex gap-2">
                     {ROTATE_PRESETS.map((preset) => (
@@ -348,7 +350,7 @@ export default function HomeLayoutEditor() {
                 className="inline-flex items-center gap-1.5 text-xs text-(--color-muted) transition hover:text-(--color-text)"
               >
                 <RotateCcw className="h-3 w-3" />
-                Reset hero defaults
+                {t("homeLayout.reset_hero", "Reset hero defaults")}
               </button>
             </>
           )}
@@ -360,7 +362,7 @@ export default function HomeLayoutEditor() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-xs text-(--color-muted)">
-              {visibleCount} of {DASHBOARD_SECTIONS.length} sections visible
+              {t("homeLayout.sections_visible", "{{visible}} of {{total}} sections visible").replace("{{visible}}", String(visibleCount)).replace("{{total}}", String(DASHBOARD_SECTIONS.length))}
             </p>
             <button
               type="button"
@@ -368,7 +370,7 @@ export default function HomeLayoutEditor() {
               className="inline-flex items-center gap-1.5 text-xs text-(--color-muted) transition hover:text-(--color-text)"
             >
               <RotateCcw className="h-3 w-3" />
-              Reset
+              {t("homeLayout.reset", "Reset")}
             </button>
           </div>
 
@@ -415,13 +417,13 @@ export default function HomeLayoutEditor() {
                     {isHeroSource && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-(--color-accent)/10 px-2 py-0.5 text-[10px] font-medium text-(--color-accent)">
                         <Sparkles className="h-2.5 w-2.5" />
-                        Hero source
+                        {t("homeLayout.hero_source_badge", "Hero source")}
                       </span>
                     )}
 
                     {!visible && isHeroSource && (
                       <span className="text-[10px] text-(--color-muted)">
-                        Hidden row
+                        {t("homeLayout.hidden_row", "Hidden row")}
                       </span>
                     )}
 
@@ -433,7 +435,7 @@ export default function HomeLayoutEditor() {
                   {/* Limit control — only for non-boolean/static sections */}
                   {visible && section.id !== "store-highlights" && (
                     <div className="mt-3 flex items-center gap-3 border-t border-(--surface-active-border) pt-3">
-                      <span className="text-xs text-(--color-muted)">Max items:</span>
+                      <span className="text-xs text-(--color-muted)">{t("homeLayout.max_items", "Max items:")}</span>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"

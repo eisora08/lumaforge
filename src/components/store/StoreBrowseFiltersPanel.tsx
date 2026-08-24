@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   ArrowDownAZ,
   Calendar,
@@ -95,6 +96,7 @@ export default function StoreBrowseFiltersPanel({
   totalGames,
   filteredGames,
 }: StoreBrowseFiltersPanelProps) {
+  const { t } = useTranslation();
   function update(partial: Partial<BrowseFilters>) {
     onFiltersChange({ ...filters, ...partial });
   }
@@ -114,7 +116,7 @@ export default function StoreBrowseFiltersPanel({
     <div className="w-full shrink-0 overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5 lg:w-64 lg:sticky lg:top-[48px] lg:max-h-[calc(100vh-80px)] lg:flex lg:flex-col">
       <div className="flex shrink-0 items-center justify-between px-5 pt-5">
         <h3 className="text-sm font-semibold text-(--color-text)">
-          Filters
+          {t("store.filters", "Filters")}
         </h3>
 
         {hasAnyFilter && (
@@ -124,7 +126,7 @@ export default function StoreBrowseFiltersPanel({
             className="flex items-center gap-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
           >
             <RotateCcw className="h-3 w-3" />
-            Reset
+            {t("store.reset")}
           </button>
         )}
       </div>
@@ -136,7 +138,7 @@ export default function StoreBrowseFiltersPanel({
             type="text"
             value={filters.keywords}
             onChange={(e) => update({ keywords: e.target.value })}
-            placeholder="Search within results..."
+            placeholder={t("store.search_within")}
             className="w-full rounded-xl border border-(--surface-active-border) bg-black/20 py-2 pl-9 pr-8 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
           />
           {filters.keywords && (
@@ -154,12 +156,12 @@ export default function StoreBrowseFiltersPanel({
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4 lf-scroll-area">
         <FilterDivider />
 
-        <FilterSection title="Sort by">
+        <FilterSection title={t("store.sort_by")}>
           <div className="flex gap-1 px-3">
             {[
-              { key: "name" as const, label: "Name", icon: ArrowDownAZ },
-              { key: "rating" as const, label: "Rating", icon: Star },
-              { key: "recent" as const, label: "Recent", icon: Calendar },
+              { key: "name" as const, label: t("store.sort_name"), icon: ArrowDownAZ },
+              { key: "rating" as const, label: t("store.sort_rating"), icon: Star },
+              { key: "recent" as const, label: t("store.sort_recent"), icon: Calendar },
             ].map(({ key, label, icon: Icon }) => (
               <button
                 key={key}
@@ -180,27 +182,27 @@ export default function StoreBrowseFiltersPanel({
 
         <FilterDivider />
 
-        <FilterSection title="Availability">
+        <FilterSection title={t("store.availability")}>
           <CheckRow
             checked={filters.installed}
             onChange={() => update({ installed: !filters.installed })}
-            label="Installed"
+            label={t("store.installed")}
           />
         </FilterSection>
 
         <FilterDivider />
 
-        <FilterSection title="Source">
+        <FilterSection title={t("store.has_source")}>
           <CheckRow
             checked={filters.hasSource}
             onChange={() => update({ hasSource: !filters.hasSource })}
-            label="Has Source"
+            label={t("store.has_source")}
           />
         </FilterSection>
 
         <FilterDivider />
 
-        <FilterSection title="Platform">
+        <FilterSection title={t("store.platform")}>
           {PLATFORM_OPTIONS.map((platform) => (
             <CheckRow
               key={platform}
@@ -220,7 +222,7 @@ export default function StoreBrowseFiltersPanel({
 
       <div className="shrink-0 border-t border-(--surface-active-border) px-5 py-3">
         <p className="text-xs text-(--color-muted)">
-          {filteredGames} / {totalGames} games
+          {t("store.games_count", { filtered: filteredGames, total: totalGames })}
         </p>
       </div>
     </div>

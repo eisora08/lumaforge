@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { Award, Search, CheckCircle2, Lock, Sparkles, Zap, Trophy } from "lucide-react";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { ACHIEVEMENT_DEFINITIONS } from "../features/activity/achievements/achievementDefinitions";
@@ -25,29 +26,29 @@ import LevelRing from "../components/activity/LevelRing";
 import GrowBar from "../components/common/GrowBar";
 import type { EvaluationContextInput } from "../features/activity/stats/statsService";
 
-const CATEGORIES: Array<{ value: AchievementCategory | "all"; label: string; icon?: React.ComponentType<{ className?: string }> }> = [
-  { value: "all", label: "All" },
-  { value: "library", label: "Library", icon: CATEGORY_ICONS.library },
-  { value: "play", label: "Play", icon: CATEGORY_ICONS.play },
-  { value: "completion", label: "Completion", icon: CATEGORY_ICONS.completion },
-  { value: "streak", label: "Streak", icon: CATEGORY_ICONS.streak },
-  { value: "exploration", label: "Exploration", icon: CATEGORY_ICONS.exploration },
-  { value: "session", label: "Session", icon: CATEGORY_ICONS.session },
+const CATEGORIES: Array<{ value: AchievementCategory | "all"; labelKey: string; icon?: React.ComponentType<{ className?: string }> }> = [
+  { value: "all", labelKey: "launcher_achievements.all_categories" },
+  { value: "library", labelKey: "launcher_achievements.games_in_library", icon: CATEGORY_ICONS.library },
+  { value: "play", labelKey: "launcher_achievements.play_sessions", icon: CATEGORY_ICONS.play },
+  { value: "completion", labelKey: "launcher_achievements.games_completed", icon: CATEGORY_ICONS.completion },
+  { value: "streak", labelKey: "launcher_achievements.day_play_streak", icon: CATEGORY_ICONS.streak },
+  { value: "exploration", labelKey: "launcher_achievements.genres_played", icon: CATEGORY_ICONS.exploration },
+  { value: "session", labelKey: "launcher_achievements.play_sessions", icon: CATEGORY_ICONS.session },
 ];
 
-const RARITIES: Array<{ value: AchievementRarity | "all"; label: string; dot: string }> = [
-  { value: "all", label: "All Rarities", dot: "bg-white/30" },
-  { value: "common", label: "Common", dot: "bg-slate-400" },
-  { value: "uncommon", label: "Uncommon", dot: "bg-emerald-400" },
-  { value: "rare", label: "Rare", dot: "bg-cyan-400" },
-  { value: "epic", label: "Epic", dot: "bg-purple-400" },
-  { value: "legendary", label: "Legendary", dot: "bg-amber-400" },
+const RARITIES: Array<{ value: AchievementRarity | "all"; labelKey: string; dot: string }> = [
+  { value: "all", labelKey: "launcher_achievements.all_rarities", dot: "bg-white/30" },
+  { value: "common", labelKey: "launcher_achievements.rarity_common", dot: "bg-slate-400" },
+  { value: "uncommon", labelKey: "launcher_achievements.rarity_uncommon", dot: "bg-emerald-400" },
+  { value: "rare", labelKey: "launcher_achievements.rarity_rare", dot: "bg-cyan-400" },
+  { value: "epic", labelKey: "launcher_achievements.rarity_epic", dot: "bg-purple-400" },
+  { value: "legendary", labelKey: "launcher_achievements.rarity_legendary", dot: "bg-amber-400" },
 ];
 
 const STATES = [
-  { value: "all" as const, label: "All" },
-  { value: "unlocked" as const, label: "Unlocked" },
-  { value: "locked" as const, label: "Locked" },
+  { value: "all" as const, labelKey: "launcher_achievements.all_categories" },
+  { value: "unlocked" as const, labelKey: "launcher_achievements.unlocked" },
+  { value: "locked" as const, labelKey: "launcher_achievements.locked" },
 ];
 
 const RARITY_ACCENT_BAR: Record<AchievementRarity, string> = {
@@ -124,6 +125,7 @@ function PanelCard({ children, className = "" }: { children: React.ReactNode; cl
 }
 
 export default function LauncherAchievements() {
+  const { t } = useTranslation();
   const { games } = useLibraryGames();
   const [profile, setProfile] = useState<PlayerProfile>(getPlayerProfile);
   const [unlockedIds, setUnlockedIds] = useState<ReadonlySet<string>>(getUnlockedIds);
@@ -218,8 +220,8 @@ export default function LauncherAchievements() {
             <Award className="h-5 w-5 text-amber-400" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-(--color-text)">Launcher Achievements</h1>
-            <p className="text-sm text-(--color-muted)">Track your milestones and earn XP</p>
+            <h1 className="text-2xl font-bold text-(--color-text)">{t("launcher_achievements.title")}</h1>
+            <p className="text-sm text-(--color-muted)">{t("launcher_achievements.subtitle")}</p>
           </div>
         </div>
       </div>
@@ -262,7 +264,7 @@ export default function LauncherAchievements() {
         <PanelCard>
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="text-4xl font-bold text-(--color-text)">{completionPercent}%</div>
-            <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60 mt-1">Completion</div>
+            <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60 mt-1">{t("launcher_achievements.completion")}</div>
             <div className="mt-3 w-full">
               <GrowBar
                 percent={completionPercent}
@@ -270,7 +272,7 @@ export default function LauncherAchievements() {
                 fillClassName="bg-linear-to-r from-(--color-accent) to-(--color-accent)/70"
               />
             </div>
-            <div className="mt-2 text-[11px] text-(--color-muted)">{profile.unlockedCount} of {profile.totalCount} unlocked</div>
+            <div className="mt-2 text-[11px] text-(--color-muted)">{t("launcher_achievements.unlocked_of", { unlocked: profile.unlockedCount, total: profile.totalCount })}</div>
           </div>
         </PanelCard>
       </div>
@@ -292,7 +294,7 @@ export default function LauncherAchievements() {
               }`}
             >
               {CatIcon && <CatIcon className="h-4 w-4 mx-auto mb-0.5 text-(--color-muted)/60" />}
-              <div className="text-xs font-semibold text-(--color-text)">{cat.label}</div>
+              <div className="text-xs font-semibold text-(--color-text)">{t(cat.labelKey)}</div>
               <div className="mt-0.5 text-[10px] text-(--color-muted)">{p.unlocked}/{p.total}</div>
               <div className="mt-1">
                 <GrowBar
@@ -312,7 +314,7 @@ export default function LauncherAchievements() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-(--color-muted)/50" />
           <input
             type="text"
-            placeholder="Search achievements..."
+            placeholder={t("launcher_achievements.search_placeholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-xl border border-(--color-border)/30 bg-(--color-surface) pl-9 pr-3 py-2.5 text-sm text-(--color-text) placeholder:text-(--color-muted)/40 focus:border-(--color-accent)/50 focus:outline-none"
@@ -325,7 +327,7 @@ export default function LauncherAchievements() {
           className="rounded-xl border border-(--color-border)/30 bg-(--color-surface) px-3 py-2.5 text-sm text-(--color-text) focus:border-(--color-accent)/50 focus:outline-none"
         >
           {RARITIES.map((r) => (
-            <option key={r.value} value={r.value}>{r.label}</option>
+            <option key={r.value} value={r.value}>{t(r.labelKey)}</option>
           ))}
         </select>
 
@@ -340,7 +342,7 @@ export default function LauncherAchievements() {
                   : "text-(--color-muted) hover:text-(--color-text)"
               }`}
             >
-              {s.label}
+              {t(s.labelKey)}
             </button>
           ))}
         </div>
@@ -361,8 +363,8 @@ export default function LauncherAchievements() {
         <div className="mt-8">
           <ActivityEmptyState
             icon={Sparkles}
-            title="No achievements match your filters"
-            description="Try adjusting your search or filters to find what you're looking for."
+            title={t("launcher_achievements.no_matches")}
+            description={t("launcher_achievements.no_matches_desc")}
           />
         </div>
       )}
@@ -378,6 +380,7 @@ export default function LauncherAchievements() {
 }
 
 function AchievementCard({ achievement, onClick }: { achievement: AchievementWithState; onClick: () => void }) {
+  const { t } = useTranslation();
   const rarity = RARITY_COLORS[achievement.rarity];
   const isLocked = !achievement.unlocked;
   const AchIcon = achievement.icon;
@@ -445,7 +448,7 @@ function AchievementCard({ achievement, onClick }: { achievement: AchievementWit
 
           {achievement.unlocked && achievement.unlockedAt && (
             <div className="mt-1.5 text-[10px] text-(--color-muted)/40">
-              Unlocked {formatUnlockDate(achievement.unlockedAt)}
+              {t("launcher_achievements.unlocked_at", "Unlocked")} {formatUnlockDate(achievement.unlockedAt)}
             </div>
           )}
         </div>

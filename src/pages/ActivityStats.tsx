@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import {
   BarChart3, Clock, Gamepad2, Trophy, Flame, CalendarDays,
   TrendingUp, Zap, Swords, Timer, Award, Archive,
@@ -33,12 +34,12 @@ import LevelRing from "../components/activity/LevelRing";
 import GrowBar from "../components/common/GrowBar";
 import { useGrowOnMount } from "../hooks/useGrowOnMount";
 
-const TIME_FILTERS: Array<{ value: StatsTimeFilter; label: string }> = [
-  { value: "week", label: "This Week" },
-  { value: "month", label: "This Month" },
-  { value: "30days", label: "Last 30 Days" },
-  { value: "year", label: "This Year" },
-  { value: "all", label: "All Time" },
+const TIME_FILTERS: Array<{ value: StatsTimeFilter; labelKey: string }> = [
+  { value: "week", labelKey: "activity_stats.this_week" },
+  { value: "month", labelKey: "activity_stats.this_month" },
+  { value: "30days", labelKey: "activity_stats.last_30_days" },
+  { value: "year", labelKey: "activity_stats.this_year" },
+  { value: "all", labelKey: "activity_stats.all_time" },
 ];
 
 const HEATMAP_COLORS = [
@@ -60,11 +61,11 @@ const SOURCE_BADGE_COLORS: Record<string, string> = {
 };
 
 const EXIT_REASON_LABELS: Record<string, string> = {
-  normal: "Clean exit",
-  stopped: "Stopped",
-  crashed: "Crashed",
-  "process-exited": "Process exited",
-  unknown: "Unknown",
+  normal: "activity_stats.clean_exit",
+  stopped: "activity_stats.stopped",
+  crashed: "activity_stats.crashed",
+  "process-exited": "activity_stats.process_exited",
+  unknown: "activity_stats.unknown",
 };
 
 function formatDateShort(dateStr: string): string {
@@ -104,6 +105,7 @@ function SectionTitle({ children, icon: Icon }: { children: React.ReactNode; ico
 }
 
 export default function ActivityStats() {
+  const { t } = useTranslation();
   const { games } = useLibraryGames();
   const [timeFilter, setTimeFilter] = useState<StatsTimeFilter>("all");
   const [profile, setProfile] = useState<PlayerProfile>(getPlayerProfile);
@@ -146,8 +148,8 @@ export default function ActivityStats() {
             <BarChart3 className="h-5 w-5 text-(--color-accent)" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-(--color-text)">Activity & Stats</h1>
-            <p className="text-sm text-(--color-muted)">Your gaming activity at a glance</p>
+            <h1 className="text-2xl font-bold text-(--color-text)">{t("activity_stats.title", "Activity & Stats")}</h1>
+            <p className="text-sm text-(--color-muted)">{t("activity_stats.subtitle", "Your gaming activity at a glance")}</p>
           </div>
         </div>
 
@@ -162,7 +164,7 @@ export default function ActivityStats() {
                   : "text-(--color-muted) hover:text-(--color-text)"
               }`}
             >
-              {f.label}
+              {t(f.labelKey)}
             </button>
           ))}
         </div>
@@ -170,18 +172,18 @@ export default function ActivityStats() {
 
       {/* Top Stats — full width grid */}
       <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-        <StatCard icon={<Clock className="h-4 w-4" />} label="Total Hours" value={formatDuration(stats.totalHours * 3600)} accent />
-        <StatCard icon={<Gamepad2 className="h-4 w-4" />} label="Games Played" value={`${stats.gamesPlayed}`} />
-        <StatCard icon={<Archive className="h-4 w-4 text-(--color-muted)/40" />} label="Unplayed" value={`${stats.gamesUnplayed}`} />
-        <StatCard icon={<TrendingUp className="h-4 w-4" />} label="Total Launches" value={`${totalLaunches}`} />
-        <StatCard icon={<Timer className="h-4 w-4" />} label="Sessions" value={`${stats.totalSessions}`} />
+        <StatCard icon={<Clock className="h-4 w-4" />} label={t("activity_stats.total_hours")} value={formatDuration(stats.totalHours * 3600)} accent />
+        <StatCard icon={<Gamepad2 className="h-4 w-4" />} label={t("activity_stats.games_played")} value={`${stats.gamesPlayed}`} />
+        <StatCard icon={<Archive className="h-4 w-4 text-(--color-muted)/40" />} label={t("activity_stats.unplayed")} value={`${stats.gamesUnplayed}`} />
+        <StatCard icon={<TrendingUp className="h-4 w-4" />} label={t("activity_stats.total_launches")} value={`${totalLaunches}`} />
+        <StatCard icon={<Timer className="h-4 w-4" />} label={t("activity_stats.sessions")} value={`${stats.totalSessions}`} />
         {stats.mostPlayedTitle && (
-          <StatCard icon={<Trophy className="h-4 w-4 text-amber-400" />} label="Most Played" value={stats.mostPlayedTitle} truncate />
+          <StatCard icon={<Trophy className="h-4 w-4 text-amber-400" />} label={t("activity_stats.most_played")} value={stats.mostPlayedTitle} truncate />
         )}
         {weeklyComparison.percentChange !== null && (
           <StatCard
             icon={weeklyComparison.percentChange >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingUp className="h-4 w-4 rotate-180" />}
-            label="vs Last Week"
+            label={t("activity_stats.vs_last_week")}
             value={`${weeklyComparison.percentChange >= 0 ? "+" : ""}${Math.round(weeklyComparison.percentChange)}%`}
             accent={weeklyComparison.percentChange >= 0}
           />
@@ -192,28 +194,28 @@ export default function ActivityStats() {
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
         <PanelCard>
           <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">
-            Play Time ({TIME_FILTERS.find((f) => f.value === timeFilter)?.label})
+            {t("activity_stats.play_time")} ({t(TIME_FILTERS.find((f) => f.value === timeFilter)?.labelKey ?? "")})
           </div>
           <div className="mt-1 text-xl font-bold text-(--color-text)">{formatDuration(filteredPlaytime.totalSeconds)}</div>
-          <div className="mt-1 text-[10px] text-(--color-muted)/50">{filteredPlaytime.gamesPlayed} games active in period</div>
+          <div className="mt-1 text-[10px] text-(--color-muted)/50">{t("activity_stats.games_active", { count: filteredPlaytime.gamesPlayed })}</div>
         </PanelCard>
         <PanelCard>
-          <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">Avg Session</div>
+          <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">{t("activity_stats.avg_session")}</div>
           <div className="mt-1 text-xl font-bold text-(--color-text)">
             {avgSessionLength !== null ? formatDuration(avgSessionLength) : "—"}
           </div>
-          <div className="mt-1 text-[10px] text-(--color-muted)/50">per play session</div>
+          <div className="mt-1 text-[10px] text-(--color-muted)/50">{t("activity_stats.per_session")}</div>
         </PanelCard>
       </div>
 
       {/* Play Activity Chart — full width */}
       <PanelCard className="mt-6">
-        <SectionTitle icon={BarChart3}>Play Activity (90 Days)</SectionTitle>
+        <SectionTitle icon={BarChart3}>{t("activity_stats.play_activity")}</SectionTitle>
         {!hasAnyPlaytime ? (
           <ActivityEmptyState
             icon={BarChart3}
-            title="No play activity yet"
-            description="Launch and close a game to start building your activity chart."
+            title={t("activity_stats.no_activity")}
+            description={t("activity_stats.no_activity_desc")}
           />
         ) : (
           <>
@@ -230,12 +232,12 @@ export default function ActivityStats() {
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Streaks */}
         <PanelCard>
-          <SectionTitle icon={Flame}>Streaks</SectionTitle>
+          <SectionTitle icon={Flame}>{t("activity_stats.streaks")}</SectionTitle>
           {!hasAnyPlaytime ? (
             <ActivityEmptyState
               icon={Flame}
-              title="No streaks yet"
-              description="Play games on consecutive days to build a streak."
+              title={t("activity_stats.no_streaks")}
+              description={t("activity_stats.no_streaks_desc")}
               compact
             />
           ) : (
@@ -245,21 +247,21 @@ export default function ActivityStats() {
                 <Flame className="h-4 w-4 text-amber-400" />
               </div>
               <div className="text-2xl font-bold text-amber-400">{streaks.currentStreak}</div>
-              <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">Current</div>
+              <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">{t("activity_stats.current")}</div>
             </div>
             <div className="text-center">
               <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-(--color-accent)/10 mb-2">
                 <TrendingUp className="h-4 w-4 text-(--color-accent)" />
               </div>
               <div className="text-2xl font-bold text-(--color-text)">{streaks.longestStreak}</div>
-              <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">Longest</div>
+              <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">{t("activity_stats.longest")}</div>
             </div>
             <div className="text-center">
               <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-white/[0.04] mb-2">
                 <CalendarDays className="h-4 w-4 text-(--color-muted)" />
               </div>
               <div className="text-2xl font-bold text-(--color-text)">{streaks.totalDaysPlayed}</div>
-              <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">Days Played</div>
+              <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">{t("activity_stats.days_played")}</div>
             </div>
           </div>
           )}
@@ -267,7 +269,7 @@ export default function ActivityStats() {
 
         {/* XP & Level — polished */}
         <PanelCard className="border-amber-400/15">
-          <SectionTitle icon={Award}>XP & Level</SectionTitle>
+          <SectionTitle icon={Award}>{t("activity_stats.xp_level")}</SectionTitle>
           <div className="flex items-center gap-6">
             {/* Level circle */}
             <LevelRing percent={profile.progressPercent} level={profile.level} />
@@ -297,7 +299,7 @@ export default function ActivityStats() {
               {/* Achievement progress bar */}
               <div className="mt-3">
                 <div className="flex items-center justify-between text-[10px] text-(--color-muted)/60 mb-1">
-                  <span>Launcher Achievements</span>
+                  <span>{t("activity_stats.launcher_achievements")}</span>
                   <span>{Math.round(profile.totalCount > 0 ? (profile.unlockedCount / profile.totalCount) * 100 : 0)}%</span>
                 </div>
                 <GrowBar
@@ -316,12 +318,12 @@ export default function ActivityStats() {
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Activity Heatmap */}
         <PanelCard>
-          <SectionTitle icon={CalendarDays}>Activity Heatmap (90 Days)</SectionTitle>
+          <SectionTitle icon={CalendarDays}>{t("activity_stats.activity_heatmap")}</SectionTitle>
           {!hasAnyPlaytime ? (
             <ActivityEmptyState
               icon={CalendarDays}
-              title="No activity heatmap yet"
-              description="Your play sessions will fill this heatmap over time."
+              title={t("activity_stats.no_heatmap")}
+              description={t("activity_stats.no_heatmap_desc")}
               compact
             />
           ) : (
@@ -330,17 +332,17 @@ export default function ActivityStats() {
                 {heatmapData.map((day) => (
                   <div
                     key={day.date}
-                    title={`${formatDateShort(day.date)}: ${day.value > 0 ? `Level ${day.value}` : "No activity"}`}
+                    title={`${formatDateShort(day.date)}: ${day.value > 0 ? `${t("activity_stats.level")} ${day.value}` : t("activity_stats.no_activity_label")}`}
                     className={`h-4 w-4 rounded-sm ${HEATMAP_COLORS[day.value] || HEATMAP_COLORS[0]}`}
                   />
                 ))}
               </div>
               <div className="flex items-center gap-2 mt-3 text-[10px] text-(--color-muted)/50">
-                <span>Less</span>
+                <span>{t("activity_stats.less")}</span>
                 {HEATMAP_COLORS.map((c, idx) => (
                   <div key={idx} className={`h-3 w-3 rounded-sm ${c}`} />
                 ))}
-                <span>More</span>
+                <span>{t("activity_stats.more")}</span>
               </div>
             </>
           )}
@@ -348,12 +350,12 @@ export default function ActivityStats() {
 
         {/* Time of Day */}
         <PanelCard>
-          <SectionTitle icon={Sun}>Time of Day</SectionTitle>
+          <SectionTitle icon={Sun}>{t("activity_stats.time_of_day")}</SectionTitle>
           {!hasAnyPlaytime ? (
             <ActivityEmptyState
               icon={Clock}
-              title="No session data yet"
-              description="Your preferred gaming hours will appear here."
+              title={t("activity_stats.no_session_data")}
+              description={t("activity_stats.no_session_data_desc")}
               compact
             />
           ) : (
@@ -363,12 +365,12 @@ export default function ActivityStats() {
 
         {/* Top Games */}
         <PanelCard>
-          <SectionTitle icon={Trophy}>Top 10 Games</SectionTitle>
+          <SectionTitle icon={Trophy}>{t("activity_stats.top_10_games")}</SectionTitle>
           {topGames.length === 0 ? (
             <ActivityEmptyState
               icon={Gamepad2}
-              title="No play data yet"
-              description="Your most played games will appear here."
+              title={t("activity_stats.no_play_data")}
+              description={t("activity_stats.no_play_data_desc")}
               compact
             />
           ) : (
@@ -383,7 +385,7 @@ export default function ActivityStats() {
 
       {/* Mastery Tiers — full width */}
       <PanelCard className="mt-6">
-        <SectionTitle icon={Swords}>Mastery Tiers</SectionTitle>
+        <SectionTitle icon={Swords}>{t("activity_stats.mastery_tiers")}</SectionTitle>
         <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
           {masteryTiers.map(({ tier, count }) => {
             const TierIcon = tier.icon;
@@ -409,12 +411,12 @@ export default function ActivityStats() {
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Session History */}
         <PanelCard>
-          <SectionTitle icon={Timer}>Recent Sessions</SectionTitle>
+          <SectionTitle icon={Timer}>{t("activity_stats.recent_sessions")}</SectionTitle>
           {sessionHistory.length === 0 ? (
             <ActivityEmptyState
               icon={Clock}
-              title="No sessions recorded yet"
-              description="Completed play sessions will appear here."
+              title={t("activity_stats.no_sessions")}
+              description={t("activity_stats.no_sessions_desc")}
               compact
             />
           ) : (
@@ -432,7 +434,7 @@ export default function ActivityStats() {
                         </span>
                       )}
                       {s.exitReason && s.exitReason !== "normal" && (
-                        <span className="text-[9px] text-(--color-muted)/40">{EXIT_REASON_LABELS[s.exitReason] || s.exitReason}</span>
+                        <span className="text-[9px] text-(--color-muted)/40">{t(EXIT_REASON_LABELS[s.exitReason] || "")}</span>
                       )}
                     </div>
                   </div>
@@ -445,7 +447,7 @@ export default function ActivityStats() {
 
         {/* Activity Feed */}
         <PanelCard>
-          <SectionTitle icon={BookOpen}>Activity Feed</SectionTitle>
+          <SectionTitle icon={BookOpen}>{t("activity_stats.activity_feed")}</SectionTitle>
           <ActivityFeed compact />
         </PanelCard>
       </div>
@@ -566,6 +568,7 @@ function TimeOfDayChart({ buckets }: { buckets: TimeOfDayBucket[] }) {
 }
 
 function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
+  const { t } = useTranslation();
   const grow = useGrowOnMount();
   const [folderData, setFolderData] = useState<FolderAchievementSummary[]>([]);
 
@@ -611,7 +614,7 @@ function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
     <>
       {steamGames.length > 0 && (
         <GameAchievementSection
-          title="Steam Achievements"
+          title={t("activity_stats.steam_achievements")}
           icon={<Trophy className="h-4 w-4 text-sky-400" />}
           entries={steamGames}
           grow={grow}
@@ -619,7 +622,7 @@ function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
       )}
       {crackGames.length > 0 && (
         <GameAchievementSection
-          title="Crack Achievements"
+          title={t("activity_stats.crack_achievements")}
           icon={<Zap className="h-4 w-4 text-purple-400" />}
           entries={crackGames}
           grow={grow}
@@ -640,6 +643,7 @@ function GameAchievementSection({
   entries: Array<{ game: LibraryGame; total: number; unlocked: number; percent: number; appId: string }>;
   grow: boolean;
 }) {
+  const { t } = useTranslation();
   const [imgSrcs, setImgSrcs] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
@@ -666,7 +670,7 @@ function GameAchievementSection({
       <div className="flex items-center gap-2 mb-3">
         {icon}
         <h3 className="text-sm font-semibold text-(--color-text)">{title}</h3>
-        <span className="text-[10px] text-(--color-muted)">{entries.length} games</span>
+        <span className="text-[10px] text-(--color-muted)">{entries.length} {t("activity_stats.games")}</span>
       </div>
       <div className="space-y-1 max-h-[400px] overflow-y-auto">
         {entries.map(({ game, total, unlocked, percent, appId }) => {

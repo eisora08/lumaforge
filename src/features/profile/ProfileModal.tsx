@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { X, Check, RotateCcw, Pencil, ImagePlus, Trash2, Sparkles } from "lucide-react";
 import type { UserProfile } from "./userProfile";
 import { DEFAULT_USER_PROFILE, resolveProfileMediaUrl } from "./userProfile";
@@ -15,6 +16,7 @@ type Props = {
 };
 
 export default function ProfileModal({ open, profile, onSave, onClose }: Props) {
+  const { t } = useTranslation();
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
@@ -181,7 +183,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
         onClick={handleBackdropClick}
         role="dialog"
         aria-modal="true"
-        aria-label="Edit profile"
+        aria-label={t("profile.edit_profile")}
         className={`fixed inset-0 z-50 flex items-center justify-center transition-all duration-200 ease-out ${isAnimating ? "bg-black/0" : "bg-black/40"} ${reducedMotionClass}`}
       >
         <div
@@ -199,7 +201,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
                 background: bannerPreset?.gradient ?? "var(--color-accent)",
                 ...(bannerDisplayUrl ? { backgroundImage: `url(${bannerDisplayUrl})` } : {}),
               }}
-              aria-label="Change banner"
+              aria-label={t("profile.change_banner")}
             >
               {/* Hover pencil overlay — fully hidden by default, visible on group hover */}
               <div className="absolute inset-0 flex items-center justify-center rounded-t-2xl opacity-0 transition-all duration-150 ease-out group-hover:opacity-100 group-hover:bg-black/30 motion-reduce:transition-none">
@@ -219,7 +221,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               ref={avatarTriggerRef}
               onClick={() => setAvatarMenuOpen((p) => !p)}
               className="group absolute -bottom-12 left-6 outline-none"
-              aria-label="Change avatar"
+              aria-label={t("profile.change_avatar")}
             >
               <div
                 className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-(--color-bg) ring-2 ring-white/10 transition"
@@ -252,7 +254,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
             <button
               onClick={animatedClose}
               className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-lg bg-black/40 text-white/70 backdrop-blur-sm transition hover:bg-black/60 hover:text-white"
-              aria-label="Close"
+              aria-label={t("topbar.close")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -267,9 +269,9 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           {/* ====== SECTIONS ====== */}
           <div className="flex flex-col gap-5 px-6 pb-6">
             {/* --- Identity --- */}
-            <Section title="Identity">
+            <Section title={t("profile.identity")}>
               <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-(--color-muted)">Display Name</span>
+                <span className="text-xs font-medium text-(--color-muted)">{t("profile.display_name")}</span>
                 <input
                   type="text"
                   value={draft.displayName}
@@ -279,7 +281,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-(--color-muted)">Status</span>
+                <span className="text-xs font-medium text-(--color-muted)">{t("profile.status")}</span>
                 <input
                   type="text"
                   value={draft.status}
@@ -291,7 +293,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
             </Section>
 
             {/* --- Accent --- */}
-            <Section title="Accent Color">
+            <Section title={t("profile.accent_color")}>
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={() => patch({ accentMode: "follow-theme", accentColor: null })}
@@ -301,7 +303,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
                       : "bg-(--color-surface) text-(--color-muted) ring-1 ring-(--color-border) hover:text-(--color-text)"
                   }`}
                 >
-                  Follow Theme
+                  {t("profile.follow_theme")}
                 </button>
                 <button
                   onClick={() => patch({ accentMode: "custom", accentColor: draft.accentColor ?? "#6366f1" })}
@@ -311,7 +313,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
                       : "bg-(--color-surface) text-(--color-muted) ring-1 ring-(--color-border) hover:text-(--color-text)"
                   }`}
                 >
-                  Custom
+                  {t("profile.custom")}
                 </button>
               </div>
               {draft.accentMode === "custom" && (
@@ -335,21 +337,21 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               className="flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-rose-400/80 transition hover:bg-rose-500/10 hover:text-rose-400"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              Reset Profile
+              {t("profile.reset_profile")}
             </button>
             <div className="flex items-center gap-2">
               <button
                 onClick={animatedClose}
                 className="cursor-pointer rounded-xl border border-(--color-border) bg-(--color-surface) px-4 py-2 text-sm font-medium text-(--color-text) transition hover:bg-white/8"
               >
-                Cancel
+                {t("profile.cancel")}
               </button>
               <button
                 onClick={handleSave}
                 className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 active:scale-[0.97]"
               >
                 <Check className="h-4 w-4" />
-                Save
+                {t("profile.save")}
               </button>
             </div>
           </div>
@@ -368,7 +370,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
         >
           <ContextMenuItem
             icon={ImagePlus}
-            label="Change Avatar"
+            label={t("profile.change_avatar")}
             onClick={() => {
               setAvatarMenuOpen(false);
               setMediaPickerKind("avatar");
@@ -376,9 +378,9 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           />
           <ContextMenuItem
             icon={Sparkles}
-            label="Change Avatar Decoration"
+            label={t("profile.change_avatar_decoration")}
             disabled
-            subtitle="Coming soon"
+            subtitle={t("profile.coming_soon")}
           />
           {hasCustomAvatar && (
             <div className="my-1 border-t border-(--color-border)" />
@@ -386,7 +388,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           {hasCustomAvatar && (
             <ContextMenuItem
               icon={Trash2}
-              label="Remove Avatar"
+              label={t("profile.remove_avatar")}
               danger
               onClick={() => {
                 setAvatarMenuOpen(false);
@@ -396,9 +398,9 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           )}
           <ContextMenuItem
             icon={Sparkles}
-            label="Remove Avatar Decoration"
+            label={t("profile.remove_avatar_decoration")}
             disabled
-            subtitle="Coming soon"
+            subtitle={t("profile.coming_soon")}
           />
         </div>
       )}
@@ -415,7 +417,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
         >
           <ContextMenuItem
             icon={ImagePlus}
-            label="Change Banner"
+            label={t("profile.change_banner")}
             onClick={() => {
               setBannerMenuOpen(false);
               setMediaPickerKind("banner");
@@ -423,9 +425,9 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           />
           <ContextMenuItem
             icon={Sparkles}
-            label="Change Profile Effect"
+            label={t("profile.change_profile_effect")}
             disabled
-            subtitle="Coming soon"
+            subtitle={t("profile.coming_soon")}
           />
           {hasCustomBanner && (
             <div className="my-1 border-t border-(--color-border)" />
@@ -433,7 +435,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           {hasCustomBanner && (
             <ContextMenuItem
               icon={Trash2}
-              label="Remove Banner"
+              label={t("profile.remove_banner")}
               danger
               onClick={() => {
                 setBannerMenuOpen(false);
@@ -443,9 +445,9 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           )}
           <ContextMenuItem
             icon={Sparkles}
-            label="Remove Profile Effect"
+            label={t("profile.remove_profile_effect")}
             disabled
-            subtitle="Coming soon"
+            subtitle={t("profile.coming_soon")}
           />
         </div>
       )}

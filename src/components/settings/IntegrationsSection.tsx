@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Zap,
   RefreshCw,
@@ -117,6 +118,7 @@ function IntegrationCard({
   statusInfo,
   onConfirmDisable,
 }: IntegrationCardProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const rs = refreshState[integrationId] ?? "idle";
 
@@ -137,7 +139,7 @@ function IntegrationCard({
                 ? "bg-emerald-500/15 text-emerald-400"
                 : "bg-white/5 text-(--color-muted)"
             }`}>
-              {settings.enabled ? "Active" : "Disabled"}
+              {settings.enabled ? t("integrations_section.active", "Active") : t("integrations_section.disabled", "Disabled")}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-(--color-muted)">
@@ -167,7 +169,7 @@ function IntegrationCard({
               ) : (
                 <RefreshCw className="h-3 w-3" />
               )}
-              {rs === "running" ? "Scanning..." : rs === "success" ? "Done" : REFRESH_LABELS[integrationId]}
+              {rs === "running" ? t("integrations_section.scanning", "Scanning...") : rs === "success" ? t("integrations_section.done", "Done") : REFRESH_LABELS[integrationId]}
             </button>
           )}
 
@@ -197,7 +199,7 @@ function IntegrationCard({
         className="flex w-full items-center gap-2 border-t border-(--surface-active-border) px-5 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/[0.02]"
       >
         {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-        Advanced settings
+        {t("integrations_section.advanced_settings", "Advanced settings")}
         {statusInfo?.lastScan && (
           <span className="ml-auto text-[10px]">Last scan: {statusInfo.lastScan}</span>
         )}
@@ -210,42 +212,42 @@ function IntegrationCard({
         <div className="border-t border-(--surface-active-border) p-5 space-y-4">
           {statusInfo && (statusInfo.lastScan || statusInfo.scanCount != null || statusInfo.path) && (
             <div className="rounded-lg bg-white/[0.03] p-3 space-y-1.5">
-              <p className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Status</p>
+              <p className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{t("integrations_section.status", "Status")}</p>
               {statusInfo.lastScan && (
                 <div className="flex items-center gap-1.5 text-xs text-(--color-text)">
                   <Clock className="h-3 w-3 text-(--color-muted)" />
-                  Last scan: {statusInfo.lastScan}
+                  {t("integrations_section.last_scan", "Last scan: {{time}}").replace("{{time}}", statusInfo.lastScan)}
                 </div>
               )}
               {statusInfo.scanCount != null && (
                 <div className="flex items-center gap-1.5 text-xs text-(--color-text)">
                   <Hash className="h-3 w-3 text-(--color-muted)" />
-                  {statusInfo.scanCount} games found
+                  {t("integrations_section.games_found", "{{count}} games found").replace("{{count}}", String(statusInfo.scanCount))}
                 </div>
               )}
               {statusInfo.path && (
                 <div className="flex items-center gap-1.5 text-[11px] text-(--color-muted) truncate">
-                  Path: {statusInfo.path}
+                  {t("integrations_section.path", "Path: {{path}}").replace("{{path}}", statusInfo.path)}
                 </div>
               )}
             </div>
           )}
 
           <ToggleOption
-            label="Scan on startup"
-            description="Scan for this provider's games when LumaForge starts."
+            label={t("integrations_section.scan_on_startup", "Scan on startup")}
+            description={t("integrations_section.scan_on_startup_desc", "Scan for this provider's games when LumaForge starts.")}
             enabled={settings.scanOnStartup}
             onChange={(v) => onPatch({ scanOnStartup: v })}
           />
           <ToggleOption
-            label="Allow background scans"
-            description="Allow periodic and idle background scans for this provider."
+            label={t("integrations_section.background_scan", "Allow background scans")}
+            description={t("integrations_section.background_scan_desc", "Allow periodic and idle background scans for this provider.")}
             enabled={settings.backgroundScan}
             onChange={(v) => onPatch({ backgroundScan: v })}
           />
 
           <div className="pt-2">
-            <p className="text-xs font-medium text-(--color-text) mb-3">UI Surfaces</p>
+            <p className="text-xs font-medium text-(--color-text) mb-3">{t("integrations_section.ui_surfaces", "UI Surfaces")}</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {ALL_SURFACES.map((surface) => (
                 <button
@@ -262,7 +264,13 @@ function IntegrationCard({
                   }`}
                 >
                   {SURFACE_ICONS[surface]}
-                  {SURFACE_LABELS[surface]}
+                  {surface === "library" ? t("integrations_section.library", "Library") :
+                   surface === "sidebar" ? t("integrations_section.sidebar", "Sidebar") :
+                   surface === "home" ? t("integrations_section.home", "Home") :
+                   surface === "console" ? t("integrations_section.console", "Console") :
+                   surface === "store" ? t("integrations_section.store", "Store") :
+                   surface === "search" ? t("integrations_section.search", "Search") :
+                   SURFACE_LABELS[surface]}
                 </button>
               ))}
             </div>
@@ -274,6 +282,7 @@ function IntegrationCard({
 }
 
 export default function IntegrationsSection() {
+  const { t } = useTranslation();
   const [settings, setSettingsState] = useState(() => getIntegrationSettings());
   const [refreshState, setRefreshState] = useState<RefreshState>({});
   const refreshTimers = useRef<Map<IntegrationId, ReturnType<typeof setTimeout>>>(new Map());
@@ -360,9 +369,9 @@ export default function IntegrationsSection() {
       {disableConfirmId && (
         <ConfirmModal
           open
-          title={DISABLE_CONFIRM[disableConfirmId].title}
-          description={DISABLE_CONFIRM[disableConfirmId].description}
-          confirmLabel="Disable"
+          title={t(`integrations_section.disable_${disableConfirmId}_title`, DISABLE_CONFIRM[disableConfirmId].title)}
+          description={t(`integrations_section.disable_${disableConfirmId}_desc`, DISABLE_CONFIRM[disableConfirmId].description)}
+          confirmLabel={t("integrations_section.disable", "Disable")}
           variant="warning"
           icon={<AlertTriangle className="h-5 w-5" />}
           onConfirm={handleExecuteDisable}

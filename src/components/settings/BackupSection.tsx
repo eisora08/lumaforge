@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Download,
   Upload,
@@ -87,6 +88,7 @@ const AUDIT_STATUS_STYLES: Record<SectionAuditStatus, { badge: string; label: st
 };
 
 export default function BackupSection() {
+  const { t } = useTranslation();
   const [selectedPreset, setSelectedPreset] = useState<string>("essentials");
   const [customSections, setCustomSections] = useState<Set<BackupSectionType>>(
     new Set(["settings", "integrations", "favorites", "profile"])
@@ -553,7 +555,7 @@ export default function BackupSection() {
             <HardDrive className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-(--color-text)">Backup Overview</h3>
+            <h3 className="text-sm font-bold text-(--color-text)">{t("backup.overview", "Backup Overview")}</h3>
             <p className="text-xs text-(--color-muted)">
               {SECTION_READY_COUNT} ready · {SECTION_PARTIAL_COUNT} partial · {SECTION_PLACEHOLDER_COUNT} planned
             </p>
@@ -562,19 +564,19 @@ export default function BackupSection() {
         <div className="grid grid-cols-4 gap-3">
           <div className="rounded-lg bg-white/[0.03] px-3 py-2 text-center">
             <p className="text-lg font-bold text-(--color-text)">{storedBackups.length}</p>
-            <p className="text-[10px] text-(--color-muted)">Stored</p>
+            <p className="text-[10px] text-(--color-muted)">{t("backup.stored", "Stored")}</p>
           </div>
           <div className="rounded-lg bg-white/[0.03] px-3 py-2 text-center">
             <p className="text-lg font-bold text-emerald-400">{SECTION_READY_COUNT}</p>
-            <p className="text-[10px] text-(--color-muted)">Ready</p>
+            <p className="text-[10px] text-(--color-muted)">{t("backup.ready", "Ready")}</p>
           </div>
           <div className="rounded-lg bg-white/[0.03] px-3 py-2 text-center">
             <p className="text-lg font-bold text-amber-400">{SECTION_PARTIAL_COUNT}</p>
-            <p className="text-[10px] text-(--color-muted)">Partial</p>
+            <p className="text-[10px] text-(--color-muted)">{t("backup.partial", "Partial")}</p>
           </div>
           <div className="rounded-lg bg-white/[0.03] px-3 py-2 text-center">
             <p className="text-lg font-bold text-zinc-500">{SECTION_PLACEHOLDER_COUNT}</p>
-            <p className="text-[10px] text-(--color-muted)">Planned</p>
+            <p className="text-[10px] text-(--color-muted)">{t("backup.planned", "Planned")}</p>
           </div>
         </div>
       </div>
@@ -586,8 +588,8 @@ export default function BackupSection() {
             <FileArchive className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-(--color-text)">Backup & Restore</h3>
-            <p className="text-xs text-(--color-muted)">Export and restore LumaForge-owned data</p>
+            <h3 className="text-sm font-bold text-(--color-text)">{t("backup.backup_restore", "Backup & Restore")}</h3>
+            <p className="text-xs text-(--color-muted)">{t("backup.export_restore_desc", "Export and restore LumaForge-owned data")}</p>
           </div>
         </div>
 
@@ -609,7 +611,7 @@ export default function BackupSection() {
                   <p className="text-xs text-(--color-muted) mt-0.5">{preset.description}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-(--color-muted)">{preset.sections.length} sections</span>
+                  <span className="text-[10px] text-(--color-muted)">{preset.sections.length} {t("backup.sections_count", "sections")}</span>
                   {selectedPreset === preset.id && (
                     <CheckCircle2 className="h-4 w-4 text-(--color-accent)" />
                   )}
@@ -629,8 +631,8 @@ export default function BackupSection() {
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-(--color-text)">Custom</p>
-                <p className="text-xs text-(--color-muted) mt-0.5">Select specific sections to include</p>
+                <p className="text-sm font-medium text-(--color-text)">{t("backup.custom", "Custom")}</p>
+                <p className="text-xs text-(--color-muted) mt-0.5">{t("backup.select_sections", "Select specific sections to include")}</p>
               </div>
               {selectedPreset === "custom" ? (
                 <ChevronDown className="h-4 w-4 text-(--color-muted)" />
@@ -688,12 +690,12 @@ export default function BackupSection() {
           ) : (
             <Download className="h-4 w-4" />
           )}
-          {exporting ? "Exporting..." : "Export Backup"}
+          {exporting ? t("backup.exporting", "Exporting...") : t("backup.export_backup", "Export Backup")}
         </button>
 
         <label className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) transition hover:bg-white/10 cursor-pointer">
           <Upload className="h-4 w-4" />
-          Import & Preview
+          {t("backup.import_preview", "Import & Preview")}
           <input
             type="file"
             accept=".json"
@@ -720,21 +722,21 @@ export default function BackupSection() {
               <AlertCircle className="h-5 w-5 text-red-400" />
             )}
             <h3 className="text-sm font-bold text-(--color-text)">
-              {exportResult.success ? "Export Complete" : "Export Failed"}
+              {exportResult.success ? t("backup.export_complete", "Export Complete") : t("backup.export_failed", "Export Failed")}
             </h3>
           </div>
           <div className="grid grid-cols-3 gap-4 text-center">
             <div>
               <p className="text-lg font-bold text-(--color-text)">{exportResult.fileCount}</p>
-              <p className="text-[10px] text-(--color-muted)">Files</p>
+              <p className="text-[10px] text-(--color-muted)">{t("backup.files", "Files")}</p>
             </div>
             <div>
               <p className="text-lg font-bold text-(--color-text)">{formatBytes(exportResult.totalSize)}</p>
-              <p className="text-[10px] text-(--color-muted)">Size</p>
+              <p className="text-[10px] text-(--color-muted)">{t("backup.size", "Size")}</p>
             </div>
             <div>
               <p className="text-lg font-bold text-(--color-text)">{(exportResult.duration / 1000).toFixed(1)}s</p>
-              <p className="text-[10px] text-(--color-muted)">Duration</p>
+              <p className="text-[10px] text-(--color-muted)">{t("backup.duration", "Duration")}</p>
             </div>
           </div>
           {exportResult.manifest && (
@@ -757,32 +759,32 @@ export default function BackupSection() {
         <div ref={previewPanelRef} className="lf-surface rounded-2xl border p-5 space-y-4">
           <div className="flex items-center gap-3">
             <Eye className="h-5 w-5 text-(--color-accent)" />
-            <h3 className="text-sm font-bold text-(--color-text)">Backup Preview</h3>
+            <h3 className="text-sm font-bold text-(--color-text)">{t("backup.backup_preview", "Backup Preview")}</h3>
             <button
               type="button"
               onClick={() => setShowPreview(false)}
               className="ml-auto text-xs text-(--color-muted) hover:text-(--color-text)"
             >
-              Close
+              {t("backup.close", "Close")}
             </button>
           </div>
 
           {previewResult.manifest && (
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-3">
-                <p className="text-(--color-muted)">Schema Version</p>
+                <p className="text-(--color-muted)">{t("backup.schema_version", "Schema Version")}</p>
                 <p className="font-medium text-(--color-text)">v{previewResult.manifest.schemaVersion}</p>
               </div>
               <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-3">
-                <p className="text-(--color-muted)">Created</p>
+                <p className="text-(--color-muted)">{t("backup.created", "Created")}</p>
                 <p className="font-medium text-(--color-text)">{new Date(previewResult.manifest.createdAt).toLocaleString()}</p>
               </div>
               <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-3">
-                <p className="text-(--color-muted)">Files</p>
+                <p className="text-(--color-muted)">{t("backup.files", "Files")}</p>
                 <p className="font-medium text-(--color-text)">{previewResult.manifest.totalFiles}</p>
               </div>
               <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-3">
-                <p className="text-(--color-muted)">Total Size</p>
+                <p className="text-(--color-muted)">{t("backup.total_size", "Total Size")}</p>
                 <p className="font-medium text-(--color-text)">{formatBytes(previewResult.manifest.totalSize)}</p>
               </div>
             </div>
@@ -801,7 +803,7 @@ export default function BackupSection() {
           {/* Section selection for restore */}
           {previewResult.manifest && selectedRestoreSections && (
             <div className="space-y-2">
-              <p className="text-xs font-medium text-(--color-text)">Sections to restore:</p>
+              <p className="text-xs font-medium text-(--color-text)">{t("backup.sections_to_restore", "Sections to restore:")}</p>
               <div className="grid grid-cols-2 gap-1.5">
                 {[...new Set(previewResult.manifest.files.map((f) => f.section))].map((section) => {
                   const isSelected = selectedRestoreSections.has(section);
@@ -841,7 +843,7 @@ export default function BackupSection() {
           {/* Write-set display: exact keys/fields that will change */}
           {restoreWriteSet && restoreWriteSet.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs font-medium text-(--color-text)">Write set — what will change:</p>
+              <p className="text-xs font-medium text-(--color-text)">{t("backup.write_set_title", "Write set — what will change:")}</p>
               <div className="space-y-1.5 max-h-48 overflow-y-auto">
                 {restoreWriteSet.map((entry, i) => (
                   <div key={i} className="rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-3 py-2 text-[11px]">
@@ -878,18 +880,18 @@ export default function BackupSection() {
             <span className={previewResult.valid ? "text-emerald-400" : "text-red-400"}>
               {previewResult.valid
                 ? (previewLegacyData
-                    ? "Legacy file — only theme and surface mode will be restored"
+                    ? t("backup.legacy_file_notice", "Legacy file — only theme and surface mode will be restored")
                     : previewResult.isLegacyV1
-                      ? "Legacy v1 backup — visual fields only, critical paths and keys protected"
-                      : "Backup validated — only selected sections will be restored")
-                : "Backup validation failed — restore blocked"}
+                      ? t("backup.legacy_v1_notice", "Legacy v1 backup — visual fields only, critical paths and keys protected")
+                      : t("backup.backup_validated", "Backup validated — only selected sections will be restored"))
+                : t("backup.backup_validation_failed", "Backup validation failed — restore blocked")}
             </span>
           </div>
 
           {/* Credential protection notice */}
           <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-400">
             <Shield className="h-3.5 w-3.5 shrink-0" />
-            <span>Credentials and API keys are protected and will not be changed.</span>
+            <span>{t("backup.credential_notice", "Credentials and API keys are protected and will not be changed.")}</span>
           </div>
 
           {/* Restore action + result */}
@@ -900,7 +902,7 @@ export default function BackupSection() {
                 <div className="rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/5 px-3 py-2">
                   <div className="flex items-center gap-2 text-xs text-(--color-accent)">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    <span className="font-medium">{stageDetail || "Processing..."}</span>
+                    <span className="font-medium">{stageDetail || t("backup.processing", "Processing...")}</span>
                   </div>
                   <div className="mt-2 flex gap-1">
                     {["creating-safety-backup", "validating-backup", "preparing-sections", "applying-changes", "refreshing-runtime", "validating-state", "complete"].map((s, i) => {
@@ -938,7 +940,7 @@ export default function BackupSection() {
                         onClick={handleRetryRefresh}
                         className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 px-2.5 py-1 text-[10px] font-medium text-amber-400 hover:bg-amber-500/30 transition"
                       >
-                        <RotateCcw className="h-2.5 w-2.5" /> Retry Refresh
+                        <RotateCcw className="h-2.5 w-2.5" /> {t("backup.retry_refresh", "Retry Refresh")}
                       </button>
                       <button
                         type="button"
@@ -949,7 +951,7 @@ export default function BackupSection() {
                         }}
                         className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1 text-[10px] font-medium text-(--color-text) hover:bg-white/15 transition"
                       >
-                        <Power className="h-2.5 w-2.5" /> Restart LumaForge
+                        <Power className="h-2.5 w-2.5" /> {t("backup.restart_lumaforge", "Restart LumaForge")}
                       </button>
                     </div>
                   )}
@@ -963,8 +965,8 @@ export default function BackupSection() {
               >
                 {restoreInFlight ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
                 {restoreInFlight
-                  ? (stageDetail || "Restoring...")
-                  : `Restore${selectedRestoreSections ? ` (${selectedRestoreSections.size} section${selectedRestoreSections.size !== 1 ? "s" : ""})` : ""}`}
+                  ? (stageDetail || t("backup.restoring", "Restoring..."))
+                  : `${t("backup.confirm_restore", "Restore Backup")}${selectedRestoreSections ? ` (${selectedRestoreSections.size} ${t("backup.sections_count", "section")}${selectedRestoreSections.size !== 1 ? "s" : ""})` : ""}`}
               </button>
             </div>
           )}
@@ -973,13 +975,13 @@ export default function BackupSection() {
             <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4 space-y-3">
               <div className="flex items-center gap-2 text-xs text-amber-400">
                 <Info className="h-3.5 w-3.5 shrink-0" />
-                <span>This is a legacy settings export. Only theme and surface mode will be restored — full settings (including steamRoot and API keys) are never overwritten.</span>
+                <span>{t("backup.legacy_info", "This is a legacy settings export. Only theme and surface mode will be restored — full settings (including steamRoot and API keys) are never overwritten.")}</span>
               </div>
               <div className="text-[10px] text-(--color-muted) space-y-1">
-                {previewLegacyData.theme != null && <p>• Theme: lumaforge-theme</p>}
-                {previewLegacyData.surfaceMode != null && <p>• Surface mode: lumaforge-surface-mode</p>}
-                {previewLegacyData.settings != null && <p className="text-amber-400/70">• Settings: NOT restored (protected)</p>}
-                {typeof previewLegacyData.exportedAt === "string" && <p>• Exported: {new Date(previewLegacyData.exportedAt).toLocaleString()}</p>}
+                {previewLegacyData.theme != null && <p>• {t("backup.legacy_theme", "Theme: lumaforge-theme")}</p>}
+                {previewLegacyData.surfaceMode != null && <p>• {t("backup.legacy_surface_mode", "Surface mode: lumaforge-surface-mode")}</p>}
+                {previewLegacyData.settings != null && <p className="text-amber-400/70">• {t("backup.legacy_settings_protected", "Settings: NOT restored (protected)")}</p>}
+                {typeof previewLegacyData.exportedAt === "string" && <p>• {t("backup.legacy_exported", "Exported:")} {new Date(previewLegacyData.exportedAt).toLocaleString()}</p>}
               </div>
               <button
                 type="button"
@@ -991,7 +993,7 @@ export default function BackupSection() {
                 className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:opacity-50"
               >
                 <RotateCcw className="h-3 w-3" />
-                {restoreInFlight ? "Restoring..." : "Restore Theme & Surface Mode"}
+                {restoreInFlight ? "Restoring..." : t("backup.restore_theme_surface", "Restore Theme & Surface Mode")}
               </button>
             </div>
           )}
@@ -1002,11 +1004,11 @@ export default function BackupSection() {
       <div className="lf-surface rounded-2xl border p-5 space-y-3">
         <div className="flex items-center gap-3 mb-2">
           <HardDrive className="h-5 w-5 text-(--color-accent)" />
-          <h3 className="text-sm font-bold text-(--color-text)">Stored Backups</h3>
-          <span className="text-[10px] text-(--color-muted)">{storedBackups.length} file{storedBackups.length !== 1 ? "s" : ""}</span>
+          <h3 className="text-sm font-bold text-(--color-text)">{t("backup.stored_backups", "Stored Backups")}</h3>
+          <span className="text-[10px] text-(--color-muted)">{t("backup.files_count", "{{count}} file(s)").replace("{{count}}", String(storedBackups.length))}</span>
         </div>
         {storedBackups.length === 0 ? (
-          <p className="text-xs text-(--color-muted)">No backups stored on disk yet.</p>
+          <p className="text-xs text-(--color-muted)">{t("backup.no_backups_stored", "No backups stored on disk yet.")}</p>
         ) : (
           <div className="space-y-1.5">
             {[...storedBackups].reverse().map((filename) => (
@@ -1024,8 +1026,8 @@ export default function BackupSection() {
                       onClick={() => handlePreviewFromDisk(filename)}
                       disabled={previewing !== null || restoreInFlight}
                       className="rounded-lg px-2 py-1 text-[10px] text-(--color-muted) hover:text-(--color-text) hover:bg-white/10 transition disabled:opacity-50"
-                      title={previewing === filename ? "Loading preview..." : `Preview ${shortenBackupId(filename)}`}
-                      aria-label={`Preview backup ${shortenBackupId(filename)}`}
+                      title={previewing === filename ? t("backup.loading_preview", "Loading preview...") : t("backup.preview_backup", "Preview {{id}}").replace("{{id}}", shortenBackupId(filename))}
+                      aria-label={t("backup.preview_backup", "Preview {{id}}").replace("{{id}}", shortenBackupId(filename))}
                     >
                       {previewing === filename ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -1041,14 +1043,14 @@ export default function BackupSection() {
                           onClick={() => handleDeleteBackup(filename)}
                           className="rounded-lg px-2 py-1 text-[10px] text-red-400 bg-red-500/10 hover:bg-red-500/20 transition font-bold"
                         >
-                          Confirm
+                          {t("backup.confirm_delete", "Confirm")}
                         </button>
                         <button
                           type="button"
                           onClick={() => setConfirmDelete(null)}
                           className="rounded-lg px-2 py-1 text-[10px] text-(--color-muted) hover:bg-white/10 transition"
                         >
-                          Cancel
+                          {t("backup.cancel", "Cancel")}
                         </button>
                       </div>
                     ) : (
@@ -1056,7 +1058,7 @@ export default function BackupSection() {
                         type="button"
                         onClick={() => setConfirmDelete(filename)}
                         className="rounded-lg px-2 py-1 text-[10px] text-red-400 hover:bg-red-500/10 transition"
-                        title="Delete backup"
+                        title={t("backup.delete_backup", "Delete backup")}
                       >
                         <Trash2 className="h-3 w-3" />
                       </button>
@@ -1081,8 +1083,8 @@ export default function BackupSection() {
         >
           <Info className="h-4 w-4 text-(--color-muted) shrink-0" />
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-medium text-(--color-text)">Advanced Backup Details</h3>
-            <p className="text-[10px] text-(--color-muted)">Per-section audit status, merge policies, and data notes</p>
+            <h3 className="text-sm font-medium text-(--color-text)">{t("backup.advanced_backup_details", "Advanced Backup Details")}</h3>
+            <p className="text-[10px] text-(--color-muted)">{t("backup.audit_status_desc", "Per-section audit status, merge policies, and data notes")}</p>
           </div>
           {auditExpanded ? (
             <ChevronDown className="h-4 w-4 text-(--color-muted) shrink-0" />
@@ -1128,10 +1130,10 @@ export default function BackupSection() {
       {/* ── Restore Confirmation Modal ── */}
       <ConfirmModal
         open={showRestoreConfirm}
-        title="Restore selected backup?"
+        title={t("backup.restore_selected_backup", "Restore selected backup?")}
         description={
           isLegacyConfirm
-            ? "This will restore your theme and surface mode from a legacy backup. Full settings will not be overwritten. A safety backup will be created automatically."
+            ? t("backup.restore_legacy_desc", "This will restore your theme and surface mode from a legacy backup. Full settings will not be overwritten. A safety backup will be created automatically.")
             : (() => {
                 const m = previewResult?.manifest;
                 const sectionCount = selectedRestoreSections?.size ?? 0;
@@ -1141,20 +1143,20 @@ export default function BackupSection() {
                 const hasSettingsSection = selectedRestoreSections?.has("settings") ?? false;
                 const parts: string[] = [];
                 if (m) {
-                  parts.push(`Backup created ${new Date(m.createdAt).toLocaleString()} (schema v${m.schemaVersion}, ${m.totalFiles} file${m.totalFiles !== 1 ? "s" : ""}).`);
+                  parts.push(t("backup.restore_confirm_backup_info", "Backup created {{date}} (schema v{{schema}}, {{count}} file(s)).").replace("{{date}}", new Date(m.createdAt).toLocaleString()).replace("{{schema}}", String(m.schemaVersion)).replace("{{count}}", String(m.totalFiles)));
                 }
-                parts.push(`Restoring ${sectionCount} section${sectionCount !== 1 ? "s" : ""}: ${sectionNames}.`);
-                parts.push("A safety backup will be created automatically before any changes.");
-                parts.push("Credentials, API keys, and Steam path will remain unchanged.");
+                parts.push(t("backup.restore_confirm_sections", "Restoring {{count}} section(s): {{names}}.").replace("{{count}}", String(sectionCount)).replace("{{names}}", sectionNames));
+                parts.push(t("backup.restore_confirm_safety", "A safety backup will be created automatically before any changes."));
+                parts.push(t("backup.restore_confirm_credentials", "Credentials, API keys, and Steam path will remain unchanged."));
                 if (!hasSettingsSection) {
-                  parts.push("Steam path will remain unchanged.");
+                  parts.push(t("backup.restore_confirm_steam_path", "Steam path will remain unchanged."));
                 }
-                parts.push("Unselected sections will remain unchanged.");
+                parts.push(t("backup.restore_confirm_unselected", "Unselected sections will remain unchanged."));
                 return parts.join(" ");
               })()
         }
-        confirmLabel={restoreInFlight ? "Restoring..." : "Restore Backup"}
-        cancelLabel="Cancel"
+        confirmLabel={restoreInFlight ? t("backup.restoring", "Restoring...") : t("backup.confirm_restore", "Restore Backup")}
+        cancelLabel={t("backup.confirm_cancel", "Cancel")}
         variant="warning"
         icon={<RotateCcw className="h-5 w-5" />}
         onConfirm={() => {
@@ -1169,11 +1171,11 @@ export default function BackupSection() {
               if (themeStr) localStorage.setItem("lumaforge-theme", themeStr);
               if (surfaceStr) localStorage.setItem("lumaforge-surface-mode", surfaceStr);
               dispatchRestoreRefreshForSections(["uiPreferences"]);
-              setRestoreResult({ success: true, message: "Legacy theme and surface mode restored." });
+              setRestoreResult({ success: true, message: t("backup.theme_restored", "Legacy theme and surface mode restored.") });
               setShowPreview(false);
               setPreviewLegacyData(null);
             } catch (err) {
-              setRestoreResult({ success: false, message: `Restore failed: ${err}` });
+              setRestoreResult({ success: false, message: `${t("backup.restore_failed", "Restore failed:")}: ${err}` });
             } finally {
               setRestoreInFlight(false);
             }
@@ -1191,10 +1193,10 @@ export default function BackupSection() {
       {/* ── Restart Required Modal ── */}
       <ConfirmModal
         open={showRestartModal}
-        title="Restart Required"
-        description="Some restored settings require LumaForge to restart to take effect (paths, launch options, or startup configuration). You can restart now or continue and restart later."
-        confirmLabel="Restart Now"
-        cancelLabel="Later"
+        title={t("backup.restart_needed", "Restart Required")}
+        description={t("backup.restart_needed_desc", "Some restored settings require LumaForge to restart to take effect (paths, launch options, or startup configuration). You can restart now or continue and restart later.")}
+        confirmLabel={t("backup.restart_now", "Restart Now")}
+        cancelLabel={t("backup.later", "Later")}
         variant="info"
         icon={<Power className="h-5 w-5" />}
         onConfirm={() => {

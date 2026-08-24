@@ -9,6 +9,7 @@ import {
   Plus,
   Lock,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import SettingsSection from "./SettingsSection";
 
 interface CollectionTypeEntry {
@@ -80,11 +81,12 @@ const COLLECTION_TYPES: CollectionTypeEntry[] = [
 ];
 
 export default function CollectionsSection() {
+  const { t } = useTranslation();
   return (
     <>
       <SettingsSection
-        title="Collections"
-        description="Manage game collections and grouping behavior across your library."
+        title={t("collections.title", "Collections")}
+        description={t("collections.desc", "Manage game collections and grouping behavior across your library.")}
       >
         <div className="space-y-4">
           {/* Summary card */}
@@ -92,21 +94,21 @@ export default function CollectionsSection() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-(--color-text)">
-                  Collection Overview
+                  {t("collections.overview", "Collection Overview")}
                 </p>
                 <p className="mt-0.5 text-xs text-(--color-muted)">
-                  Collections group games across all providers: Steam, Manual, Lua, and future sources.
+                  {t("collections.overview_desc", "Collections group games across all providers: Steam, Manual, Lua, and future sources.")}
                 </p>
               </div>
               <div className="flex gap-3 text-center">
                 <div>
                   <p className="text-lg font-bold text-(--color-accent)">0</p>
-                  <p className="text-[10px] text-(--color-muted)">Custom</p>
+                  <p className="text-[10px] text-(--color-muted)">{t("collections.custom", "Custom")}</p>
                 </div>
                 <div className="h-8 w-px bg-(--surface-active-border)" />
                 <div>
                   <p className="text-lg font-bold text-(--color-text)">4</p>
-                  <p className="text-[10px] text-(--color-muted)">Built-in</p>
+                  <p className="text-[10px] text-(--color-muted)">{t("collections.builtin", "Built-in")}</p>
                 </div>
               </div>
             </div>
@@ -120,10 +122,10 @@ export default function CollectionsSection() {
               className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-3 py-2 text-xs text-(--color-muted) opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
-              New Collection
+              {t("collections.new_collection", "New Collection")}
             </button>
             <p className="text-[11px] text-(--color-muted)">
-              Collection creation will be available in a future update.
+              {t("collections.new_collection_desc", "Collection creation will be available in a future update.")}
             </p>
           </div>
 
@@ -145,11 +147,11 @@ export default function CollectionsSection() {
                     {ct.status === "coming-soon" ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
                         <Lock className="h-2.5 w-2.5" />
-                        Coming soon
+                        {t("collections.coming_soon", "Coming soon")}
                       </span>
                     ) : (
                       <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                        Active
+                        {t("collections.active", "Active")}
                       </span>
                     )}
                   </div>
@@ -161,7 +163,7 @@ export default function CollectionsSection() {
                   <p className="text-sm font-mono font-semibold text-(--color-text)">
                     {ct.count}
                   </p>
-                  <p className="text-[10px] text-(--color-muted)">games</p>
+                  <p className="text-[10px] text-(--color-muted)">{t("collections.games", "games")}</p>
                 </div>
               </div>
             ))}
@@ -170,17 +172,16 @@ export default function CollectionsSection() {
           {/* Info note */}
           <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
             <p className="text-xs text-(--color-muted)">
-              <strong className="text-(--color-text)">Note:</strong>{" "}
-              Collections use stable game identifiers across all providers. Steam games use{" "}
+              <strong className="text-(--color-text)">{t("collections.note_title", "Note:")}</strong>{" "}
+              {t("collections.note_desc", "Collections use stable game identifiers across all providers. Steam games use")}{" "}
               <code className="rounded bg-white/5 px-1 py-0.5 font-mono text-[10px]">
                 steam:{"<appId>"}
               </code>
-              {" "}and manual games use{" "}
+              {" "}{t("collections.note_and_manual", "and manual games use")}{" "}
               <code className="rounded bg-white/5 px-1 py-0.5 font-mono text-[10px]">
                 manual:{"<uuid>"}
               </code>
-              . Manual collection management, smart rules, and drag-and-drop reordering
-              are planned for a future release.
+              . {t("collections.note_future", "Manual collection management, smart rules, and drag-and-drop reordering are planned for a future release.")}
             </p>
           </div>
         </div>

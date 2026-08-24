@@ -91,6 +91,8 @@ export type AppSettings = {
   closeToTray: boolean;
   showDashboardOnStartup: boolean;
   disableAutoUpdates: boolean;
+
+  language: "es" | "en";
 };
 
 export type DebridProviderConfig = {

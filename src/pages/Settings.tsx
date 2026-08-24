@@ -139,8 +139,8 @@ export default function Settings({ onSectionChange }: SettingsProps) {
       const paths = await detectSteamPaths();
 
       if (!paths) {
-        showError("No se encontró una instalación de Steam con steam.exe.", {
-          title: "Steam no detectado",
+        showError(t("steam_detection.no_steam_msg"), {
+          title: t("steam_detection.no_steam_title"),
         });
 
         return;
@@ -151,24 +151,24 @@ export default function Settings({ onSectionChange }: SettingsProps) {
       updateSetting("depotcachePath", paths.depotcache_path);
 
       if (!paths.lua_exists) {
-        showWarning(
-          "Steam fue detectado, pero la carpeta config/lua no existe todavía.",
-          {
-            title: "Carpeta Lua no encontrada",
-          }
-        );
+          showWarning(
+            t("steam_detection.lua_not_found_msg"),
+            {
+              title: t("steam_detection.lua_not_found_title"),
+            }
+          );
 
         return;
       }
 
-      showSuccess("Las rutas de Steam fueron detectadas correctamente.", {
-        title: "Steam detectado",
-      });
+        showSuccess(t("steam_detection.steam_detected_msg"), {
+          title: t("steam_detection.steam_detected_title"),
+        });
     } catch (error) {
       console.error(error);
 
-      showError("Ocurrió un error detectando las rutas de Steam.", {
-        title: "Error de detección",
+      showError(t("steam_detection.error_msg"), {
+        title: t("steam_detection.error_title"),
       });
     }
   }
@@ -249,16 +249,16 @@ export default function Settings({ onSectionChange }: SettingsProps) {
 
                   <SettingsInput
                     label={t("settings.depot_cache")}
-                    description="Destino para archivos .manifest."
-                    placeholder="No detectado"
+                    description={t("settings.depot_cache_desc")}
+                    placeholder={t("settings.not_detected")}
                     value={settings.depotcachePath}
                     onChange={(value) => updateSetting("depotcachePath", value)}
                   />
 
                   <SettingsInput
-                    label="Carpeta temporal"
-                    description="Ubicación para descargas y extracción de ZIP."
-                    placeholder="Usar carpeta temporal del sistema"
+                    label={t("settings.temp_folder")}
+                    description={t("settings.temp_folder_desc")}
+                    placeholder={t("settings.temp_use_system")}
                     value={settings.tempFolder}
                     onChange={(value) => updateSetting("tempFolder", value)}
                   />
@@ -266,30 +266,30 @@ export default function Settings({ onSectionChange }: SettingsProps) {
               </SettingsSection>
 
               <SettingsSection
-                title="Steam Account"
-                description="Credenciales de cuenta para achievement tracking y integraciones."
+                title={t("settings.steam_account")}
+                description={t("settings.steam_account_desc")}
               >
                 <div className="space-y-4">
                   <ToggleOption
-                    label="Enable Steam Achievements Tracking"
-                    description="Use Steam Web API to load achievement progress, badges and rarity. Requires API Key and SteamID64 below."
+                    label={t("settings.enable_achievements")}
+                    description={t("settings.achievements_desc")}
                     enabled={settings.steamAchievementsEnabled}
                     onChange={(enabled) => updateSetting("steamAchievementsEnabled", enabled)}
                   />
 
                   {settings.steamAchievementsEnabled && (!settings.steamWebApiKey || !settings.steamId64) && (
                     <p className="text-xs text-amber-400">
-                      Fill in Steam Web API Key and SteamID64 below to enable achievement tracking.
+                      {t("settings.achievements_warning")}
                     </p>
                   )}
 
                   <label className="block">
                     <div className="mb-2">
                       <p className="text-sm font-medium text-(--color-text)">
-                        Steam Web API Key
+                        {t("settings.api_key")}
                       </p>
                       <p className="mt-1 text-xs text-(--color-muted)">
-                        Required for Steam Achievement tracking. Used to fetch achievement progress, badges and rarity.
+                        {t("settings.api_key_desc")}
                       </p>
                     </div>
                     <div className="relative">
@@ -298,7 +298,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         value={settings.steamWebApiKey}
                         onChange={(e) => updateSetting("steamWebApiKey", e.target.value)}
                         className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                        placeholder="Enter your Steam Web API key"
+                        placeholder={t("settings.api_key_placeholder")}
                       />
                       <button
                         type="button"
@@ -314,10 +314,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <label className="block">
                     <div className="mb-2">
                       <p className="text-sm font-medium text-(--color-text)">
-                        SteamID64
+                        {t("settings.steam_id64")}
                       </p>
                       <p className="mt-1 text-xs text-(--color-muted)">
-                        Required with Steam Web API Key for per-user achievement progress.
+                        {t("settings.steam_id64_desc")}
                       </p>
                     </div>
                     <input
@@ -332,10 +332,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <label className="block">
                     <div className="mb-2">
                       <p className="text-sm font-medium text-(--color-text)">
-                        SteamID32 / Account ID (optional)
+                        {t("settings.steam_id32")}
                       </p>
                       <p className="mt-1 text-xs text-(--color-muted)">
-                        Optional. Used for local Steam userdata paths and future integrations.
+                        {t("settings.steam_id32_desc")}
                       </p>
                     </div>
                     <input
@@ -360,12 +360,12 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "appearance" && (
               <>
                 <SettingsSection
-                  title="Apariencia"
-                  description="Cambia el estilo visual de LumaForge."
+                  title={t("settings.appearance_title")}
+                  description={t("settings.appearance_desc")}
                 >
                   <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                     <Palette className="h-4 w-4" />
-                    Tema actual: {currentTheme?.name}
+                    {t("settings.current_theme")} {currentTheme?.name}
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -391,9 +391,9 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     </div>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => { i18n.changeLanguage("es"); localStorage.setItem("lumaforge-lang", "es"); }}
+                        onClick={() => { i18n.changeLanguage("es"); localStorage.setItem("lumaforge-lang", "es"); updateSetting("language", "es"); }}
                         className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                          i18n.language === "es"
+                          settings.language === "es"
                             ? "bg-blue-600 text-white"
                             : "bg-(--color-surface) text-(--color-muted) hover:text-(--color-text)"
                         }`}
@@ -401,9 +401,9 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         Español
                       </button>
                       <button
-                        onClick={() => { i18n.changeLanguage("en"); localStorage.setItem("lumaforge-lang", "en"); }}
+                        onClick={() => { i18n.changeLanguage("en"); localStorage.setItem("lumaforge-lang", "en"); updateSetting("language", "en"); }}
                         className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                          i18n.language === "en"
+                          settings.language === "en"
                             ? "bg-blue-600 text-white"
                             : "bg-(--color-surface) text-(--color-muted) hover:text-(--color-text)"
                         }`}
@@ -416,11 +416,11 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <div className="mt-6">
                     <div className="mb-3">
                       <h3 className="font-medium text-(--color-text)">
-                        Estilo de superficie
+                        {t("settings.surface_style")}
                       </h3>
 
                       <p className="mt-1 text-sm text-(--color-muted)">
-                        Define cómo se ven las cards, paneles y contenedores.
+                        {t("settings.surface_style_desc")}
                       </p>
                     </div>
 
@@ -446,12 +446,12 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 </SettingsSection>
 
                 <SettingsSection
-                  title="Animaciones"
-                  description="Controla la transición de los héroes y fondos de juegos."
+                  title={t("settings.animations")}
+                  description={t("settings.animations_desc")}
                 >
                   <div className="mb-3 flex items-center gap-2 text-sm text-(--color-muted)">
                     <SlidersHorizontal className="h-4 w-4" />
-                    Transición de hero / fondo
+                    {t("settings.hero_transition")}
                   </div>
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -483,14 +483,13 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   </div>
 
                   <p className="mt-4 text-xs text-(--color-muted)">
-                    El fondo ambiental siempre usa la transicion de fundido
-                    premium, independientemente de esta seleccion.
+                    {t("settings.ambient_note")}
                   </p>
 
                   <div className="mt-4 border-t border-(--surface-active-border) pt-4">
                     <ToggleOption
-                      label="Modo compacto"
-                      description="Reduce animaciones y espaciado visual."
+                      label={t("settings.compact_mode")}
+                      description={t("settings.compact_desc")}
                       enabled={settings.compactMode}
                       onChange={(enabled) => updateSetting("compactMode", enabled)}
                     />
@@ -498,13 +497,13 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 </SettingsSection>
 
                 <SettingsSection
-                  title="Fondo ambiental"
-                  description="Muestra el arte del juego activo (difuminado) detras de la interfaz."
+                  title={t("settings.ambient")}
+                  description={t("settings.ambient_desc")}
                 >
                   <div className="space-y-4">
                     <ToggleOption
-                      label="Fondo ambiental"
-                      description="Activa el fondo dinamico en todas las pantallas."
+                      label={t("settings.ambient_toggle")}
+                      description={t("settings.ambient_toggle_desc")}
                       enabled={ambientState.enabled}
                       onChange={setAmbientEnabled}
                     />
@@ -513,16 +512,16 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       <>
                         <div className="lf-surface rounded-2xl border p-4">
                           <p className="text-sm font-medium text-(--color-text)">
-                            Modo del fondo ambiental
+                            {t("settings.ambient_mode")}
                           </p>
                           <p className="mt-1 text-xs text-(--color-muted)">
-                            Muestra el arte difuminado o el color dominante extraido de la foto.
+                            {t("settings.ambient_mode_desc")}
                           </p>
                           <div className="mt-3 grid grid-cols-2 gap-2">
                             {(
                               [
-                                { id: "image", label: "Imagen (difuminado)" },
-                                { id: "color", label: "Color dominante" },
+                                { id: "image", label: t("settings.ambient_mode_image") },
+                                { id: "color", label: t("settings.ambient_mode_color") },
                               ] as const
                             ).map((opt) => (
                               <button
@@ -543,17 +542,17 @@ export default function Settings({ onSectionChange }: SettingsProps) {
 
                         <div className="lf-surface rounded-2xl border p-4">
                           <p className="text-sm font-medium text-(--color-text)">
-                            Intensidad del fondo ambiental
+                            {t("settings.ambient_intensity")}
                           </p>
                           <p className="mt-1 text-xs text-(--color-muted)">
-                            Controla cuanto se ve y se difumina el fondo ambiental.
+                            {t("settings.ambient_intensity_desc")}
                           </p>
                           <div className="mt-3 grid grid-cols-3 gap-2">
                             {(
                               [
-                                { id: "sutil", label: "Sutil" },
-                                { id: "equilibrado", label: "Equilibrado" },
-                                { id: "vivido", label: "Vivido" },
+                                { id: "sutil", label: t("settings.ambient_subtle") },
+                                { id: "equilibrado", label: t("settings.ambient_balanced") },
+                                { id: "vivido", label: t("settings.ambient_vivid") },
                               ] as const
                             ).map((opt) => (
                               <button
@@ -589,13 +588,13 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "notifications" && (
               <>
                 <SettingsSection
-                  title="Session Overlay"
-                  description="Control how game session notifications (launch/stop) are delivered."
+                  title={t("settings.overlay_title")}
+                  description={t("settings.overlay_desc")}
                 >
                   <div className="space-y-4">
                     <ToggleOption
-                      label="Overlay notification window"
-                      description="Use a transparent always-on-top overlay window for game launch and stop notifications."
+                      label={t("settings.overlay_window")}
+                      description={t("settings.overlay_window_desc")}
                       enabled={settings.gameSessionOverlayEnabled}
                       onChange={(enabled) => updateSetting("gameSessionOverlayEnabled", enabled)}
                     />
@@ -603,10 +602,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
                       <div className="space-y-0.5">
                         <label className="text-sm font-medium text-(--color-text)">
-                          Overlay position
+                          {t("settings.overlay_position")}
                         </label>
                         <p className="text-xs text-(--color-muted)">
-                          Choose where achievement and session overlay notifications appear.
+                          {t("settings.overlay_position_desc")}
                         </p>
                       </div>
                       <div className="grid grid-cols-3 gap-0.5 overflow-hidden rounded-lg border border-(--surface-active-border)">
@@ -633,29 +632,29 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     </div>
 
                     <ToggleOption
-                      label="Game session HUD"
-                      description="Show a floating pill during gameplay with game info, elapsed time, and stop/resume buttons."
+                      label={t("settings.hud")}
+                      description={t("settings.hud_desc")}
                       enabled={settings.gameSessionHudEnabled}
                       onChange={(enabled) => updateSetting("gameSessionHudEnabled", enabled)}
                     />
 
                     <ToggleOption
-                      label="Send native OS notification"
-                      description="Send a system notification when an achievement unlocks. Requires notification permission."
+                      label={t("settings.native_notification")}
+                      description={t("settings.native_notification_desc")}
                       enabled={settings.achievementNativeNotificationsEnabled}
                       onChange={(enabled) => updateSetting("achievementNativeNotificationsEnabled", enabled)}
                     />
 
                     <ToggleOption
-                      label="Achievement overlay window"
-                      description="Show achievement unlocks in a transparent overlay window on top of the game."
+                      label={t("settings.achievement_overlay")}
+                      description={t("settings.achievement_overlay_desc")}
                       enabled={settings.achievementOverlayNotificationsEnabled}
                       onChange={(enabled) => updateSetting("achievementOverlayNotificationsEnabled", enabled)}
                     />
 
                     <ToggleOption
-                      label="Launcher achievement overlay"
-                      description="Show launcher meta-achievements (streaks, playtime milestones) in the overlay window."
+                      label={t("settings.launcher_overlay")}
+                      description={t("settings.launcher_overlay_desc")}
                       enabled={settings.launcherAchievementOverlayEnabled}
                       onChange={(enabled) => updateSetting("launcherAchievementOverlayEnabled", enabled)}
                     />
@@ -671,23 +670,22 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "backup" && (
               <>
                 <SettingsSection
-                  title="Cloud & Backup"
-                  description="Backups, restore and cloud sync."
+                  title={t("settings.backup_title")}
+                  description={t("settings.backup_desc")}
                 >
                   <div className="space-y-4">
                     <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                       <Cloud className="h-4 w-4" />
-                      Backup & Restore
+                      {t("settings.backup_section")}
                     </div>
                     <p className="text-xs text-(--color-muted)">
-                      Export your LumaForge settings, favorites, manual games, playtime and other data.
-                      Import a backup to restore settings across devices or after a fresh install.
+                      {t("settings.backup_description")}
                     </p>
                   </div>
                 </SettingsSection>
                 <SettingsSection
-                  title="Local Backups"
-                  description="Export and import backup archives stored on this device."
+                  title={t("settings.backup_local")}
+                  description={t("settings.backup_local_desc")}
                 >
                   <BackupSectionUI />
                 </SettingsSection>
@@ -696,30 +694,30 @@ export default function Settings({ onSectionChange }: SettingsProps) {
 
             {activeSection === "metadata" && (
               <SettingsSection
-                title="Metadata Providers"
-                description="Configura las fuentes de metadatos para enriquecer la información de tus juegos."
+                title={t("settings.metadata_title")}
+                description={t("settings.metadata_desc")}
               >
                 <div className="space-y-6">
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 text-sm text-(--color-accent)">
                       <Gamepad2 className="h-4 w-4" />
-                      IGDB Metadata
+                      {t("settings.igdb_label")}
                     </div>
 
                     <p className="text-xs text-(--color-muted)">
-                      IGDB (Internet Game Database) provides cover art and metadata enrichment. Requires a Twitch Client ID and Client Secret (OAuth credentials from dev.twitch.tv).
+                      {t("settings.igdb_desc")}
                     </p>
 
                     {(!settings.igdbClientId || !settings.igdbClientSecret) && (
                       <p className="text-xs text-amber-400">
-                        Fill in both Client ID and Client Secret to enable IGDB artwork and metadata sources.
+                        {t("settings.igdb_warning")}
                       </p>
                     )}
 
                     <label className="block">
                       <div className="mb-2">
                         <p className="text-sm font-medium text-(--color-text)">
-                          Client ID
+                          {t("settings.igdb_client_id")}
                         </p>
                       </div>
                       <input
@@ -727,14 +725,14 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         value={settings.igdbClientId}
                         onChange={(e) => { updateSetting("igdbClientId", e.target.value); clearIgdbTokenCache(); }}
                         className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                        placeholder="Enter your IGDB Client ID"
+                        placeholder={t("settings.igdb_client_id_placeholder")}
                       />
                     </label>
 
                     <label className="block">
                       <div className="mb-2">
                         <p className="text-sm font-medium text-(--color-text)">
-                          Client Secret
+                          {t("settings.igdb_client_secret")}
                         </p>
                       </div>
                       <div className="relative">
@@ -743,7 +741,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                           value={settings.igdbClientSecret}
                           onChange={(e) => { updateSetting("igdbClientSecret", e.target.value); clearIgdbTokenCache(); }}
                           className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                          placeholder="Enter your IGDB Client Secret"
+                          placeholder={t("settings.igdb_client_secret_placeholder")}
                         />
                         <button
                           type="button"
@@ -760,23 +758,23 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <div className="border-t border-(--surface-active-border) pt-6 space-y-4">
                     <div className="flex items-center gap-2 text-sm text-(--color-accent)">
                       <Globe className="h-4 w-4" />
-                      RAWG Metadata
+                      {t("settings.rawg_label")}
                     </div>
 
                     <p className="text-xs text-(--color-muted)">
-                      RAWG provides background artwork and metadata enrichment. Requires a free API key from rawg.io.
+                      {t("settings.rawg_desc")}
                     </p>
 
                     {!settings.rawgApiKey && (
                       <p className="text-xs text-amber-400">
-                        Add a RAWG API key to enable RAWG background artwork.
+                        {t("settings.rawg_warning")}
                       </p>
                     )}
 
                     <label className="block">
                       <div className="mb-2">
                         <p className="text-sm font-medium text-(--color-text)">
-                          API Key
+                          {t("settings.rawg_key")}
                         </p>
                       </div>
                       <div className="relative">
@@ -785,7 +783,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                           value={settings.rawgApiKey}
                           onChange={(e) => updateSetting("rawgApiKey", e.target.value)}
                           className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                          placeholder="Enter your RAWG API key"
+                          placeholder={t("settings.rawg_key_placeholder")}
                         />
                         <button
                           type="button"
@@ -802,33 +800,33 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <div className="border-t border-(--surface-active-border) pt-6 space-y-4">
                     <div className="flex items-center gap-2 text-sm text-(--color-accent)">
                       <Crosshair className="h-4 w-4" />
-                      SteamGridDB Artwork
+                      {t("settings.sgdb_label")}
                     </div>
 
                     <p className="text-xs text-(--color-muted)">
-                      SteamGridDB provides poster, hero and logo artwork for Library cards. Requires an API key.
+                      {t("settings.sgdb_desc")}
                     </p>
 
                     <ToggleOption
-                      label="Enable SteamGridDB Artwork"
-                      description="Use SteamGridDB to fetch poster, hero and logo artwork for Library and Juegos."
+                      label={t("settings.sgdb_enable")}
+                      description={t("settings.sgdb_enable_desc")}
                       enabled={settings.steamGridDbArtworkEnabled}
                       onChange={(enabled) => updateSetting("steamGridDbArtworkEnabled", enabled)}
                     />
 
                     {settings.steamGridDbArtworkEnabled && !settings.steamGridDbApiKey && (
                       <p className="text-xs text-amber-400">
-                        Add a SteamGridDB API key to fetch artwork.
+                        {t("settings.sgdb_warning")}
                       </p>
                     )}
 
                     <label className="block">
                       <div className="mb-2">
                         <p className="text-sm font-medium text-(--color-text)">
-                          API Key (optional)
+                          {t("settings.sgdb_key")}
                         </p>
                         <p className="mt-1 text-xs text-(--color-muted)">
-                          Used to fetch native poster, hero and logo artwork for Library cards.
+                          {t("settings.sgdb_key_desc")}
                         </p>
                       </div>
                       <div className="relative">
@@ -837,7 +835,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                           value={settings.steamGridDbApiKey}
                           onChange={(e) => updateSetting("steamGridDbApiKey", e.target.value)}
                           className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                          placeholder="Enter your SteamGridDB API key"
+                          placeholder={t("settings.sgdb_key_placeholder")}
                         />
                         <button
                           type="button"
@@ -857,12 +855,12 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "providers" && (
               <>
                 <SettingsSection
-                  title="Downloads / Packages"
-                  description="Configura las fuentes que LumaForge usara para buscar y descargar paquetes."
+                  title={t("settings.providers_downloads")}
+                  description={t("settings.providers_downloads_desc")}
                 >
                   <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                     <Globe className="h-4 w-4" />
-                    Multi-provider fallback
+                    {t("settings.multi_fallback")}
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -893,7 +891,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                             provider.id === "hubcapdb"
                               ? <HubcapProviderBadges surface="settings" />
                               : provider.id === "ryuu" && providerSettings.apiKey
-                                ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">Active</span>
+                                ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">{t("settings.active_label")}</span>
                                 : undefined
                           }
                         />
@@ -916,17 +914,16 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 </div>
 
                 <SettingsSection
-                  title="Integrations"
-                  description="Control which game providers are active and where they appear."
+                  title={t("settings.integrations")}
+                  description={t("settings.integrations_desc")}
                 >
                   <div className="space-y-4">
                     <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                       <Zap className="h-4 w-4" />
-                      Provider integrations
+                      {t("settings.integrations_icon")}
                     </div>
                     <p className="text-xs text-(--color-muted)">
-                      Disable an integration to stop its scans and hide its games from selected UI surfaces.
-                      All stored data is preserved when an integration is disabled.
+                      {t("settings.integrations_note")}
                     </p>
                   </div>
                 </SettingsSection>
@@ -937,32 +934,32 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "startup" && (
               <>
                 <SettingsSection
-                  title="Avanzado"
-                  description="Opciones de mantenimiento, logs y seguridad."
+                  title={t("settings.advanced")}
+                  description={t("settings.advanced_desc")}
                 >
                   <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                     <SlidersHorizontal className="h-4 w-4" />
-                    Sistema
+                    {t("settings.system")}
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                     <ToggleOption
-                      label="Crear backups automáticamente"
-                      description="Antes de sobrescribir archivos existentes."
+                      label={t("settings.auto_backup")}
+                      description={t("settings.auto_backup_desc")}
                       enabled={settings.createBackups}
                       onChange={(enabled) => updateSetting("createBackups", enabled)}
                     />
 
                     <ToggleOption
-                      label="Guardar logs detallados"
-                      description="Registra instalaciones, descargas, errores y rutas."
+                      label={t("settings.detailed_logs")}
+                      description={t("settings.detailed_logs_desc")}
                       enabled={settings.detailedLogs}
                       onChange={(enabled) => updateSetting("detailedLogs", enabled)}
                     />
 
                     <ToggleOption
-                      label="Limpiar temporales al cerrar"
-                      description="Elimina ZIPs y carpetas extraidas al salir."
+                      label={t("settings.clean_temp")}
+                      description={t("settings.clean_temp_desc")}
                       enabled={settings.cleanTempOnExit}
                       onChange={(enabled) => updateSetting("cleanTempOnExit", enabled)}
                     />
@@ -972,10 +969,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
                       <div className="space-y-0.5">
                         <label className="text-sm font-medium text-(--color-text)">
-                          Media cache profile
+                          {t("settings.media_cache")}
                         </label>
                         <p className="text-xs text-(--color-muted)">
-                          Controls how aggressively artwork and metadata are cached locally.
+                          {t("settings.media_cache_desc")}
                         </p>
                       </div>
                       <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
@@ -990,7 +987,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                                 : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                             }`}
                           >
-                            {profile === "minimal" ? "Minimal" : profile === "playnite-balanced" ? "Balanced" : "Full"}
+                            {profile === "minimal" ? t("settings.media_cache_minimal") : profile === "playnite-balanced" ? t("settings.media_cache_balanced") : t("settings.media_cache_full")}
                           </button>
                         ))}
                       </div>
@@ -1000,7 +997,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <div className="mt-6 border-t border-(--surface-active-border) pt-4">
                     <div className="mb-3 flex items-center gap-2 text-sm text-(--color-accent)">
                       <SlidersHorizontal className="h-4 w-4" />
-                      Mantenimiento de la biblioteca
+                      {t("settings.library_maintenance")}
                     </div>
                     <div className="flex flex-wrap gap-3">
                       <button
@@ -1011,14 +1008,14 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                             const { getCachedSettings } = await import("../services/appBootCoordinator");
                             const s = getCachedSettings() ?? settings;
                             await rebuildLibraryIndex(s);
-                            showSuccess("Library index rebuilt from config/lua definitions");
+                            showSuccess(t("settings.library_rebuild_success"));
                           } catch (err) {
-                            showError(`Rebuild failed: ${err}`);
+                            showError(t("settings.library_rebuild_error", { error: String(err) }));
                           }
                         }}
                         className="lf-btn lf-btn-primary text-xs"
                       >
-                        Reconstruir índice de biblioteca
+                        {t("settings.rebuild_index")}
                       </button>
                       <button
                         type="button"
@@ -1045,7 +1042,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         }}
                         className="lf-btn lf-btn-secondary text-xs"
                       >
-                        Validar salud de la biblioteca
+                        {t("settings.validate_health")}
                       </button>
                     </div>
                   </div>
@@ -1056,22 +1053,22 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "startup" && (
               <>
                 <SettingsSection
-                  title="Startup & Window Behavior"
-                  description="Control how LumaForge starts and how the window behaves."
+                  title={t("settings.startup_behavior")}
+                  description={t("settings.startup_behavior_desc")}
                 >
                   <div className="space-y-4">
                     <div className="mb-2 flex items-center gap-2 text-sm text-(--color-accent)">
                       <Power className="h-4 w-4" />
-                      Launch Mode
+                      {t("settings.launch_mode")}
                     </div>
 
                     <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
                       <div className="space-y-0.5">
                         <label className="text-sm font-medium text-(--color-text)">
-                          Default launch mode
+                          {t("settings.default_launch")}
                         </label>
                         <p className="text-xs text-(--color-muted)">
-                          Choose which interface opens when LumaForge starts.
+                          {t("settings.default_launch_desc")}
                         </p>
                       </div>
                       <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
@@ -1084,7 +1081,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                               : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                           }`}
                         >
-                          Desktop
+                          {t("settings.desktop")}
                         </button>
                         <button
                           type="button"
@@ -1095,7 +1092,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                               : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                           }`}
                         >
-                          Console
+                          {t("settings.console")}
                         </button>
                       </div>
                     </div>
@@ -1103,10 +1100,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
                       <div className="space-y-0.5">
                         <label className="text-sm font-medium text-(--color-text)">
-                          Startup window mode
+                          {t("settings.window_mode")}
                         </label>
                         <p className="text-xs text-(--color-muted)">
-                          How the main window appears on launch.
+                          {t("settings.window_mode_desc")}
                         </p>
                       </div>
                       <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
@@ -1130,48 +1127,48 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 </SettingsSection>
 
                 <SettingsSection
-                  title="Startup Behavior"
-                  description="Control automatic behaviors on startup and shutdown."
+                  title={t("settings.auto_behavior_title")}
+                  description={t("settings.auto_behavior_desc")}
                 >
                   <div className="space-y-4">
                     <ToggleOption
-                      label="Start with Windows"
-                      description="Launch LumaForge automatically when Windows starts."
+                      label={t("settings.start_with_windows")}
+                      description={t("settings.start_with_windows_desc")}
                       enabled={settings.startWithWindows}
                       onChange={(enabled) => updateSetting("startWithWindows", enabled)}
                     />
 
                     <ToggleOption
-                      label="Start maximized"
-                      description="Open the main window maximized on startup."
+                      label={t("settings.start_maximized")}
+                      description={t("settings.start_maximized_desc")}
                       enabled={settings.startMaximized}
                       onChange={(enabled) => updateSetting("startMaximized", enabled)}
                     />
 
                     <ToggleOption
-                      label="Start in tray"
-                      description="Launch minimized to the system tray without showing the window."
+                      label={t("settings.start_in_tray")}
+                      description={t("settings.start_in_tray_desc")}
                       enabled={settings.startInTray}
                       onChange={(enabled) => updateSetting("startInTray", enabled)}
                     />
 
                     <ToggleOption
-                      label="Close to tray"
-                      description="When closing the window, minimize to tray instead of quitting."
+                      label={t("settings.close_to_tray")}
+                      description={t("settings.close_to_tray_desc")}
                       enabled={settings.closeToTray}
                       onChange={(enabled) => updateSetting("closeToTray", enabled)}
                     />
 
                     <ToggleOption
-                      label="Show Dashboard on startup"
-                      description="Open the Home dashboard instead of the last used page."
+                      label={t("settings.show_dashboard_on_startup")}
+                      description={t("settings.show_dashboard_on_startup_desc")}
                       enabled={settings.showDashboardOnStartup}
                       onChange={(enabled) => updateSetting("showDashboardOnStartup", enabled)}
                     />
 
                     <ToggleOption
-                      label="Disable automatic updates"
-                      description="Prevent LumaForge from checking for updates on startup."
+                      label={t("settings.disable_auto_updates")}
+                      description={t("settings.disable_auto_updates_desc")}
                       enabled={settings.disableAutoUpdates}
                       onChange={(enabled) => updateSetting("disableAutoUpdates", enabled)}
                     />
@@ -1179,8 +1176,8 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 </SettingsSection>
 
                 <SettingsSection
-                  title="Maintenance"
-                  description="Re-run setup or reset configuration."
+                  title={t("settings.maintenance")}
+                  description={t("settings.maintenance_desc")}
                 >
                   <button
                     onClick={() => {
@@ -1190,7 +1187,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/8"
                   >
                     <RotateCcw className="h-4 w-4 text-(--color-muted)" />
-                    Run Setup Wizard
+                    {t("settings.run_wizard")}
                   </button>
                 </SettingsSection>
               </>
@@ -1199,8 +1196,8 @@ export default function Settings({ onSectionChange }: SettingsProps) {
             {activeSection === "startup" && (
               <>
                 <SettingsSection
-                  title="About LumaForge"
-                  description="Application information and links."
+                  title={t("settings.about")}
+                  description={t("settings.about_desc")}
                 >
                   <div className="space-y-4">
                     <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-5">
@@ -1213,14 +1210,14 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                             LumaForge
                           </h3>
                           <p className="text-sm text-(--color-muted)">
-                            Your Steam game library companion
+                            {t("settings.your_companion")}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-3 text-xs text-(--color-muted)">
-                            <span>Version 0.1.0</span>
+                            <span>{t("settings.version_label")} 0.1.0</span>
                             <span className="text-white/20">|</span>
-                            <span>Desktop Mode</span>
+                            <span>{t("settings.desktop_mode_label")}</span>
                             <span className="text-white/20">|</span>
-                            <span>Tauri + React</span>
+                            <span>{t("settings.tauri_react")}</span>
                           </div>
                         </div>
                       </div>
@@ -1233,7 +1230,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
                       >
                         <Code className="h-4 w-4" />
-                        GitHub Repository
+                        {t("settings.github_repo")}
                         <ExternalLink className="h-3 w-3 text-(--color-muted)" />
                       </button>
                       <button
@@ -1242,128 +1239,128 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
                       >
                         <ExternalLink className="h-4 w-4" />
-                        View License
+                        {t("settings.view_license")}
                       </button>
                     </div>
                   </div>
                 </SettingsSection>
 
                 <SettingsSection
-                  title="Data & Services"
-                  description="External services and tools used by LumaForge. LumaForge is not affiliated with or endorsed by any of these services."
+                  title={t("settings.data_services")}
+                  description={t("settings.data_services_desc")}
                 >
                   <div className="space-y-3">
                     {[
                       {
                         name: "Steam",
-                        description: "Game library metadata, Steam app IDs, store links, achievements, and playtime tracking.",
+                        description: t("settings.service_steam_desc"),
                         url: "https://store.steampowered.com/",
                         badge: "configured" as const,
                         show: !!settings.steamRoot,
                       },
                       {
                         name: "SteamGridDB",
-                        description: "Community artwork provider for covers, heroes, logos, and icons.",
+                        description: t("settings.service_sgdb_desc"),
                         url: "https://www.steamgriddb.com/",
                         badge: "configured" as const,
                         show: settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey,
                       },
                       {
                         name: "IGDB / Twitch",
-                        description: "Game metadata provider using Twitch OAuth credentials.",
+                        description: t("settings.service_igdb_desc"),
                         url: "https://www.igdb.com/",
                         badge: "configured" as const,
                         show: !!settings.igdbClientId && !!settings.igdbClientSecret,
                       },
                       {
                         name: "RAWG",
-                        description: "Optional game metadata and background artwork provider.",
+                        description: t("settings.service_rawg_desc"),
                         url: "https://rawg.io/",
                         badge: "configured" as const,
                         show: !!settings.rawgApiKey,
                       },
                       {
                         name: "Hubcap",
-                        description: "Package and provider source for game downloads.",
+                        description: t("settings.service_hubcap_desc"),
                         url: "https://hubcapmanifest.com/",
                         badge: "configured" as const,
                         show: !!(settings.providers?.hubcapdb?.apiKey),
                       },
                       {
                         name: "Epic Games Store",
-                        description: "Epic Games library detection and launcher integration.",
+                        description: t("settings.service_epic_desc"),
                         url: "https://store.epicgames.com/",
                         badge: "external" as const,
                       },
                       {
                         name: "Ryuu",
-                        description: "Third-party game launcher and library manager.",
+                        description: t("settings.service_ryuu_desc"),
                         url: "https://ryuu.de/",
                         badge: "external" as const,
                       },
                       {
                         name: "TorBox",
-                        description: "Debrid service for torrent and direct download acceleration.",
+                        description: t("settings.service_torbox_desc"),
                         url: "https://torbox.app/",
                         badge: "external" as const,
                       },
                       {
                         name: "Real-Debrid",
-                        description: "Debrid service for unrestricted downloads and torrent caching.",
+                        description: t("settings.service_realdebrid_desc"),
                         url: "https://real-debrid.com/",
                         badge: "external" as const,
                       },
                       {
                         name: "AllDebrid",
-                        description: "Debrid service for fast, unrestricted file hosting downloads.",
+                        description: t("settings.service_alldebrid_desc"),
                         url: "https://alldebrid.com/",
                         badge: "external" as const,
                       },
                       {
                         name: "Premiumize",
-                        description: "Debrid service combining VPN, cloud storage, and download acceleration.",
+                        description: t("settings.service_premiumize_desc"),
                         url: "https://premiumize.me/",
                         badge: "external" as const,
                       },
                       {
                         name: "SmokeAPI",
-                        description: "Steam API proxy for offline and cracked games.",
+                        description: t("settings.service_smokeapi_desc"),
                         url: "https://github.com/acidicoala/SmokeAPI",
                         badge: "external" as const,
                       },
                       {
                         name: "Steamless",
-                        description: "SteamStub DRM unpacker for game executables.",
+                        description: t("settings.service_steamless_desc"),
                         url: "https://github.com/atom0s/Steamless",
                         badge: "external" as const,
                       },
                       {
                         name: "Goldberg (GSE)",
-                        description: "Offline Steam emulator with achievements support.",
+                        description: t("settings.service_goldberg_desc"),
                         url: "https://github.com/Detanup01/gbe_fork",
                         badge: "external" as const,
                       },
                       {
                         name: "Online-Fix",
-                        description: "Multiplayer and co-op patches for local and LAN play.",
+                        description: t("settings.service_onlinefix_desc"),
                         url: "https://online-fix.me/",
                         badge: "external" as const,
                       },
                       {
                         name: "Koaloader",
-                        description: "Plugin loader for game directories. Auto-installed when needed.",
+                        description: t("settings.service_koaloader_desc"),
                         url: "https://github.com/acidicoala/Koaloader",
                         badge: "external" as const,
                       },
                       {
                         name: "OpenSteamTool",
-                        description: "Steam library management and game modification tool.",
+                        description: t("settings.service_opentool_desc"),
                         url: "https://github.com/OpenSteam001/OpenSteamTool",
                         badge: "external" as const,
                       },
                       {
                         name: "GitHub",
-                        description: "LumaForge project source code and issue tracking.",
+                        description: t("settings.service_github_desc"),
                         url: "https://github.com/anomalyco/LumaForge",
                         badge: "always" as const,
                       },
@@ -1379,15 +1376,15 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                             </p>
                             {service.badge === "configured" && service.show ? (
                               <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                                Configured
+                                {t("settings.service_configured")}
                               </span>
                             ) : service.badge === "configured" ? (
                               <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
-                                Optional
+                                {t("settings.service_optional")}
                               </span>
                             ) : (
                               <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
-                                External
+                                {t("settings.service_external")}
                               </span>
                             )}
                           </div>
@@ -1401,7 +1398,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                           className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          Visit
+                          {t("settings.visit")}
                         </button>
                       </div>
                     ))}

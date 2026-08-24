@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { CheckCircle2, Library, ArrowRight, X } from "lucide-react";
 
 const DEBUG_PACKAGE_COMPLETION_UI = false;
@@ -61,6 +62,7 @@ export default function PackageInstallSuccessModal({
   onViewInLibrary,
   onContinueBrowsing,
 }: Props) {
+  const { t } = useTranslation();
   const [focusedButton, setFocusedButton] = useState<"library" | "browse">("library");
   const focusedButtonRef = useRef<"library" | "browse">("library");
   const activationLockedRef = useRef(false);
@@ -214,7 +216,7 @@ export default function PackageInstallSuccessModal({
           ref={closeRef}
           type="button"
           onClick={handleClose}
-          aria-label="Close"
+          aria-label={t("store.close", "Close")}
           className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10 hover:text-white/70"
         >
           <X className="h-4 w-4" />
@@ -235,7 +237,7 @@ export default function PackageInstallSuccessModal({
             id="pkg-success-title"
             className="text-center text-xl font-bold tracking-tight text-white"
           >
-            Package installed
+            {t("store.package_installed", "Package installed")}
           </h2>
 
           {/* Description */}
@@ -244,7 +246,7 @@ export default function PackageInstallSuccessModal({
             className="mt-2 max-w-[360px] text-center text-sm leading-relaxed text-white/50"
           >
             <span className="font-medium text-white/80">{gameTitle}</span>{" "}
-            was installed successfully. You can view it in your library or keep browsing.
+            {t("store.install_success_desc", "was installed successfully. You can view it in your library or keep browsing.")}
           </p>
         </div>
 
@@ -263,7 +265,7 @@ export default function PackageInstallSuccessModal({
               <p className="truncate text-sm font-medium text-white/90">{gameTitle}</p>
               {providerName && (
                 <p className="mt-0.5 text-xs text-white/40">
-                  Source: {providerName}
+                  {t("store.source", "Source")}: {providerName}
                 </p>
               )}
             </div>
@@ -297,7 +299,7 @@ export default function PackageInstallSuccessModal({
                 : "border-white/[0.08] bg-white/[0.04] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
             }`}
           >
-            Continue Browsing
+            {t("store.continue_browsing", "Continue Browsing")}
           </button>
         </div>
       </div>
