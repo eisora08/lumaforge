@@ -1469,7 +1469,8 @@
       "configure_providers_label": "Configurar proveedores",
       "none_found": "Ninguno encontrado",
       "check_failed": "Verificación falló",
-      "check_pending": "Verificación pendiente"
+      "check_pending": "Verificación pendiente",
+      "sources_badge": "Fuentes"
     },
     "details": {
       "developer_unknown": "Desarrollador desconocido",
@@ -1488,7 +1489,36 @@
       "no_download_uri": "No hay URI de descarga disponible para este repack.",
       "install_started": "Instalación iniciada: {{title}}",
       "debrid": "Debrid",
-      "install_failed": "Error al iniciar instalación: {{message}}"
+      "install_failed": "Error al iniciar instalación: {{message}}",
+      "review_count": "{{reviews}} reseñas · {{positive}} positivas"
+    },
+    "technical": {
+      "title": "Requisitos del sistema",
+      "minimum": "Mínimos",
+      "recommended": "Recomendados",
+      "unavailable": "Los requisitos del sistema de Steam no están disponibles para este título.",
+      "not_found": "No se encontraron datos de requisitos del sistema en los metadatos de Steam."
+    },
+    "dlc": {
+      "title": "Contenido para este juego",
+      "description": "DLC y complementos detectados desde metadatos de Steam.",
+      "empty": "No se detectó contenido adicional para este juego.",
+      "count_1": "1 DLC disponible",
+      "count_x": "{{count}} DLCs disponibles",
+      "detail_unavailable": "Los metadatos detallados de DLC no están disponibles aún."
+    },
+    "more_like": {
+      "title": "Más como este",
+      "description": "Juegos relacionados desde secciones de la tienda, resultados y proveedores cargados.",
+      "empty": "No hay recomendaciones disponibles todavía.",
+      "scroll_left": "Desplazar Más como este a la izquierda",
+      "scroll_right": "Desplazar Más como este a la derecha"
+    },
+    "content": {
+      "title": "Contenido para este juego",
+      "count_1": "1 elemento DLC detectado.",
+      "count_x": "{{count}} elementos DLC detectados.",
+      "empty": "No se detectó contenido adicional para este juego."
     },
     "sourceSelector": {
       "download": "Descargar",
@@ -1813,6 +1843,16 @@
     "completed": "Completado",
     "in_progress": "En progreso",
     "never_played": "Nunca jugado",
+    "less_than_hour": "< 1h",
+    "never": "Nunca",
+    "languages_more": "+{{count}} más",
+    "dlc_available_1": "1 DLC disponible",
+    "dlcs_available_x": "{{count}} DLCs disponibles",
+    "browse": "Explorar",
+    "lua": "Lua",
+    "steam": "Steam",
+    "epic": "Epic",
+    "play": "Jugar",
     "publisher_abbr": "Ed.",
     "grid_card_style_desc": "Ancho, radio y etiquetas de tarjetas para el modo Grid",
     "spotlight_card_style_desc": "Estilo de tarjeta, preajustes y tráiler para Spotlight",

@@ -1021,8 +1021,8 @@ export default function StoreGameDetailsPage({
     } catch (error) {
       console.error(error);
 
-      showError(t("store.could_not_open_steam", "No se pudo abrir Steam."), {
-        title: t("store.error_opening_link", "Error abriendo enlace"),
+      showError(t("store.could_not_open_steam", "Could not open Steam."), {
+        title: t("store.error_opening_link", "Error opening link"),
       });
     }
   }
@@ -1033,8 +1033,8 @@ export default function StoreGameDetailsPage({
     } catch (error) {
       console.error(error);
 
-      showError(t("store.could_not_open_steamdb", "No se pudo abrir SteamDB."), {
-        title: t("store.error_opening_link", "Error abriendo enlace"),
+      showError(t("store.could_not_open_steamdb", "Could not open SteamDB."), {
+        title: t("store.error_opening_link", "Error opening link"),
       });
     }
   }
@@ -1045,8 +1045,8 @@ export default function StoreGameDetailsPage({
     } catch (error) {
       console.error(error);
 
-      showError(t("store.could_not_open_steam_library", "No se pudo abrir Steam Library."), {
-        title: t("store.error_opening_link", "Error abriendo enlace"),
+      showError(t("store.could_not_open_steam_library", "Could not open Steam Library."), {
+        title: t("store.error_opening_link", "Error opening link"),
       });
     }
   }

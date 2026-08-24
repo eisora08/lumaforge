@@ -1469,7 +1469,8 @@
       "configure_providers_label": "Configure providers",
       "none_found": "None found",
       "check_failed": "Check failed",
-      "check_pending": "Check pending"
+      "check_pending": "Check pending",
+      "sources_badge": "Sources"
     },
     "details": {
       "developer_unknown": "Developer unknown",
@@ -1488,7 +1489,36 @@
       "no_download_uri": "No download URI available for this repack.",
       "install_started": "Install started: {{title}}",
       "debrid": "Debrid",
-      "install_failed": "Failed to start install: {{message}}"
+      "install_failed": "Failed to start install: {{message}}",
+      "review_count": "{{reviews}} reviews · {{positive}} positive"
+    },
+    "technical": {
+      "title": "System Requirements",
+      "minimum": "Minimum",
+      "recommended": "Recommended",
+      "unavailable": "Steam system requirements not available for this title.",
+      "not_found": "System requirements data was not found in Steam metadata."
+    },
+    "dlc": {
+      "title": "Content For This Game",
+      "description": "DLC and add-ons detected from Steam metadata.",
+      "empty": "No additional content detected for this game.",
+      "count_1": "1 DLC Available",
+      "count_x": "{{count}} DLCs Available",
+      "detail_unavailable": "Detailed DLC metadata is not available yet."
+    },
+    "more_like": {
+      "title": "More Like This",
+      "description": "Related games from store sections, results and loaded providers.",
+      "empty": "No recommendations available yet.",
+      "scroll_left": "Scroll More Like This left",
+      "scroll_right": "Scroll More Like This right"
+    },
+    "content": {
+      "title": "Content For This Game",
+      "count_1": "1 DLC item detected.",
+      "count_x": "{{count}} DLC items detected.",
+      "empty": "No additional content detected for this game."
     },
     "sourceSelector": {
       "download": "Download",
@@ -1813,6 +1843,16 @@
     "completed": "Completed",
     "in_progress": "In Progress",
     "never_played": "Never Played",
+    "less_than_hour": "< 1h",
+    "never": "Never",
+    "languages_more": "+{{count}} more",
+    "dlc_available_1": "1 DLC Available",
+    "dlcs_available_x": "{{count}} DLCs Available",
+    "browse": "Browse",
+    "lua": "Lua",
+    "steam": "Steam",
+    "epic": "Epic",
+    "play": "Play",
     "publisher_abbr": "Pub",
     "grid_card_style_desc": "Card width, radius, labels for Grid mode",
     "spotlight_card_style_desc": "Card style, presets, trailer for Spotlight",

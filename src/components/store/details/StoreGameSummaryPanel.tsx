@@ -356,7 +356,7 @@ export default function StoreGameSummaryPanel({
       `[PACKAGE][SUMMARY_STATE] appid=${game.appId} actionState=${actionState} providerCheckState=${providerCheckState} reason=${buttonConfig.reason} hasLocal=${hasLocalPackage} hasRemote=${providerCheckState !== "no-data"}`,
     );
   }
-  const primaryIsCheckAction = buttonConfig.label === "Check again" || buttonConfig.label === "Check for updates";
+  const primaryIsCheckAction = providerCheckState === "no-data" || providerCheckState === "unknown" || providerCheckState === "error" || buttonConfig.reason === "default";
   const showSecondaryCheckAgain = isInstalled && providerCheckState !== "no-data" && !primaryIsCheckAction && !isProviderChecking;
   const checkAgainRendered = primaryIsCheckAction ? 1 : showSecondaryCheckAgain ? 1 : 0;
 
@@ -463,7 +463,7 @@ export default function StoreGameSummaryPanel({
 
             {!steamOwned && !isNonInstalledLua && ((totalSources > 0 && !isChecking) || isBackgroundChecking) ? (
               <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
-                {availableSources}/{totalSources} Sources
+                {availableSources}/{totalSources} {t("store.summary.sources_badge", "Sources")}
                 {isBackgroundChecking && ` · ${t("store.summary.scanning", "scanning...")}`}
               </span>
             ) : null}
@@ -770,7 +770,7 @@ export default function StoreGameSummaryPanel({
   const summaryCard = (
     <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
-        Summary
+        {t("store.summary.summary_title", "Summary")}
       </h3>
 
         <div className="mt-3 space-y-2">
@@ -797,7 +797,7 @@ export default function StoreGameSummaryPanel({
               repackActive
                 ? repackSourceLabels.length > 0
                   ? repackSourceLabels.join(" · ")
-                  : t("store.summary.sin_repacks", "Sin repacks")
+                  : t("store.summary.sin_repacks", "No repacks")
                 : steamOwned
                   ? t("store.summary.steam_account", "Steam account")
                   : isNonInstalledLua

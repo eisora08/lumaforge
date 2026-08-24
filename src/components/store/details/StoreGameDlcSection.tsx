@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ExternalLink, Gamepad2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import AsyncImage from "../../common/AsyncImage";
 
 import type { SteamAppMetadata } from "../../../types/gameMetadata";
@@ -15,6 +16,7 @@ export default function StoreGameDlcSection({
   dlcCount,
   dlcMetadata = [],
 }: StoreGameDlcSectionProps) {
+  const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -68,26 +70,26 @@ export default function StoreGameDlcSection({
   return (
     <section className="rounded-3xl border border-(--surface-active-border) bg-white/5 p-5 lg:p-6">
       <h2 className="text-lg font-bold text-(--color-text)">
-        Content For This Game
+        {t("store.dlc.title", "Content For This Game")}
       </h2>
 
       <p className="mt-1 text-sm text-(--color-muted)">
-        DLC and add-ons detected from Steam metadata.
+        {t("store.dlc.description", "DLC and add-ons detected from Steam metadata.")}
       </p>
 
       {dlcCount === 0 && (
         <div className="mt-4 rounded-xl border border-(--surface-active-border) bg-black/20 p-4 text-sm text-(--color-muted)">
-          No additional content detected for this game.
+          {t("store.dlc.empty", "No additional content detected for this game.")}
         </div>
       )}
 
       {dlcCount > 0 && !hasCards && (
         <div className="mt-4 rounded-xl border border-(--surface-active-border) bg-black/20 p-4">
           <p className="text-sm font-medium text-(--color-text)">
-            {dlcCount} DLC{dlcCount !== 1 ? "s" : ""} Available
+            {dlcCount === 1 ? t("store.dlc.count_1", "1 DLC Available") : t("store.dlc.count_x", "{{count}} DLCs Available", { count: dlcCount })}
           </p>
           <p className="mt-1 text-xs text-(--color-muted)">
-            Detailed DLC metadata is not available yet.
+            {t("store.dlc.detail_unavailable", "Detailed DLC metadata is not available yet.")}
           </p>
         </div>
       )}

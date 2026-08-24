@@ -788,10 +788,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game]);
   const playtimeDisplay = useMemo(() => {
     const s = formatPlaytime(playtimeSeconds);
-    return s ?? "< 1h";
-  }, [playtimeSeconds]);
+    return s ?? t("console_settings.less_than_hour", "< 1h");
+  }, [playtimeSeconds, t]);
   const lastPlayedTs = useMemo(() => (game ? getGameLastPlayedTimestamp(game) : null), [game]);
-  const lastPlayedStr = lastPlayedTs ? formatRelativeTime(lastPlayedTs) : "Never";
+  const lastPlayedStr = lastPlayedTs ? formatRelativeTime(lastPlayedTs) : t("console_settings.never", "Never");
 
   const appIdStr = game?.appId ?? null;
 
@@ -840,11 +840,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     const langs = game?.metadata?.languages;
     if (!langs || langs.length === 0) return null;
     if (langs.length <= 6) return langs.join(", ");
-    return `${langs.slice(0, 6).join(", ")} +${langs.length - 6} more`;
-  }, [game?.metadata]);
+    return `${langs.slice(0, 6).join(", ")} ${t("console_settings.languages_more", "+{{count}} more", { count: langs.length - 6 })}`;
+  }, [game?.metadata, t]);
 
   const dlcCount = game?.metadata?.dlc_count ?? 0;
-  const dlcLabel = dlcCount <= 0 ? null : dlcCount === 1 ? "1 DLC Available" : `${dlcCount} DLCs Available`;
+  const dlcLabel = dlcCount <= 0 ? null : dlcCount === 1 ? t("console_settings.dlc_available_1", "1 DLC Available") : t("console_settings.dlcs_available_x", "{{count}} DLCs Available", { count: dlcCount });
 
   const {
     reviewSummary,
@@ -870,11 +870,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const dynamicHints = useMemo(() => {
     const all = hints;
     if (focusZone === "actions" && actionsBrowsingMedia) {
-      return ["[←/→] Browse", playTrailerHint, all.navigate, all.back, seekHint];
+      return [`[←/→] ${t("console_settings.browse", "Browse")}`, playTrailerHint, all.navigate, all.back, seekHint];
     } else if (focusZone === "actions") {
       return [all.play, all.select, browseMediaHint, all.navigate, all.back, all.options];
     } else if (focusZone === "media-preview" || focusZone === "media-carousel") {
-      return ["[←/→] Browse", all.select, all.back, all.navigate, seekHint];
+      return [`[←/→] ${t("console_settings.browse", "Browse")}`, all.select, all.back, all.navigate, seekHint];
     } else if (focusZone === "cards") {
       return [all.navigate, all.select, all.back];
     } else if (focusZone === "hints") {
@@ -1098,12 +1098,12 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-(--color-muted)/60 lg:text-[11px]">
                   <span className="inline-flex items-center gap-1"><HardDrive className="h-3 w-3" />{getGameDiskSize(game)}</span>
                   {game.steamInstalled && <span className="rounded bg-emerald-500/80 px-1.5 py-0.5 font-semibold text-black">{t("settings.installed", "Installed")}</span>}
-                  {game.isLuaActive && <span className="rounded bg-violet-500/80 px-1.5 py-0.5 font-semibold text-white">Lua</span>}
+                  {game.isLuaActive && <span className="rounded bg-violet-500/80 px-1.5 py-0.5 font-semibold text-white">{t("console_settings.lua", "Lua")}</span>}
                   {game.source === "steam" && !game.hasLua && (
-                    <span className="rounded bg-blue-500/80 px-1.5 py-0.5 font-semibold text-white">Steam</span>
+                    <span className="rounded bg-blue-500/80 px-1.5 py-0.5 font-semibold text-white">{t("console_settings.steam", "Steam")}</span>
                   )}
                   {game.source === "epic" && (
-                    <span className="rounded bg-purple-500/80 px-1.5 py-0.5 font-semibold text-white">Epic</span>
+                    <span className="rounded bg-purple-500/80 px-1.5 py-0.5 font-semibold text-white">{t("console_settings.epic", "Epic")}</span>
                   )}
                   {game.source === "debrid" && game.repacker && (
                     <span className="rounded bg-cyan-500/80 px-1.5 py-0.5 font-semibold text-black">{game.repacker.toUpperCase()}</span>
@@ -1211,7 +1211,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 </button>
               ) : actionInFlight ? (
                 <button type="button" disabled className="w-full rounded-xl bg-(--color-accent)/70 py-3 text-sm font-bold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed">
-                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {actionModel?.label ?? "Play"}…
+                  <div className="mr-2 inline h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {actionModel?.label ?? t("console_settings.play", "Play")}…
                 </button>
               ) : (
                 <button
@@ -1227,7 +1227,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   } ${focusZone === "actions" && !actionsBrowsingMedia && leftActionSubIndex === 0 ? "scale-[1.02] ring-2 ring-(--color-accent) ring-offset-2" : ""}`}
                 >
                   <ActionIcon action={actionModel?.action ?? "unavailable"} className="mr-2 inline h-4 w-4" />
-                  {actionModel?.label ?? "Play"}
+                  {actionModel?.label ?? t("console_settings.play", "Play")}
                 </button>
               )}
               {/* Botones secundarios: Options + Mute + Favorites */}

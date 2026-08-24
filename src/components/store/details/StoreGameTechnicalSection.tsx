@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Monitor, Terminal, Apple } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import type { SteamAppMetadata } from "../../../types/gameMetadata";
 import type { SystemRequirements as SystemRequirementsType } from "../../../types/gameMetadata";
@@ -31,7 +32,7 @@ function stripReqHtml(input: string): string {
   return text.trim();
 }
 
-const LABEL_PATTERN = /^(OS|Processor|Memory|RAM|Graphics|Video Card|Video|GPU|Storage|Hard Drive|HDD|SSD|DirectX|Network|Sound Card|Sound|Additional Notes|VR Support)\s*:\s*/i;
+const LABEL_PATTERN = /^(OS|Sistema operativo|Processor|Procesador|Memory|Memoria|RAM|Graphics|Tarjeta gráfica|Video Card|Video|GPU|Storage|Almacenamiento|Hard Drive|HDD|SSD|DirectX|Versión de DirectX|Network|Red|Sound Card|Sound|Audio|Additional Notes|Notas adicionales|VR Support|Soporte VR)\s*:\s*/i;
 
 function parseRequirements(text: string): { label: string; value: string }[] {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -58,6 +59,7 @@ function parseRequirements(text: string): { label: string; value: string }[] {
 export default function StoreGameTechnicalSection({
   metadata,
 }: StoreGameTechnicalSectionProps) {
+  const { t } = useTranslation();
   const [activePlatform, setActivePlatform] = useState("pc");
 
   const platforms: PlatformInfo[] = [
@@ -76,13 +78,13 @@ export default function StoreGameTechnicalSection({
     return (
       <section className="rounded-3xl border border-(--surface-active-border) bg-white/5 p-5 lg:p-6">
         <h2 className="text-lg font-bold text-(--color-text)">
-          System Requirements
+          {t("store.technical.title", "System Requirements")}
         </h2>
         <p className="mt-1 text-sm text-(--color-muted)">
-          Steam system requirements not available for this title.
+          {t("store.technical.unavailable", "Steam system requirements not available for this title.")}
         </p>
         <div className="mt-4 rounded-xl border border-(--surface-active-border) bg-black/20 p-4 text-sm text-(--color-muted)">
-          System requirements data was not found in Steam metadata.
+          {t("store.technical.not_found", "System requirements data was not found in Steam metadata.")}
         </div>
       </section>
     );
@@ -91,7 +93,7 @@ export default function StoreGameTechnicalSection({
   return (
     <section className="rounded-3xl border border-(--surface-active-border) bg-white/5 p-5 lg:p-6">
       <h2 className="text-lg font-bold text-(--color-text)">
-        System Requirements
+        {t("store.technical.title", "System Requirements")}
       </h2>
 
       <div className="mt-4 flex gap-2">
@@ -116,14 +118,14 @@ export default function StoreGameTechnicalSection({
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           {active.requirements.minimum && (
             <RequirementsCard
-              title="Minimum"
+              title={t("store.technical.minimum", "Minimum")}
               text={active.requirements.minimum}
             />
           )}
 
           {active.requirements.recommended && (
             <RequirementsCard
-              title="Recommended"
+              title={t("store.technical.recommended", "Recommended")}
               text={active.requirements.recommended}
             />
           )}

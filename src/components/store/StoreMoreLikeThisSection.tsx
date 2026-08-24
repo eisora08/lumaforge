@@ -5,6 +5,7 @@ import {
   Gamepad2,
   Star,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import AsyncImage from "../common/AsyncImage";
 
 import type { PackageGame } from "../../types/package";
@@ -29,8 +30,8 @@ function getTitle(game: PackageGame, metadata?: SteamAppMetadata) {
   return metadata?.name || game.title;
 }
 
-function getDeveloper(game: PackageGame, metadata?: SteamAppMetadata) {
-  return metadata?.developer || game.developer || "Developer unknown";
+function getDeveloper(game: PackageGame, metadata?: SteamAppMetadata, t?: (key: string, fallback: string) => string) {
+  return metadata?.developer || game.developer || (t ? t("store.details.developer_unknown", "Developer unknown") : "Developer unknown");
 }
 
 function getImage(game: PackageGame, metadata?: SteamAppMetadata) {
@@ -40,30 +41,31 @@ function getImage(game: PackageGame, metadata?: SteamAppMetadata) {
   return undefined;
 }
 
-function getReviewLabel(summary?: SteamReviewSummary) {
+function getReviewLabel(summary?: SteamReviewSummary, t?: (key: string, fallback: string) => string) {
   if (!summary) {
-    return "Review summary unavailable";
+    return t ? t("store.details.review_unavailable", "Review summary unavailable") : "Review summary unavailable";
   }
 
   if (!summary.resolved) {
-    return "Review summary unavailable";
+    return t ? t("store.details.review_unavailable", "Review summary unavailable") : "Review summary unavailable";
   }
 
   if (summary.resolved && summary.total_reviews === 0) {
-    return "No reviews yet";
+    return t ? t("store.details.no_reviews_yet", "No reviews yet") : "No reviews yet";
   }
 
   if (typeof summary.positive_percent === "number") {
     return `${summary.review_score_desc} · ${summary.positive_percent}%`;
   }
 
-  return summary.review_score_desc || "N/A";
+  return summary.review_score_desc || (t ? t("store.details.na", "N/A") : "N/A");
 }
 
 export default function StoreMoreLikeThisSection({
   games,
   onOpenGame,
 }: StoreMoreLikeThisSectionProps) {
+  const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -111,24 +113,24 @@ export default function StoreMoreLikeThisSection({
       <div className="flex items-end justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-(--color-text)">
-            More Like This
+            {t("store.more_like.title", "More Like This")}
           </h2>
 
           <p className="mt-1 text-sm text-(--color-muted)">
-            Juegos relacionados desde secciones del Store, resultados y providers cargados.
+            {t("store.more_like.description", "Related games from store sections, results and loaded providers.")}
           </p>
         </div>
       </div>
 
       {games.length === 0 ? (
         <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-black/20 p-5 text-sm text-(--color-muted)">
-          No hay recomendaciones disponibles todavía.
+          {t("store.more_like.empty", "No recommendations available yet.")}
         </div>
       ) : (
         <div className="group/row relative mt-4">
           <button
             type="button"
-            aria-label="Scroll More Like This left"
+            aria-label={t("store.more_like.scroll_left", "Scroll More Like This left")}
             disabled={!canScrollLeft}
             onClick={() => scroll("left")}
             className={`left-1 ${btnClass}`}
@@ -142,9 +144,9 @@ export default function StoreMoreLikeThisSection({
           >
             {games.map(({ game, metadata, reviewSummary }) => {
             const title = getTitle(game, metadata);
-            const developer = getDeveloper(game, metadata);
+            const developer = getDeveloper(game, metadata, t);
             const imageUrl = getImage(game, metadata);
-            const reviewLabel = getReviewLabel(reviewSummary);
+            const reviewLabel = getReviewLabel(reviewSummary, t);
 
             return (
               <button
@@ -187,7 +189,7 @@ export default function StoreMoreLikeThisSection({
 
           <button
             type="button"
-            aria-label="Scroll More Like This right"
+            aria-label={t("store.more_like.scroll_right", "Scroll More Like This right")}
             disabled={!canScrollRight}
             onClick={() => scroll("right")}
             className={`right-1 ${btnClass}`}
