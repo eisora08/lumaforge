@@ -2725,7 +2725,7 @@ export default function LibraryGameDetails({
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                   <Calendar className="mr-1.5 inline h-3.5 w-3.5" />
-                  {t("library_details.releaseDate")}
+                  {t("library_details.release_date", "Release date")}
                 </h3>
                 <p className="mt-1 text-sm text-(--color-text)">
                   {canonicalLoaded
@@ -2739,19 +2739,19 @@ export default function LibraryGameDetails({
                 <div className="mt-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                   <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                     <FileCode2 className="mr-1.5 inline h-3.5 w-3.5" />
-                    {t("library_details.lua")}
+                    {t("library_details.lua", "Lua")}
                   </h3>
                   <div className="space-y-2">
                     {script && (
                       <>
                         <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5">
-                          <p className="text-[10px] text-(--color-muted)">{t("library_details.script")}</p>
+                          <p className="text-[10px] text-(--color-muted)">{t("library_details.script", "Script")}</p>
                           <p className="mt-0.5 text-xs font-medium text-(--color-text)">
                             {script.file_name}
                           </p>
                         </div>
                         <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5">
-                          <p className="text-[10px] text-(--color-muted)">{t("library_details.status")}</p>
+                          <p className="text-[10px] text-(--color-muted)">{t("library_details.status", "Status")}</p>
                           <p className="mt-0.5 text-xs text-(--color-text)">
                             {game.isLuaDisabled ? t("library_details.disabled") : t("library_details.active")}
                           </p>
@@ -2774,7 +2774,7 @@ export default function LibraryGameDetails({
               {game.appId && (
                 <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                   <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
-                    {t("library_details.appId")}
+                    {t("library_details.app_id", "App ID")}
                   </h3>
                   <p className="mt-1 text-sm font-mono text-(--color-text)">
                     {game.appId}
