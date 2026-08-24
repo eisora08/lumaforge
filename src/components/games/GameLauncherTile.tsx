@@ -9,8 +9,8 @@ import {
   FolderOpen,
   Gamepad2,
   Heart,
+  Clock,
   Loader2,
-  MoreHorizontal,
   Play,
   RefreshCw,
   Settings,
@@ -66,18 +66,13 @@ import type { SyncIndexItem } from "../../types/syncIndex";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
+import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtimeService";
 import GameEditDialog from "./GameEditDialog";
 import ToolsModal from "../tools/ToolsModal";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { open } from "@tauri-apps/plugin-dialog";
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -224,6 +219,12 @@ function GameLauncherTileInner({
     canonicalInfo,
   );
 
+  const developer = game.metadata?.developer || game.metadata?.publishers?.[0];
+  const playtimeEntry = getPlaytimeEntryByAppId(game.appId);
+  const playtimeText = playtimeEntry && playtimeEntry.totalPlaytimeSeconds > 0
+    ? formatPlaytime(playtimeEntry.totalPlaytimeSeconds)
+    : null;
+
   // Source trace log â€” emitted once per instance per game
   const DEBUG_NAME_SOURCE_TRACE = false;
   const displayTraced = useRef(false);
@@ -316,7 +317,7 @@ function GameLauncherTileInner({
   const isRunning = sessionState === "running";
   const action = getLauncherGamePrimaryAction(game);
   const hasLua = game.luaScripts.length > 0;
-  const { installState, dismiss } = useInstallTracker(game.appId);
+  useInstallTracker(game.appId);
   const { getJobByAppId } = useDownloadQueueContext();
   const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
   const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
@@ -486,20 +487,8 @@ function GameLauncherTileInner({
     onSelect(game);
   }
 
-  function handleActionClick(e: React.MouseEvent, cb: () => void) {
-    e.stopPropagation();
-    setMenuOpen(false);
-    cb();
-  }
-
-  function handleMenuToggle(e: React.MouseEvent) {
-    e.stopPropagation();
-    setContextMenuPos(null);
-    setMenuOpen((prev) => !prev);
-  }
-
   return (
-    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); onOverlayToggle?.(true); onHoverEnd?.(); }} className="lf-game-card group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
+    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); onOverlayToggle?.(true); onHoverEnd?.(); }} className="lf-game-card group flex flex-col overflow-hidden rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
       {/* Image */}
       <div
         role="button"
@@ -511,11 +500,11 @@ function GameLauncherTileInner({
             handleCardClick();
           }
         }}
-        className={`relative cursor-pointer overflow-hidden rounded-t-2xl ${artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[5/3]"
+        className={`relative cursor-pointer overflow-hidden ${artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[5/3]"
           }`}
       >
         {mediaLoading ? (
-          <SkeletonBox className="h-full w-full rounded-t-2xl" />
+          <SkeletonBox className="h-full w-full" />
         ) : resolvedSrc ? (
           <AsyncImage
             src={resolvedSrc}
@@ -531,7 +520,27 @@ function GameLauncherTileInner({
             <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />
           </div>
         )}
-        <div className="absolute inset-0 rounded-t-2xl bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none">
+          <div className="absolute bottom-0 left-0 right-0 p-2.5">
+            <h3 className="lf-card-title line-clamp-1 text-[13px] font-semibold text-white">{displayTitle}</h3>
+            {developer && (
+              <p className="mt-0.5 truncate text-[10px] text-white/60">{developer}</p>
+            )}
+            <div className="mt-1 flex flex-wrap gap-1">
+              {game.metadata?.genres?.slice(0, 2).map((genre) => (
+                <span key={genre} className="rounded bg-white/15 px-1.5 py-0.5 text-[9px] text-white/80">
+                  {genre}
+                </span>
+              ))}
+            </div>
+            {playtimeText && (
+              <p className="mt-1 flex items-center gap-1 text-[10px] text-white/50">
+                <Clock className="h-2.5 w-2.5" />
+                {playtimeText}
+              </p>
+            )}
+          </div>
+        </div>
         {luaUpdateStatus === "update-available" && game.steamInstalled && (
           <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-black">
             {t("game_tile.update", "Update")}
@@ -563,197 +572,34 @@ function GameLauncherTileInner({
         })()}
       </div>
 
-      {/* Title + actions row */}
-      <div className="flex items-start gap-1 px-2.5 py-2">
-        <div className="min-w-0 flex-1">
-          <Tooltip label={displayTitle} delay={400}>
-            <h3
-              role="button"
-              tabIndex={0}
-              onClick={handleCardClick}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  handleCardClick();
-                }
-              }}
-              className="lf-card-title line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
-            >
-              {displayTitle}
-            </h3>
-          </Tooltip>
-
-          <div className="mt-1.5 flex items-center gap-2">
-            {hasActiveInstall ? (
-              <div className="flex w-full flex-col gap-1">
-                <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/80">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  {installJob.message || (
-                    installJob.status === "waiting" || installJob.status === "queued"
-                      ? t("game_tile.waiting_steam", "Waiting for Steam…")
-                      : installJob.status === "downloading"
-                        ? t("game_tile.downloading", "Downloading {{pct}}%", { pct: installJob.progress })
-                        : installJob.status === "extracting" || installJob.status === "installing"
-                          ? t("game_tile.installing", "Installing…")
-                          : installJob.status === "checking"
-                            ? t("game_tile.checking", "Checking…")
-                            : installJob.status === "paused"
-                              ? t("game_tile.paused", "Paused")
-                              : t("game_tile.installing", "Installing…")
-                  )}
-                  {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
-                    <span className="text-[10px] text-amber-400/40">
-                      {formatBytes(installJob.bytesRead)} / {formatBytes(installJob.totalBytes)}
-                    </span>
-                  )}
-                </div>
-                <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
-                  {installJob.progressMode === "determinate" && installJob.progress > 0 ? (
-                    <div
-                      className="h-full rounded-full bg-amber-400 transition-all duration-500 ease-out"
-                      style={{ width: `${Math.min(100, installJob.progress)}%` }}
-                    />
-                  ) : (
-                    <div className="h-full w-1/3 animate-pulse rounded-full bg-amber-400/50" />
-                  )}
-                </div>
-              </div>
-            ) : installState.status === "timeout" ? (
-              <div className="inline-flex items-center gap-1.5">
-                <span className="text-[11px] text-amber-400/70">{t("game_tile.install_stuck", "Install stuck?")}</span>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onInstall(game); }}
-                  className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-                >
-                  <Download className="h-3 w-3" />
-                  {t("game_tile.retry", "Retry")}
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); dismiss(); }}
-                  className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-muted)/50 transition hover:text-(--color-muted)"
-                >
-                  <X className="h-3 w-3" />
-                  {t("game_tile.dismiss", "Dismiss")}
-                </button>
-              </div>
-            ) : hasPendingUninstall ? (
-              <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/70">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                {t("game_tile.uninstalling", "Uninstalling…")}
-              </div>
-            ) : (
-              <>
-                {action === "play" && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleActionClick(e, () => onPlay(game))}
-                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-                  >
-                    <Play className="h-3 w-3" />
-                    {t("game_tile.play", "Play")}
-                  </button>
-                )}
-                {action === "install" && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleActionClick(e, () => onInstall(game))}
-                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-                  >
-                    <Download className="h-3 w-3" />
-                    {t("game_tile.install", "Install")}
-                  </button>
-                )}
-                {action === "open-steam" && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleActionClick(e, () => {
-                      if (game.appId) openExternalUrl(getSteamStoreUrl(Number(game.appId)));
-                    })}
-                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    {t("game_tile.open_steam", "Open in Steam")}
-                  </button>
-                )}
-                {action === "open-lua-folder" && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleActionClick(e, () => {
-                      if (game.luaScripts.length > 0) {
-                        const scriptPath = game.luaScripts[0].path;
-                        const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
-                        if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(t("context_menu.open_folder_error", "Could not open folder: {{error}}", { error: String(err) })));
-                      }
-                    })}
-                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-                  >
-                    <FolderOpen className="h-3 w-3" />
-                    {t("game_tile.lua_folder", "Lua Folder")}
-                  </button>
-                )}
-                {action === "missing-path" && (
-                  <span className="text-[10px] text-(--color-muted)/50">{t("game_tile.missing_path", "Missing Path")}</span>
-                )}
-                {action === "installing" && (
-                  <span className="inline-flex items-center gap-1 text-[10px] text-(--color-muted)/50">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    {t("game_tile.installing_label", "Installing")}
-                  </span>
-                )}
-                {action === "select-exe" && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleActionClick(e, async () => {
-                      try {
-                        const selected = await open({
-                          title: t("debrid.select_exe", "Select game executable"),
-                          filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
-                          defaultPath: game.installDir || "C:\\",
-                          multiple: false,
-                        });
-                        if (selected && game.providerGameId) {
-                          updateDebridGame(game.providerGameId, game.installDir || "", selected);
-                          showSuccess(t("debrid.exe_set", "Game executable set. Ready to play!"));
-                        }
-                      } catch (err) {
-                        const msg = err instanceof Error ? err.message : String(err);
-                        showError(t("debrid.file_picker_failed", "File picker failed: {{error}}", { error: msg }));
-                      }
-                    })}
-                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-                  >
-                    <FileSearch className="h-3 w-3" />
-                    {t("game_tile.select_exe", "Select EXE")}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Three-dots menu */}
-        <div className="relative shrink-0">
-          <Tooltip label={t("game_tile.more_actions", "More actions")} delay={600} disabled={menuOpen}>
-            <button
-              ref={menuAnchorRef}
-              type="button"
-              aria-label={t("game_tile.more_actions", "More actions")}
-              onClick={handleMenuToggle}
-              className="inline-flex cursor-pointer items-center justify-center rounded-lg p-1 text-(--color-muted)/50 transition hover:bg-white/[0.04] hover:text-(--color-text)"
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-
-          <CardActionMenu
-            open={menuOpen}
-            anchorRef={menuAnchorRef}
-            onClose={() => { setMenuOpen(false); setContextMenuPos(null); onOverlayToggle?.(false); }}
-            cursorPos={contextMenuPos}
-            gameId={game.appId}
+      {/* Title only — actions via context menu / hover preview */}
+      <div className="px-2.5 py-2">
+        <Tooltip label={displayTitle} delay={400}>
+          <h3
+            role="button"
+            tabIndex={0}
+            onClick={handleCardClick}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleCardClick();
+              }
+            }}
+            className="lf-card-title line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
           >
+            {displayTitle}
+          </h3>
+        </Tooltip>
+      </div>
+
+      {/* Right-click context menu (no visible button on card) */}
+      <CardActionMenu
+        open={menuOpen}
+        anchorRef={menuAnchorRef}
+        onClose={() => { setMenuOpen(false); setContextMenuPos(null); onOverlayToggle?.(false); }}
+        cursorPos={contextMenuPos}
+        gameId={game.appId}
+      >
             {isRunning ? (
               <MenuItem
                 label={t("context_menu.stop", "Stop")}
@@ -1047,7 +893,6 @@ function GameLauncherTileInner({
               ]}
             />
           </CardActionMenu>
-        </div>
 
         {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
           <>
@@ -1077,7 +922,6 @@ function GameLauncherTileInner({
           </>
         )}
       </div>
-    </div>
   );
 }
 

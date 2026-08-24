@@ -80,7 +80,7 @@ export const defaultSettings: AppSettings = {
 
   cardCornerRadius: 12,
   hideDashboardCardLabels: false,
-  hideLibraryCardLabels: false,
+  hideLibraryCardLabels: true,
 
   // ── Dashboard Home Layout ──────────────────────────────────────────
   dashboardHeroEnabled: true,

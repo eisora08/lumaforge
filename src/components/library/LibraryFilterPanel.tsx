@@ -10,7 +10,6 @@
     query: string;
     filteredCount: number;
     totalCount: number;
-    panelWidth?: number;
     onFilterChange: (filter: LibraryFilter) => void;
     onSortChange: (sort: LibrarySort) => void;
     onQueryChange: (query: string) => void;
@@ -37,15 +36,14 @@
     query,
     filteredCount,
     totalCount,
-    panelWidth = 280,
     onFilterChange,
     onSortChange,
     onQueryChange,
     onReset,
   }: Props) {
     return (
-      <div className="shrink-0" style={{ width: panelWidth }}>
-        <div className="sticky top-0 max-h-[calc(100vh-120px)] overflow-y-auto rounded-2xl bg-white/[0.015] p-4">
+      <div className="w-full">
+        <div className="max-h-[60vh] overflow-y-auto">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-xs font-bold text-(--color-text)">Filters</h3>
             <button

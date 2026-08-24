@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Pencil,
   Scan,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import PageContainer from "../components/layout/PageContainer";
@@ -85,6 +86,8 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [tileOverlayOpen, setTileOverlayOpen] = useState(false);
+  const [filterPopupOpen, setFilterPopupOpen] = useState(false);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
   const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
   const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
   const [filter, setFilter] = useState<LibraryFilter>("all");
@@ -548,8 +551,7 @@ export default function LibraryPage({ onNavigate }: Props) {
           </PageContainer>
         ) : (
           <PageContainer className={`flex flex-1 flex-col py-6 lg:py-8 ${settings.libraryUseFullWidth ? "!max-w-none" : ""}`}>
-            <div className="flex-1 lg:grid lg:gap-6" style={{ gridTemplateColumns: `1fr ${settings.libraryFilterPanelWidth}px` }}>
-              <div className="min-w-0 flex flex-col">
+            <div className="min-w-0 flex flex-col">
                 <div>
                   <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
                     <div>
@@ -620,6 +622,26 @@ export default function LibraryPage({ onNavigate }: Props) {
                       >
                         <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
                         <span className="hidden sm:inline">{loading ? "Scanning..." : "Scan"}</span>
+                      </button>
+
+                      {/* Filter toggle */}
+                      <button
+                        ref={filterButtonRef}
+                        type="button"
+                        onClick={() => setFilterPopupOpen((v) => !v)}
+                        className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs transition lf-press-effect ${
+                          filterPopupOpen || filter !== "all" || sort !== "name" || searchQuery
+                            ? "bg-(--color-accent)/10 text-(--color-accent)"
+                            : "bg-white/[0.04] text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                        }`}
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Filters</span>
+                        {(filter !== "all" || sort !== "name" || searchQuery) && (
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-(--color-accent) text-[9px] font-bold text-white">
+                            {(filter !== "all" ? 1 : 0) + (sort !== "name" ? 1 : 0) + (searchQuery ? 1 : 0)}
+                          </span>
+                        )}
                       </button>
 
                       {/* Grid/List toggle */}
@@ -806,25 +828,37 @@ export default function LibraryPage({ onNavigate }: Props) {
                   </div>
                 )}
               </div>
-
-              <div className="hidden lg:block">
-                <LibraryFilterPanel
-                  filter={filter}
-                  sort={sort}
-                  query={searchQuery}
-                  filteredCount={filteredGames.length}
-                  totalCount={displayGames.length}
-                  panelWidth={settings.libraryFilterPanelWidth}
-                  onFilterChange={setFilter}
-                  onSortChange={setSort}
-                  onQueryChange={setSearchQuery}
-                  onReset={handleResetFilters}
-                />
-              </div>
-            </div>
           </PageContainer>
         )}
       </div>
+
+      {filterPopupOpen && (
+        <div className="fixed inset-0 z-40" onClick={() => setFilterPopupOpen(false)}>
+          <div 
+            className="absolute z-50 w-64 rounded-2xl border border-(--surface-active-border) bg-(--surface-base) p-4 shadow-2xl shadow-black/40"
+            style={{
+              top: filterButtonRef.current?.getBoundingClientRect().bottom ?? 0,
+              left: Math.min(
+                (filterButtonRef.current?.getBoundingClientRect().left ?? 0),
+                window.innerWidth - 280
+              ),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <LibraryFilterPanel
+              filter={filter}
+              sort={sort}
+              query={searchQuery}
+              filteredCount={filteredGames.length}
+              totalCount={displayGames.length}
+              onFilterChange={setFilter}
+              onSortChange={setSort}
+              onQueryChange={setSearchQuery}
+              onReset={() => { handleResetFilters(); setFilterPopupOpen(false); }}
+            />
+          </div>
+        </div>
+      )}
 
       <DebridSourceSelectorModal
         open={debridRepacks.length > 0 && Boolean(debridInstallGame)}

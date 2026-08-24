@@ -167,7 +167,7 @@ const LIBRARY_DEFAULTS = {
   libraryLandscapeGap: 28,
   libraryCardArtworkMode: "landscape" as const,
   cardCornerRadius: 12,
-  hideLibraryCardLabels: false,
+  hideLibraryCardLabels: true,
 };
 
 /* ================================================================== */
