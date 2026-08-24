@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Search } from "lucide-react";
 import type { LibraryGame, LibraryFilter } from "../../types/libraryGame";
 import type { LibraryAppInfoMap } from "../../services/tauri";
@@ -25,9 +26,9 @@ function getImageUrl(game: LibraryGame, appInfoMap?: LibraryAppInfoMap): string 
     || undefined;
 }
 
-function getTitle(game: LibraryGame, appInfoMap?: LibraryAppInfoMap): string {
+function getTitle(game: LibraryGame, appInfoMap?: LibraryAppInfoMap, t?: (key: string, defaultValue: string) => string): string {
   const entry = game.appId ? appInfoMap?.[game.appId] : undefined;
-  return entry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+  return entry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : (t ? t("sidebar.unknown_game", "Unknown Game") : "Unknown Game"));
 }
 
 type Counts = Record<LibraryFilter, number>;
@@ -71,6 +72,7 @@ export default function LibraryRail({
   onSelectGame,
   appInfoMap,
 }: LibraryRailProps) {
+  const { t } = useTranslation();
   const counts = computeCounts(games);
 
   const filtered = games.filter((g) => {
@@ -95,22 +97,22 @@ export default function LibraryRail({
   });
 
   const filterPills: { key: LibraryFilter; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "steam", label: "Steam" },
-    { key: "local", label: "Local" },
-    { key: "lua", label: "Lua" },
-    { key: "installed", label: "Installed" },
-    { key: "uninstalled", label: "Not Installed" },
-    { key: "lua-ready", label: "Lua Ready" },
-    { key: "disabled", label: "Disabled" },
+    { key: "all", label: t("library_page.filter.all", "All") },
+    { key: "steam", label: t("library_page.filter.steam", "Steam") },
+    { key: "local", label: t("library_page.filter.local", "Local") },
+    { key: "lua", label: t("library_page.filter.lua", "Lua") },
+    { key: "installed", label: t("library_page.filter.installed", "Installed") },
+    { key: "uninstalled", label: t("library_page.filter.not_installed", "Not Installed") },
+    { key: "lua-ready", label: t("library_page.filter.lua_ready", "Lua Ready") },
+    { key: "disabled", label: t("library_page.filter.disabled", "Disabled") },
   ];
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-(--surface-active-border) bg-white/[0.02]">
       {/* Header */}
       <div className="shrink-0 border-b border-(--surface-active-border) px-4 py-3">
-        <h2 className="text-sm font-bold text-(--color-text)">Mi Biblioteca</h2>
-        <p className="text-xs text-(--color-muted)">{games.length} games</p>
+        <h2 className="text-sm font-bold text-(--color-text)">{t("sidebar.library", "Library")}</h2>
+        <p className="text-xs text-(--color-muted)">{games.length} {t("library_page.game_count", "games")}</p>
       </div>
 
       {/* Search */}
@@ -120,7 +122,7 @@ export default function LibraryRail({
           <input
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="Search library..."
+            placeholder={t("library_page.search_placeholder", "Search library...")}
             className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 py-1.5 pl-8 pr-3 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
           />
         </div>
@@ -155,13 +157,13 @@ export default function LibraryRail({
       <div className="flex-1 overflow-y-auto py-1">
         {filtered.length === 0 ? (
           <div className="p-4 text-center text-xs text-(--color-muted)">
-            No games match.
+            {t("sidebar.no_games_match", "No games match.")}
           </div>
         ) : (
           filtered.map((game) => {
             const isSelected = game.id === selectedId;
             const imgUrl = getImageUrl(game, appInfoMap);
-            const displayName = getTitle(game, appInfoMap);
+            const displayName = getTitle(game, appInfoMap, t);
             return (
               <button
                 key={game.id}
@@ -194,10 +196,10 @@ export default function LibraryRail({
                       {game.source === "steam" ? "Steam" : game.source === "local" ? "EXE" : "Lua"}
                     </span>
                     {game.isLuaDisabled && (
-                      <span className="text-[10px] text-zinc-500">Disabled</span>
+                      <span className="text-[10px] text-zinc-500">{t("library_page.filter.disabled", "Disabled")}</span>
                     )}
                     {game.hasUpdate && (
-                      <span className="text-[10px] text-yellow-500">Update</span>
+                      <span className="text-[10px] text-yellow-500">{t("sidebar.update", "Update")}</span>
                     )}
                   </div>
                 </div>

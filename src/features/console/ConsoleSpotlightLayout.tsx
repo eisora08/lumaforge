@@ -2,9 +2,7 @@ import { useMemo, useState } from "react";
 import { Trophy } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
-import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground } from "./consoleMedia";
-import { getFavoriteKey } from "../../services/gameCacheService";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getGameAchievementSummary, getGameLastPlayedTimestamp } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
@@ -75,11 +73,9 @@ export default function ConsoleSpotlightLayout({
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
 }: Props) {
-  const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
-  const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
 
@@ -178,17 +174,8 @@ export default function ConsoleSpotlightLayout({
           </h1>
 
           <div className="mb-3 flex flex-wrap gap-2">
-            {focusedGame.steamInstalled && (
-              <span className="rounded-md bg-emerald-500/80 px-2.5 py-0.5 text-xs font-medium text-black backdrop-blur-sm">Installed</span>
-            )}
-            {focusedGame.isLuaActive && (
-              <span className="rounded-md bg-violet-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">Lua</span>
-            )}
             {focusedGame.hasUpdate && (
               <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black backdrop-blur-sm">Update</span>
-            )}
-            {isFav && (
-              <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">Favorite</span>
             )}
           </div>
 

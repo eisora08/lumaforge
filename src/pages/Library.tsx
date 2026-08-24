@@ -28,6 +28,7 @@ import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFi
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
 import { GridSkeleton, LibrarySectionSkeleton } from "../components/common/Skeleton";
 
+import { useTranslation } from "react-i18next";
 import { useSettings } from "../context/SettingsContext";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useGameSession } from "../context/GameSessionContext";
@@ -80,6 +81,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const session = useGameSession();
   const downloadQueue = useDownloadQueueContext();
   const hasLuaPath = Boolean(settings.luaPath);
+  const { t } = useTranslation();
   const [, startTransition] = useTransition();
 
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
@@ -311,24 +313,24 @@ export default function LibraryPage({ onNavigate }: Props) {
       try {
         await session.launchGame(game);
       } catch (err) {
-        showError(String(err), { title: "Error" });
+        showError(String(err), { title: t("library_page.toast.error", "Error") });
       }
     } else if (game.source === "epic" && game.isPlayable) {
       try {
         await session.launchGame(game);
       } catch (err) {
-        showError(String(err), { title: "Error" });
+        showError(String(err), { title: t("library_page.toast.error", "Error") });
       }
     } else if (game.source === "epic" && !game.isPlayable) {
-      showWarning("Epic launch is not enabled for this game.", { title: "Not available" });
+      showWarning(t("library_page.epic_not_available", "Epic launch is not enabled for this game."), { title: t("library_page.not_available", "Not available") });
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       try {
         await session.launchGame(game);
       } catch (err) {
-        showError(String(err), { title: "Error" });
+        showError(String(err), { title: t("library_page.toast.error", "Error") });
       }
     } else {
-      showWarning("This game cannot be launched yet.", { title: "Not available" });
+      showWarning(t("library_page.cannot_launch_yet", "This game cannot be launched yet."), { title: t("library_page.not_available", "Not available") });
     }
   }
 
@@ -348,7 +350,7 @@ export default function LibraryPage({ onNavigate }: Props) {
           const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
           if (!resolved.ok) {
             if (resolved.reason === "no-uri") {
-              showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+              showWarning(t("library_page.no_download_uri", "No download URI available for this Debrid game."), { title: t("library_page.not_available", "Not available") });
             }
             return;
           }
@@ -369,13 +371,13 @@ export default function LibraryPage({ onNavigate }: Props) {
       const providerGameId = game.providerGameId ?? game.id;
       const rawEntry = getDebridRepackEntry(providerGameId);
       if (!rawEntry) {
-        showWarning("Debrid game entry not found.", { title: "Not available" });
+        showWarning(t("library_page.debrid_entry_not_found", "Debrid game entry not found."), { title: t("library_page.not_available", "Not available") });
         return;
       }
       const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
       if (!resolved.ok) {
         if (resolved.reason === "no-uri") {
-          showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+          showWarning(t("library_page.no_download_uri", "No download URI available for this Debrid game."), { title: t("library_page.not_available", "Not available") });
         }
         return;
       }
@@ -397,24 +399,24 @@ export default function LibraryPage({ onNavigate }: Props) {
         await installSteamApp(Number(game.appId));
         installTrackerService.startTracking(game.appId, settings.steamRoot, game.title || String(game.appId), game.imageUrl);
       } catch (err) {
-        showError(String(err), { title: "Error" });
+        showError(String(err), { title: t("library_page.toast.error", "Error") });
       }
     } else {
-      showWarning("This game cannot be installed through Steam because it has no AppID.", { title: "Not available" });
+      showWarning(t("library_page.no_appid_steam", "This game cannot be installed through Steam because it has no AppID."), { title: t("library_page.not_available", "Not available") });
     }
   }
 
   async function handleDeleteScript(game: LibraryGame) {
     const script = game.luaScripts[0];
     if (!script) {
-      showWarning("No Lua script to delete.", { title: "No script" });
+      showWarning(t("library_page.no_lua_to_delete", "No Lua script to delete."), { title: t("library_page.no_script_title", "No script") });
       return;
     }
     if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${settings.luaPath}"`);
     const result = await confirm({
-      title: "Delete Lua script?",
-      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
-      confirmLabel: "Delete Lua",
+      title: t("library_page.delete_lua_confirm_title", "Delete Lua script?"),
+      description: t("library_page.delete_lua_confirm_desc", { defaultValue: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`, fileName: script.file_name, gameTitle: game.title }),
+      confirmLabel: t("library_page.delete_lua_confirm_label", "Delete Lua"),
       variant: "danger",
     });
     if (!result.confirmed) return;
@@ -425,15 +427,15 @@ export default function LibraryPage({ onNavigate }: Props) {
       const stillPresent = remaining.some((s) => s.file_name === script.file_name);
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
       if (stillPresent) {
-        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        showError(t("library_page.deletion_failed_body", "File still exists on disk after deletion attempt."), { title: t("library_page.deletion_failed_title", "Deletion failed") });
         return;
       }
       await refresh({ force: true });
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
-      showSuccess("Lua script deleted.", { title: "Deleted" });
+      showSuccess(t("library_page.lua_deleted", "Lua script deleted."), { title: t("library_page.deleted", "Deleted") });
     } catch (err) {
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
-      showError(String(err), { title: "Error" });
+      showError(String(err), { title: t("library_page.toast.error", "Error") });
     }
   }
 
@@ -443,16 +445,16 @@ export default function LibraryPage({ onNavigate }: Props) {
 
   async function performDownload(game: LibraryGame, source: PackageSource) {
     if (!settings.luaPath || !settings.depotcachePath) {
-      showWarning("Configure Lua and Depot paths in Settings.", { title: "Paths required" });
+      showWarning(t("library_page.paths_required_body", "Configure Lua and Depot paths in Settings."), { title: t("library_page.paths_required", "Paths required") });
       return;
     }
     if (!source.downloadUrl) {
-      showError("Source has no download URL.", { title: "Invalid source" });
+      showError(t("library_page.source_no_url", "Source has no download URL."), { title: t("library_page.invalid_source_title", "Invalid source") });
       return;
     }
     const effectiveHeaders = source.authHeaders ?? getEffectiveProviderAuthHeaders(source.providerId, settings);
     try {
-      showSuccess(`Downloading from ${source.providerName}...`, { title: "Download started" });
+      showSuccess(t("library_page.downloading_from", { defaultValue: `Downloading from ${source.providerName}...`, providerName: source.providerName }), { title: t("library_page.download_started", "Download started") });
       await downloadAndInstallPackage({
         jobId: `sync-${game.appId}-${Date.now()}`,
         downloadUrl: source.downloadUrl,
@@ -501,11 +503,11 @@ export default function LibraryPage({ onNavigate }: Props) {
         await saveProviderStatusAfterInstall(game.appId, source.providerId, hubcapConfig, providerOpts);
       }
 
-      showSuccess(`Sync complete from ${source.providerName}.`, { title: "Synced" });
+      showSuccess(t("library_page.sync_complete", { defaultValue: `Sync complete from ${source.providerName}.`, providerName: source.providerName }), { title: t("library_page.synced", "Synced") });
       await refresh();
     } catch (error) {
       console.error(error);
-      showError(error instanceof Error ? error.message : "Sync failed.", { title: "Error" });
+      showError(error instanceof Error ? error.message : t("library_page.sync_failed", "Sync failed."), { title: t("library_page.toast.error", "Error") });
     }
   }
 
@@ -548,11 +550,11 @@ export default function LibraryPage({ onNavigate }: Props) {
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-(--color-accent)/20 bg-(--color-accent)/10">
                 <Settings className="h-8 w-8 text-(--color-accent)" />
               </div>
-              <h2 className="mt-5 text-xl font-bold text-(--color-text)">Lua path is not configured</h2>
+              <h2 className="mt-5 text-xl font-bold text-(--color-text)">{t("library_page.lua_not_configured", "Lua path is not configured")}</h2>
               <p className="mt-2 text-sm text-(--color-muted)">
-                Configure or auto-detect Steam paths in Settings to scan for installed Lua scripts.
+                {t("library_page.lua_not_configured_desc", "Configure or auto-detect Steam paths in Settings to scan for installed Lua scripts.")}
               </p>
-              <p className="mt-4 text-xs text-(--color-muted)">Go to Settings → Steam Paths</p>
+              <p className="mt-4 text-xs text-(--color-muted)">{t("library_page.go_to_settings", "Go to Settings → Steam Paths")}</p>
             </div>
           </div>
         ) : initialLoading ? (
@@ -569,10 +571,10 @@ export default function LibraryPage({ onNavigate }: Props) {
                 <div>
                   <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
                     <div>
-                      <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Biblioteca</h1>
+                      <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">{t("library_page.title", "Library")}</h1>
                       <p className="mt-1 text-sm text-(--color-muted)">
-                        {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
-                        {loading && !initialLoading && " · scanning..."}
+                        {t("library_page.game_count", { defaultValue: "{{count}} games", count: filteredGames.length })}
+                        {loading && !initialLoading && ` · ${t("library_page.scanning", "Scanning...")}`}
                       </p>
                     </div>
 
@@ -583,16 +585,16 @@ export default function LibraryPage({ onNavigate }: Props) {
                             type="button"
                             onClick={() => setAddGameOpen(true)}
                             className="inline-flex cursor-pointer items-center gap-1.5 rounded-l-xl bg-white/[0.04] px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
-                            title="Add Manual Game"
+                            title={t("library_page.add_game_title", "Add Manual Game")}
                           >
                             <Plus className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Add Game</span>
+                            <span className="hidden sm:inline">{t("library_page.add_game", "Add Game")}</span>
                           </button>
                           <button
                             type="button"
                             onClick={() => setAddMenuOpen((v) => !v)}
                             className="inline-flex cursor-pointer items-center rounded-r-xl border-l border-white/[0.06] bg-white/[0.04] px-1.5 py-2 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
-                            title="More options"
+                            title={t("library_page.more_options", "More options")}
                           >
                             <ChevronDown className={`h-3 w-3 transition-transform ${addMenuOpen ? "rotate-180" : ""}`} />
                           </button>
@@ -607,8 +609,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                                 <div>
-                                  <div className="font-medium">Manual Entry</div>
-                                  <div className="text-[10px] text-(--color-muted)/50">Create game from scratch</div>
+                                  <div className="font-medium">{t("library_page.manual_entry", "Manual Entry")}</div>
+                                  <div className="text-[10px] text-(--color-muted)/50">{t("library_page.manual_entry_desc", "Create game from scratch")}</div>
                                 </div>
                               </button>
                               <div className="mx-2 border-t border-(--surface-active-border)/30" />
@@ -618,8 +620,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                               >
                                 <Scan className="h-3.5 w-3.5" />
                                 <div>
-                                  <div className="font-medium">Scan Installed</div>
-                                  <div className="text-[10px] text-(--color-muted)/50">Detect games on your PC</div>
+                                  <div className="font-medium">{t("library_page.scan_installed", "Scan Installed")}</div>
+                                  <div className="text-[10px] text-(--color-muted)/50">{t("library_page.scan_installed_desc", "Detect games on your PC")}</div>
                                 </div>
                               </button>
                             </div>
@@ -632,10 +634,10 @@ export default function LibraryPage({ onNavigate }: Props) {
                         onClick={() => refresh()}
                         disabled={loading}
                         className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/15 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
-                        title="Scan"
+                        title={t("library_page.scan", "Scan")}
                       >
                         <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                        <span className="hidden sm:inline">{loading ? "Scanning..." : "Scan"}</span>
+                        <span className="hidden sm:inline">{loading ? t("library_page.scanning", "Scanning...") : t("library_page.scan", "Scan")}</span>
                       </button>
 
                       {/* Filter toggle */}
@@ -650,7 +652,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                         }`}
                       >
                         <SlidersHorizontal className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Filters</span>
+                        <span className="hidden sm:inline">{t("library_page.filters", "Filters")}</span>
                         {(filter !== "all" || sort !== "name" || searchQuery) && (
                           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-(--color-accent) text-[9px] font-bold text-white">
                             {(filter !== "all" ? 1 : 0) + (sort !== "name" ? 1 : 0) + (searchQuery ? 1 : 0)}
@@ -668,7 +670,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                               ? "bg-(--color-accent)/15 text-(--color-accent)"
                               : "text-(--color-muted) hover:text-(--color-text)"
                           }`}
-                          title="Grid view"
+                          title={t("library_page.grid_view", "Grid view")}
                         >
                           <Grid3X3 className="h-3.5 w-3.5" />
                         </button>
@@ -680,7 +682,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                               ? "bg-(--color-accent)/15 text-(--color-accent)"
                               : "text-(--color-muted) hover:text-(--color-text)"
                           }`}
-                          title="List view"
+                          title={t("library_page.list_view", "List view")}
                         >
                           <List className="h-3.5 w-3.5" />
                         </button>
@@ -690,7 +692,7 @@ export default function LibraryPage({ onNavigate }: Props) {
 
                   {warnings.length > 0 && (
                     <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
-                      <p className="mb-1 font-medium">Warnings:</p>
+                      <p className="mb-1 font-medium">{t("library_page.warnings", "Warnings:")}</p>
                       <ul className="space-y-0.5">
                         {warnings.map((w, i) => <li key={i}>• {w}</li>)}
                       </ul>
@@ -702,12 +704,12 @@ export default function LibraryPage({ onNavigate }: Props) {
                       <Search className="h-4 w-4 shrink-0 text-(--color-accent)" />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-(--color-text)">
-                          Showing: {focusTitle || `Game ${focusAppId}`}
+                          {t("library_page.showing", "Showing:")} {focusTitle || t("library_page.game_fallback", { defaultValue: "Game {{appId}}", appId: focusAppId })}
                         </p>
                         <p className="mt-0.5 text-xs text-(--color-muted)">
                           {displayGames.length > 0
-                            ? "Game found in your library."
-                            : "Game not yet in library — try refreshing or installing."}
+                            ? t("library_page.game_found", "Game found in your library.")
+                            : t("library_page.game_not_found", "Game not yet in library — try refreshing or installing.")}
                         </p>
                       </div>
                       {displayGames.length > 0 && (
@@ -721,7 +723,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                           className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
                         >
                           <X className="h-3.5 w-3.5" />
-                          Show all games
+                          {t("library_page.show_all", "Show all games")}
                         </button>
                       )}
                       {displayGames.length === 0 && (
@@ -735,7 +737,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                           className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent)/10 px-2.5 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/15 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                          Refresh library
+                          {t("library_page.refresh_library", "Refresh library")}
                         </button>
                       )}
                     </div>
@@ -747,16 +749,16 @@ export default function LibraryPage({ onNavigate }: Props) {
                     {filter === "lua" ? (
                       <>
                         <FileCode2 className="mx-auto h-10 w-10 text-(--color-muted)" />
-                        <h2 className="mt-4 font-semibold text-(--color-text)">No installed Lua scripts found</h2>
+                        <h2 className="mt-4 font-semibold text-(--color-text)">{t("library_page.no_lua_scripts_title", "No installed Lua scripts found")}</h2>
                         <p className="mt-1.5 text-sm text-(--color-muted)">
-                          Download Lua from the Store or sync a supported game.
+                          {t("library_page.no_lua_scripts_desc", "Download Lua from the Store or sync a supported game.")}
                         </p>
                       </>
                     ) : (
                       <>
                         <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
-                        <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
-                        <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
+                        <h2 className="mt-4 font-semibold text-(--color-text)">{t("library_page.no_items_title", "No items match these filters.")}</h2>
+                        <p className="mt-1.5 text-sm text-(--color-muted)">{t("library_page.no_items_desc", "Try clearing filters or changing your search.")}</p>
                       </>
                     )}
                     {(filter !== "all" || searchQuery) && (
@@ -765,7 +767,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                         onClick={handleResetFilters}
                         className="mt-4 inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/15 focus-visible:ring-2 focus-visible:ring-(--color-accent)/30"
                       >
-                        Reset filters
+                        {t("library_page.reset_filters", "Reset filters")}
                       </button>
                     )}
                   </div>
@@ -826,7 +828,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                                   {game.repacker ? game.repacker.toUpperCase() : "Debrid"}
                                 </span>
                               )}
-                              {game.steamInstalled && <span className="hidden text-[10px] text-(--color-muted)/50 sm:inline">Installed</span>}
+                              {game.steamInstalled && <span className="hidden text-[10px] text-(--color-muted)/50 sm:inline">{t("library_page.installed", "Installed")}</span>}
                             </div>
                           </button>
                         ))}
@@ -881,7 +883,7 @@ export default function LibraryPage({ onNavigate }: Props) {
           const resolved = await resolveDebridInstallUri(repack.downloadUris, confirm, debridInstallGame.title);
           if (!resolved.ok) {
             if (resolved.reason === "no-uri") {
-              showWarning("No download URI available for this Debrid source.", { title: "Not available" });
+              showWarning(t("library_page.no_download_uri_source", "No download URI available for this Debrid source."), { title: t("library_page.not_available", "Not available") });
             }
             return;
           }

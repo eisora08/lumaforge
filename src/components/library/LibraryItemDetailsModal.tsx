@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Database,
@@ -45,8 +46,8 @@ function formatBytes(bytes: number) {
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
-function formatDate(seconds: number) {
-  if (!seconds) return "No disponible";
+function formatDate(seconds: number, t: (key: string, fallback: string) => string) {
+  if (!seconds) return t("library_item_details.no_date", "No disponible");
 
   return new Date(seconds * 1000).toLocaleString();
 }
@@ -84,6 +85,7 @@ export default function LibraryItemDetailsModal({
   onOpenSteamStore,
   onOpenSteamDb,
 }: LibraryItemDetailsModalProps) {
+  const { t } = useTranslation();
   const [imageFailed, setImageFailed] = useState(false);
 
   if (!open || !script) {
@@ -91,7 +93,7 @@ export default function LibraryItemDetailsModal({
   }
 
   const title = metadata?.name || `Steam App ${script.app_id}`;
-  const developer = metadata?.developer || "Developer unknown";
+  const developer = metadata?.developer || t("library_item_details.developer_unknown", "Developer unknown");
   const coverUrl = getBestCoverUrl(script.app_id, metadata);
   const initials = getInitials(title);
   const updateInfo = getLuaUpdateInfo(script);
@@ -122,7 +124,7 @@ export default function LibraryItemDetailsModal({
                 </div>
 
                 <p className="mt-3 text-xs text-white/45">
-                  AppID {script.app_id}
+                  {t("library_item_details.appid", "AppID")} {script.app_id}
                 </p>
               </div>
             </div>
@@ -143,17 +145,17 @@ export default function LibraryItemDetailsModal({
               {script.is_disabled ? (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-500/20 bg-zinc-500/10 px-3 py-1 text-xs text-zinc-300">
                   <ShieldOff className="h-3.5 w-3.5" />
-                  Disabled
+                  {t("library_item_details.disabled", "Disabled")}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  Active
+                  {t("library_item_details.active", "Active")}
                 </span>
               )}
 
               <span className="rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
-                AppID {script.app_id}
+                {t("library_item_details.appid", "AppID")} {script.app_id}
               </span>
             </div>
 
@@ -172,19 +174,19 @@ export default function LibraryItemDetailsModal({
             <section className="space-y-5">
               <div className="lf-surface rounded-2xl border p-4">
                 <h3 className="font-semibold text-(--color-text)">
-                  Información del juego
+                  {t("library_item_details.game_info", "Información del juego")}
                 </h3>
 
                 <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <InfoBox label="Nombre" value={title} />
-                  <InfoBox label="AppID" value={String(script.app_id)} />
+                  <InfoBox label={t("library_item_details.name", "Nombre")} value={title} />
+                  <InfoBox label={t("library_item_details.appid", "AppID")} value={String(script.app_id)} />
                   <InfoBox label="Developer" value={developer} />
                   <InfoBox
-                    label="DLC Content"
+                    label={t("library_item_details.dlc_content", "DLC Content")}
                     value={
                       metadata?.dlc_count
                         ? `${metadata.dlc_count} DLC(s) detectado(s)`
-                        : "No detectado"
+                        : t("library_item_details.not_detected", "No detectado")
                     }
                   />
                 </div>
@@ -192,7 +194,7 @@ export default function LibraryItemDetailsModal({
                 {metadata?.platforms?.length ? (
                   <div className="mt-4">
                     <p className="mb-2 text-xs font-medium uppercase tracking-wide text-(--color-muted)">
-                      Platforms
+                      {t("library_item_details.platforms", "Platforms")}
                     </p>
 
                     <div className="flex flex-wrap gap-2">
@@ -212,7 +214,7 @@ export default function LibraryItemDetailsModal({
                   <div className="mt-4">
                     <p className="mb-2 inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-(--color-muted)">
                       <Languages className="h-3.5 w-3.5" />
-                      Languages
+                      {t("library_item_details.languages", "Languages")}
                     </p>
 
                     <div className="flex flex-wrap gap-2">
@@ -231,22 +233,22 @@ export default function LibraryItemDetailsModal({
 
               <div className="lf-surface rounded-2xl border p-4">
                 <h3 className="font-semibold text-(--color-text)">
-                  Archivo Lua
+                  {t("library_item_details.lua_file", "Archivo Lua")}
                 </h3>
 
                 <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <InfoBox label="Archivo" value={script.file_name} />
-                  <InfoBox label="Tamaño" value={formatBytes(script.file_size)} />
+                  <InfoBox label={t("library_item_details.file", "Archivo")} value={script.file_name} />
+                  <InfoBox label={t("library_item_details.size", "Tamaño")} value={formatBytes(script.file_size)} />
                   <InfoBox
-                    label="Modificado"
-                    value={formatDate(script.modified_at)}
+                    label={t("library_item_details.modified", "Modificado")}
+                    value={formatDate(script.modified_at, t)}
                   />
-                  <InfoBox label="Estado de update" value={updateInfo.label} />
+                  <InfoBox label={t("library_item_details.update_status", "Estado de update")} value={updateInfo.label} />
                 </div>
 
                 <div className="mt-3 rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
                   <p className="text-xs text-(--color-muted)">
-                    Ruta completa
+                    {t("library_item_details.full_path", "Ruta completa")}
                   </p>
 
                   <p className="mt-1 break-all text-sm font-medium text-(--color-text)">
@@ -259,7 +261,7 @@ export default function LibraryItemDetailsModal({
             <aside className="space-y-4">
               <div className="lf-surface rounded-2xl border p-4">
                 <h3 className="font-semibold text-(--color-text)">
-                  Acciones
+                  {t("library_item_details.actions", "Acciones")}
                 </h3>
 
                 <div className="mt-4 grid grid-cols-1 gap-2">
@@ -269,7 +271,7 @@ export default function LibraryItemDetailsModal({
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-3 text-sm text-(--color-text) transition hover:bg-white/10"
                   >
                     <ExternalLink className="h-4 w-4" />
-                    Abrir Steam
+                    {t("library_item_details.open_steam", "Abrir Steam")}
                   </button>
 
                   <button
@@ -278,7 +280,7 @@ export default function LibraryItemDetailsModal({
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-3 text-sm text-(--color-text) transition hover:bg-white/10"
                   >
                     <Database className="h-4 w-4" />
-                    Abrir SteamDB
+                    {t("library_item_details.open_steamdb", "Abrir SteamDB")}
                   </button>
 
                   <button
@@ -287,7 +289,7 @@ export default function LibraryItemDetailsModal({
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-3 text-sm text-(--color-text) transition hover:bg-white/10"
                   >
                     <Power className="h-4 w-4" />
-                    {script.is_disabled ? "Activar Lua" : "Deshabilitar Lua"}
+                    {script.is_disabled ? t("library_item_details.enable_lua", "Activar Lua") : t("library_item_details.disable_lua", "Deshabilitar Lua")}
                   </button>
 
                   <button
@@ -296,20 +298,20 @@ export default function LibraryItemDetailsModal({
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/20"
                   >
                     <Trash2 className="h-4 w-4" />
-                    Eliminar Lua
+                    {t("library_item_details.delete_lua", "Eliminar Lua")}
                   </button>
                 </div>
               </div>
 
               <div className="lf-surface rounded-2xl border p-4">
                 <h3 className="font-semibold text-(--color-text)">
-                  Resumen
+                  {t("library_item_details.summary", "Resumen")}
                 </h3>
 
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
                     <p className="mb-2 text-xs text-(--color-muted)">
-                      Update
+                      {t("library_item_details.update", "Update")}
                     </p>
 
                     <LuaUpdateBadge info={updateInfo} />

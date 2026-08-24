@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { Loader2, Search } from "lucide-react";
 import ConfirmModal from "../common/ConfirmModal";
 
@@ -26,6 +27,7 @@ export default function StopGameModal({
   onFindProcess,
 }: Props) {
   const [findingProcess, setFindingProcess] = useState(false);
+  const { t } = useTranslation();
 
   const canKillByPid = canTerminate && trackingConfidence && trackingConfidence !== "none" && trackingConfidence !== "low";
   const showFindProcess = !canKillByPid && !!onFindProcess;
@@ -52,13 +54,13 @@ export default function StopGameModal({
     <ConfirmModal
       open={open}
       variant="danger"
-      title="Stop game?"
-      description={`Are you sure you want to close ${gameTitle}? Unsaved progress may be lost.`}
-      confirmLabel="Stop Game"
-      cancelLabel="Cancel"
+      title={t("library_details.stop_game", "Stop game?")}
+      description={t("library_details.stop_game_desc", { gameTitle, defaultValue: "Are you sure you want to close {{gameTitle}}? Unsaved progress may be lost." })}
+      confirmLabel={t("library_details.stop_game_confirm", "Stop Game")}
+      cancelLabel={t("library_details.cancel", "Cancel")}
       onConfirm={handleConfirm}
       onCancel={onClose}
-      secondaryLabel={onMarkStopped ? "Mark as Stopped" : undefined}
+      secondaryLabel={onMarkStopped ? t("library_details.mark_stopped", "Mark as Stopped") : undefined}
       onSecondary={onMarkStopped ? handleSecondary : undefined}
       extraActions={showFindProcess ? (
         <button
@@ -72,7 +74,7 @@ export default function StopGameModal({
           ) : (
             <Search className="h-4 w-4" />
           )}
-          Find Running Process
+          {t("library_details.find_process", "Find Running Process")}
         </button>
       ) : undefined}
     />
