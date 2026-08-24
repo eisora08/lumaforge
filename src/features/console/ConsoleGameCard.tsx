@@ -96,13 +96,6 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
           </div>
         )}
 
-        {/* Repacker badge (Debrid) */}
-        {game.source === "debrid" && game.repacker && (
-          <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-medium text-cyan-400 backdrop-blur-sm ring-1 ring-cyan-500/30">
-            {game.repacker.toUpperCase()}
-          </div>
-        )}
-
         {/* Favorite heart */}
         {fav && (
           <div className="absolute right-2 top-9 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 backdrop-blur-sm">
@@ -112,35 +105,11 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
 
         {/* Badges */}
         <div className="absolute bottom-2 left-2 flex flex-wrap items-center gap-1">
-          {game.steamInstalled && (
-            <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
-              Installed
-            </span>
-          )}
           {game.hasUpdate && (
             <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
               Update
             </span>
           )}
-          {(() => {
-            const srcBadge = game.hasLua
-              ? { label: "LUA", cls: "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30" }
-              : game.source === "epic"
-                ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300 ring-1 ring-purple-500/40" }
-                : game.source === "debrid"
-                  ? { label: "DEBRID", cls: "bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/30" }
-                  : game.source === "manual"
-                    ? { label: "MANUAL", cls: "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30" }
-                    : game.source === "steam"
-                      ? { label: "STEAM", cls: "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30" }
-                      : null;
-            if (!srcBadge) return null;
-            return (
-              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide backdrop-blur-sm ${srcBadge.cls}`}>
-                {srcBadge.label}
-              </span>
-            );
-          })()}
         </div>
 
         {/* Title gradient overlay for landscape variant — hidden with noTitle */}

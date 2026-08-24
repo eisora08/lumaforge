@@ -65,12 +65,23 @@ import type { SyncIndexItem } from "../../types/syncIndex";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
+import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtimeService";
 import GameEditDialog from "./GameEditDialog";
 import ToolsModal from "../tools/ToolsModal";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { open } from "@tauri-apps/plugin-dialog";
 
+function formatRelativeTime(unixSeconds: number | null): string {
+  if (!unixSeconds) return "";
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - unixSeconds;
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return new Date(unixSeconds * 1000).toLocaleDateString();
+}
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -218,6 +229,15 @@ function GameLauncherTileInner({
   );
 
   const developer = game.metadata?.developer || game.metadata?.publishers?.[0];
+
+  const cardPlaytime = useMemo(() => {
+    const entry = getPlaytimeEntryByAppId(game.appId ?? "");
+    if (!entry || entry.totalPlaytimeSeconds <= 0) return null;
+    return {
+      total: formatPlaytime(entry.totalPlaytimeSeconds),
+      lastPlayed: formatRelativeTime(entry.lastPlayedAt),
+    };
+  }, [game.appId]);
 
   // Source trace log â€” emitted once per instance per game
   const DEBUG_NAME_SOURCE_TRACE = false;
@@ -543,6 +563,17 @@ function GameLauncherTileInner({
                 <h3 className="line-clamp-1 text-[13px] font-semibold text-white drop-shadow-lg">{displayTitle}</h3>
                 {developer && (
                   <p className="mt-0.5 line-clamp-1 text-[10px] text-white/70">{developer}</p>
+                )}
+                {cardPlaytime && (
+                  <p className="mt-0.5 flex items-center gap-1 text-[9px] text-white/60">
+                    <span>{cardPlaytime.total}</span>
+                    {cardPlaytime.lastPlayed && (
+                      <>
+                        <span className="text-white/30">·</span>
+                        <span>{cardPlaytime.lastPlayed}</span>
+                      </>
+                    )}
+                  </p>
                 )}
                 {game.metadata?.genres && game.metadata.genres.length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-1">
