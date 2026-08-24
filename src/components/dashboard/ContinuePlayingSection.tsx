@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Play, Clock } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { StartupSnapshot } from "../../services/startupSnapshotService";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -124,6 +125,7 @@ function formatLastPlayed(ts: number | null): string | null {
 }
 
 export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAppId, maxItems }: Props) {
+  const { t } = useTranslation();
   const { sessions } = useGameSession();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
@@ -265,10 +267,10 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Continue Playing
+            {t("dashboard.continue_playing", "Continue Playing")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Jump back into your games
+            {t("dashboard.continue_playing_desc", "Jump back into your games")}
           </p>
         </div>
       </div>
@@ -308,7 +310,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                   <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
                   {game.isRunning && (
                     <div className="absolute left-2 top-2 rounded-full bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
-                      Playing
+                      {t("dashboard.playing", "Playing")}
                     </div>
                   )}
                 </div>
@@ -334,7 +336,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                     className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent)/10 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
                   >
                     <Play className="h-3 w-3" />
-                    Play
+                    {t("dashboard.game_hero.play", "Play")}
                   </button>
                 </div>
               </div>

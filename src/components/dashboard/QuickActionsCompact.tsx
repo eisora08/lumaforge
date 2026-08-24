@@ -4,36 +4,38 @@ import {
   Search,
   Settings,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { AppPage } from "../../types/navigation";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
 };
 
-const actions = [
-  {
-    label: "Scan Library",
-    icon: Search,
-    action: "library" as AppPage,
-  },
-  {
-    label: "Refresh Sources",
-    icon: RefreshCcw,
-    action: "store" as AppPage,
-  },
-  {
-    label: "Downloads",
-    icon: Download,
-    action: "downloads",
-  },
-  {
-    label: "Settings",
-    icon: Settings,
-    action: "settings" as AppPage,
-  },
-];
-
 export default function QuickActionsCompact({ onNavigate }: Props) {
+  const { t } = useTranslation();
+
+  const actions = [
+    {
+      label: t("dashboard.scan_library", "Scan Library"),
+      icon: Search,
+      action: "library" as AppPage,
+    },
+    {
+      label: t("dashboard.refresh_sources", "Refresh Sources"),
+      icon: RefreshCcw,
+      action: "store" as AppPage,
+    },
+    {
+      label: t("dashboard.downloads", "Downloads"),
+      icon: Download,
+      action: "downloads",
+    },
+    {
+      label: t("settings.title", "Settings"),
+      icon: Settings,
+      action: "settings" as AppPage,
+    },
+  ];
   return (
     <section>
       <div className="flex flex-wrap gap-2">

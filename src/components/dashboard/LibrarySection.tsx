@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Gamepad2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
@@ -19,6 +20,7 @@ type Props = {
 };
 
 export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string | null>>({});
@@ -108,17 +110,17 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            From Your Library
+            {t("dashboard.from_your_library", "From Your Library")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            {displayGames.filter((g) => g.installed).length} installed games
+            {t("dashboard.installed_games", { count: displayGames.filter((g) => g.installed).length, defaultValue: "{{count}} installed games" })}
           </p>
         </div>
         <button
           onClick={() => onNavigate?.("library")}
           className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
         >
-          View Library
+          {t("dashboard.view_library", "View Library")}
         </button>
       </div>
 
@@ -165,7 +167,7 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
                   <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
                   {game.installed && (
                     <span className="absolute left-2 top-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur-sm">
-                      Installed
+                      {t("dashboard.installed", "Installed")}
                     </span>
                   )}
                 </div>

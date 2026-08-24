@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import { Gamepad2, Loader2, Play, Square, Sparkles, Store, XCircle } from "lucide-react";
 import { getCachedSnapshot, subscribeSnapshotUpdated } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
@@ -360,6 +361,7 @@ function pickNonRunningHero(
 }
 
 function EmptyHero({ onNavigate }: GameHeroProps) {
+  const { t } = useTranslation();
   return (
     <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-(--color-accent)/10 via-purple-900/20 to-black">
       <div className="relative z-10 flex flex-col items-center justify-center px-8 py-20 text-center">
@@ -369,11 +371,11 @@ function EmptyHero({ onNavigate }: GameHeroProps) {
         </div>
 
         <h1 className="text-4xl font-bold tracking-tight text-(--color-text)">
-          Your Game Launcher
+          {t("dashboard.game_hero.your_game_launcher", "Your Game Launcher")}
         </h1>
 
         <p className="mt-2 max-w-lg text-sm text-(--color-muted)">
-          Discover, manage, and play your games with Lua modding support.
+          {t("dashboard.game_hero.hero_desc", "Discover, manage, and play your games with Lua modding support.")}
         </p>
 
         <div className="mt-6 flex gap-3">
@@ -382,7 +384,7 @@ function EmptyHero({ onNavigate }: GameHeroProps) {
             className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <Store className="h-4 w-4" />
-            Browse Store
+            {t("dashboard.game_hero.browse_store", "Browse Store")}
           </button>
 
           <button
@@ -390,7 +392,7 @@ function EmptyHero({ onNavigate }: GameHeroProps) {
             className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/6 px-5 py-3 text-sm text-(--color-text) backdrop-blur-xl transition hover:bg-white/10"
           >
             <Gamepad2 className="h-4 w-4" />
-            Open Library
+            {t("dashboard.game_hero.open_library", "Open Library")}
           </button>
         </div>
       </div>
@@ -399,6 +401,7 @@ function EmptyHero({ onNavigate }: GameHeroProps) {
 }
 
 export default function GameHero({ onNavigate }: GameHeroProps) {
+  const { t } = useTranslation();
   const snapshot = getCachedSnapshot();
   const [, setSnapshotWriteVersion] = useState(0);
   const { settings } = useSettings();
@@ -788,7 +791,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     return null;
   }, [runningLibGame, heroAppId, heroGame?.playtime, heroManualGame, heroEpicGame]);
 
-  const stopModalTitle = heroSession?.title || libGame?.title || heroGame?.title || heroEpicGame?.title || heroManualGame?.title || "Unknown Game";
+  const stopModalTitle = heroSession?.title || libGame?.title || heroGame?.title || heroEpicGame?.title || heroManualGame?.title || t("dashboard.game_hero.unknown_game", "Unknown Game");
 
   // Elapsed timer (only when session is running)
   useEffect(() => {
@@ -876,15 +879,15 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (!sessionKey) return;
     const candidate = await findGameProcessForSession(sessionKey);
     if (candidate) {
-      showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, {
-        title: "Process Found",
+      showWarning(t("dashboard.game_hero.process_found_message", "Found process: {{name}} (PID {{pid}})", { name: candidate.name, pid: candidate.pid }), {
+        title: t("dashboard.game_hero.process_found", "Process Found"),
       });
       return;
     }
-    showWarning("Could not find the game process automatically.", {
-      title: "Not Found",
+    showWarning(t("dashboard.game_hero.process_not_found", "Could not find the game process automatically."), {
+      title: t("dashboard.game_hero.not_found", "Not Found"),
     });
-  }, [sessionKey, findGameProcessForSession]);
+  }, [sessionKey, findGameProcessForSession, t]);
 
   // MUST be declared BEFORE the early return to keep hook count stable across renders.
   const heroSectionRef = useCallback((_node: HTMLElement | null) => {}, []);
@@ -946,11 +949,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
                   </span>
-                  Running
+                  {t("dashboard.game_hero.running", "Running")}
                 </span>
                 {elapsed && (
                   <span className="text-xs text-white/60">
-                    {elapsed} elapsed
+                    {t("dashboard.game_hero.elapsed", "{{time}} elapsed", { time: elapsed })}
                   </span>
                 )}
               </>
@@ -958,7 +961,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
               <>
                 {lastPlayedStr && (
                   <span className="text-xs text-white/60">
-                    Last played: {lastPlayedStr}
+                    {t("dashboard.game_hero.last_played", "Last played: {{time}}", { time: lastPlayedStr })}
                   </span>
                 )}
                 {heroPlaytimeStr && (
@@ -982,11 +985,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) opacity-60 transition"
                 >
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Stopping...
+                  {t("dashboard.game_hero.stopping", "Stopping\u2026")}
                 </button>
                 <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Stopping...
+                  {t("dashboard.game_hero.stopping", "Stopping\u2026")}
                 </span>
               </>
             ) : isLaunching ? (
@@ -996,7 +999,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) opacity-60 transition"
                 >
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Launching...
+                  {t("dashboard.game_hero.launching", "Launching\u2026")}
                 </button>
               </>
             ) : isRunning ? (
@@ -1006,32 +1009,32 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
                 >
                   <Play className="h-4 w-4" />
-                  {heroSession?.pid ? "Focus Game" : "Ver detalles"}
+                  {heroSession?.pid ? t("dashboard.game_hero.focus_game", "Focus Game") : t("dashboard.game_hero.focus_game", "Focus Game")}
                 </button>
                 <button
                   onClick={handleOpenStopModal}
                   className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-red-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-500/80 active:scale-[0.97]"
                 >
                   <Square className="h-4 w-4" />
-                  Stop
+                  {t("dashboard.game_hero.stop", "Stop")}
                 </button>
               </>
             ) : heroPendingUninstall ? (
               <div className="flex flex-wrap items-center gap-3">
                 <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
                   <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
-                  <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
+                  <span className="text-sm font-medium text-amber-400">{t("dashboard.game_hero.uninstalling", "Uninstalling\u2026")}</span>
                 </div>
                 <button
                   onClick={() => {
                     if (!heroAppId) return;
                     clearPendingUninstall(heroAppId);
-                    showInfo(`"${heroTitle || heroGame?.title || heroAppId}" uninstall tracking cancelled.`);
+                    showInfo(t("dashboard.game_hero.uninstall_cancelled", "\"{{title}}\" uninstall tracking cancelled.", { title: heroTitle || heroGame?.title || heroAppId }));
                   }}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/5"
                 >
                   <XCircle className="h-3.5 w-3.5" />
-                  Cancel tracking
+                  {t("dashboard.game_hero.cancel_tracking", "Cancel tracking")}
                 </button>
               </div>
             ) : hasActiveInstall ? (
@@ -1039,10 +1042,10 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                 <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
                 <span className="text-sm font-medium text-amber-400">
                   {heroInstallJob.status === "waiting" || heroInstallJob.status === "queued"
-                    ? "Waiting for Steam\u2026"
+                    ? t("dashboard.game_hero.waiting_steam", "Waiting for Steam\u2026")
                     : heroInstallJob.status === "downloading"
-                      ? "Downloading"
-                      : "Installing\u2026"}
+                      ? t("dashboard.game_hero.downloading", "Downloading")
+                      : t("dashboard.game_hero.installing", "Installing\u2026")}
                 </span>
               </div>
             ) : (heroGame?.playable || libGame?.isPlayable) ? (
@@ -1052,14 +1055,14 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
                 >
                   <Play className="h-4 w-4" />
-                  Play
+                  {t("dashboard.game_hero.play", "Play")}
                 </button>
                 <button
                   onClick={() => onNavigate?.("store")}
                   className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/6 px-5 py-3 text-sm text-white/80 backdrop-blur-sm transition hover:bg-white/10"
                 >
                   <Store className="h-4 w-4" />
-                  Browse Store
+                  {t("dashboard.game_hero.browse_store", "Browse Store")}
                 </button>
               </>
             ) : (
@@ -1068,14 +1071,14 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   onClick={handlePrimaryAction}
                   className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-white/10 px-6 py-3 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-white/20"
                 >
-                  Open Details
+                  {t("dashboard.game_hero.open_details", "Open Details")}
                 </button>
                 <button
                   onClick={() => onNavigate?.("store")}
                   className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/6 px-5 py-3 text-sm text-white/80 backdrop-blur-sm transition hover:bg-white/10"
                 >
                   <Store className="h-4 w-4" />
-                  Browse Store
+                  {t("dashboard.game_hero.browse_store", "Browse Store")}
                 </button>
               </>
             )}

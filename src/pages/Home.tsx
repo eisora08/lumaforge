@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { countRender } from "../services/perfCounters";
 
 import GameHero from "../components/dashboard/GameHero";
@@ -65,6 +66,7 @@ function SectionWrap({ children }: { children: React.ReactNode }) {
 
 export default function Home({ onNavigate }: Props) {
   countRender("Home");
+  const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<StartupSnapshot | null>(() => getCachedSnapshot());
   
   const { sessions } = useGameSession();
@@ -241,10 +243,10 @@ export default function Home({ onNavigate }: Props) {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-(--color-text)">
-                  Discovering games
+                  {t("dashboard.discover_games", "Discovering games")}
                 </h2>
                 <p className="mt-0.5 text-sm text-(--color-muted)">
-                  Loading global catalog&hellip;
+                  {t("dashboard.loading_catalog", "Loading global catalog\u2026")}
                 </p>
               </div>
             </div>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Heart } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { StartupSnapshot } from "../../services/startupSnapshotService";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -29,6 +30,7 @@ type Props = {
 };
 
 export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, maxItems }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
@@ -168,13 +170,13 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-(--color-text)">
-              Favorites
+              {t("dashboard.favorites", "Favorites")}
             </h2>
           </div>
         </div>
         <div className="flex flex-col items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-6 py-12 text-center">
           <Heart className="mb-3 h-8 w-8 text-(--color-muted)/30" />
-          <p className="text-sm text-(--color-muted)">No favorite games yet.</p>
+          <p className="text-sm text-(--color-muted)">{t("dashboard.no_favorites", "No favorite games yet.")}</p>
         </div>
       </section>
     );
@@ -227,10 +229,10 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Favorites
+            {t("dashboard.favorites", "Favorites")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            {displayGames.length} favorite{displayGames.length !== 1 ? "s" : ""}
+            {t("dashboard.favorites_desc", { count: displayGames.length, defaultValue: "{{count}} favorites" })}
           </p>
         </div>
       </div>
@@ -277,7 +279,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
                   <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
                   {game.installed && (
                     <span className="absolute left-2 top-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur-sm">
-                      Installed
+                      {t("dashboard.installed", "Installed")}
                     </span>
                   )}
                   <button
@@ -287,7 +289,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
                       handleToggleFavorite(game);
                     }}
                     className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
-                    title="Remove from favorites"
+                    title={t("dashboard.remove_from_favorites", "Remove from favorites")}
                   >
                     <Heart className="h-4 w-4" fill="currentColor" />
                   </button>

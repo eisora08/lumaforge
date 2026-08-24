@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import { resolveGameMediaUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
@@ -56,6 +57,7 @@ function formatPlaytime(seconds: number): string {
 }
 
 export default function InProgressSection({ onNavigate, maxItems }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, initialLoading, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
@@ -105,8 +107,8 @@ export default function InProgressSection({ onNavigate, maxItems }: Props) {
       return (
         <section>
           <div className="mb-4">
-            <h2 className="text-lg font-bold text-(--color-text)">In Progress</h2>
-            <p className="mt-0.5 text-sm text-(--color-muted)">Games you&apos;re currently playing</p>
+            <h2 className="text-lg font-bold text-(--color-text)">{t("dashboard.in_progress", "In Progress")}</h2>
+            <p className="mt-0.5 text-sm text-(--color-muted)">{t("dashboard.in_progress_desc", "Games you're currently playing")}</p>
           </div>
           <div className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -140,10 +142,10 @@ export default function InProgressSection({ onNavigate, maxItems }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            In Progress
+            {t("dashboard.in_progress", "In Progress")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Games you&apos;re currently playing
+            {t("dashboard.in_progress_desc", "Games you're currently playing")}
           </p>
         </div>
       </div>

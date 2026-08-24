@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import { resolveGameMediaUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
@@ -46,6 +47,7 @@ function formatLastPlayed(ts: number | null): string | null {
 }
 
 export default function CompletedSection({ onNavigate, maxItems }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, initialLoading, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
@@ -95,8 +97,8 @@ export default function CompletedSection({ onNavigate, maxItems }: Props) {
       return (
         <section>
           <div className="mb-4">
-            <h2 className="text-lg font-bold text-(--color-text)">Completed</h2>
-            <p className="mt-0.5 text-sm text-(--color-muted)">Games you&apos;ve finished</p>
+            <h2 className="text-lg font-bold text-(--color-text)">{t("dashboard.completed", "Completed")}</h2>
+            <p className="mt-0.5 text-sm text-(--color-muted)">{t("dashboard.completed_desc", "Games you've finished")}</p>
           </div>
           <div className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -130,10 +132,10 @@ export default function CompletedSection({ onNavigate, maxItems }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Completed
+            {t("dashboard.completed", "Completed")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Games you&apos;ve finished
+            {t("dashboard.completed_desc", "Games you've finished")}
           </p>
         </div>
       </div>

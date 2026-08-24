@@ -1,28 +1,30 @@
 import { Activity, Clock, Info } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useGameActivity } from "../../context/GameActivityContext";
 
-function formatTimestamp(ts: number) {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return new Date(ts).toLocaleDateString();
-}
-
 export default function ActivityFeed() {
+  const { t } = useTranslation();
   const { activities } = useGameActivity();
   const recent = activities.slice(0, 5);
+
+  function formatTimestamp(ts: number) {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (mins < 1) return t("dashboard.activity_feed.just_now", "Just now");
+    if (mins < 60) return t("dashboard.activity_feed.minutes_ago", "{{mins}}m ago", { mins });
+    if (hours < 24) return t("dashboard.activity_feed.hours_ago", "{{hours}}h ago", { hours });
+    if (days < 7) return t("dashboard.activity_feed.days_ago", "{{days}}d ago", { days });
+    return new Date(ts).toLocaleDateString();
+  }
 
   return (
     <section className="lf-surface rounded-2xl border p-5">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-semibold text-(--color-text)">
-          Actividad reciente
+          {t("dashboard.activity_feed.title", "Actividad reciente")}
         </h2>
 
         <Info className="h-4 w-4 text-(--color-muted)" />
@@ -32,7 +34,7 @@ export default function ActivityFeed() {
         <div className="flex flex-col items-center gap-3 py-6 text-center">
           <Clock className="h-8 w-8 text-(--color-muted)" />
           <p className="text-sm text-(--color-muted)">
-            Sin actividad reciente
+            {t("dashboard.activity_feed.empty", "Sin actividad reciente")}
           </p>
         </div>
       ) : (

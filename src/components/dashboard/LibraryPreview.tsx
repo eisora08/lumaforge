@@ -1,33 +1,35 @@
 import { Gamepad2, Play, Heart } from "lucide-react";
-
-const games = [
-  {
-    title: "Biblioteca vacía",
-    subtitle: "Cuando detectemos juegos instalados aparecerán aquí.",
-    status: "Pendiente",
-  },
-  {
-    title: "Favoritos",
-    subtitle: "Tus juegos marcados como favoritos.",
-    status: "0 juegos",
-  },
-  {
-    title: "Recientes",
-    subtitle: "Últimos juegos ejecutados desde LumaForge.",
-    status: "Sin actividad",
-  },
-];
+import { useTranslation } from "react-i18next";
 
 export default function LibraryPreview() {
+  const { t } = useTranslation();
+
+  const games = [
+    {
+      title: t("dashboard.library_preview.empty_title", "Biblioteca vacía"),
+      subtitle: t("dashboard.library_preview.empty_desc", "Cuando detectemos juegos instalados aparecerán aquí."),
+      status: t("dashboard.library_preview.pending", "Pendiente"),
+    },
+    {
+      title: t("dashboard.library_preview.favorites_title", "Favoritos"),
+      subtitle: t("dashboard.library_preview.favorites_desc", "Tus juegos marcados como favoritos."),
+      status: t("dashboard.library_preview.no_games", "0 juegos"),
+    },
+    {
+      title: t("dashboard.library_preview.recent_title", "Recientes"),
+      subtitle: t("dashboard.library_preview.recent_desc", "Últimos juegos ejecutados desde LumaForge."),
+      status: t("dashboard.library_preview.no_activity", "Sin actividad"),
+    },
+  ];
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-semibold text-(--color-text)">
-          Biblioteca
+          {t("dashboard.library_preview.library", "Biblioteca")}
         </h2>
 
         <button className="text-xs text-(--color-muted) hover:text-(--color-text)">
-          Ver todo
+          {t("dashboard.library_preview.view_all", "Ver todo")}
         </button>
       </div>
 
@@ -61,7 +63,7 @@ export default function LibraryPreview() {
 
             <button className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white/6 px-4 py-2 text-sm text-(--color-muted) lf-surface lf-surface-hover hover:bg-white/10 hover:text-(--color-text)">
               <Play className="h-4 w-4" />
-              Abrir
+              {t("dashboard.library_preview.open", "Abrir")}
             </button>
           </div>
         ))}
