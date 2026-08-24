@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Download,
   ExternalLink,
@@ -116,7 +117,7 @@ function pickSidebarFallbackPath(resolved: ResolvedSidebarMedia | null): string 
   return null;
 }
 
-function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry | null): string {
+function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry | null, t?: (key: string, options?: Record<string, unknown>) => string): string {
   // Prefer the live context title (enriched/enriched canonical names) so the
   // sidebar matches the grid. The legacy appinfo index can hold stale names
   // (e.g. a verbose Debrid bundle title) and is only a fallback here.
@@ -124,9 +125,9 @@ function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry |
   if (appInfoEntry?.name) return appInfoEntry.name;
   if (game.appId) {
     logSidebarMedia(game.appId, `placeholderReason=no-name-fallback title="Steam App ${game.appId}"`);
-    return `Steam App ${game.appId}`;
+    return t ? t("sidebar.steam_app", { appId: game.appId }) : `Steam App ${game.appId}`;
   }
-  return "Unknown Game";
+  return t ? t("sidebar.unknown_game") : "Unknown Game";
 }
 
 function getSnapshotMedia(appId: string): GameMediaPaths | null {
@@ -148,6 +149,7 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
 
 export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange }: Props) {
   countRender("SidebarLibraryList");
+  const { t } = useTranslation();
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap, refresh } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
   const [localQuery, setLocalQuery] = useState("");
@@ -480,14 +482,14 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   async function handleDeleteScript(game: LibraryGame) {
     const script = game.luaScripts[0];
     if (!script) {
-      showWarning("No Lua script to delete.", { title: "No script" });
+      showWarning(t("sidebar.no_lua_script"), { title: t("library_details.no_script_title") });
       return;
     }
     if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${appSettings.luaPath}"`);
     const result = await confirm({
-      title: "Delete Lua script?",
-      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
-      confirmLabel: "Delete Lua",
+      title: t("sidebar.delete_lua_title"),
+      description: t("sidebar.delete_lua_desc", { file: script.file_name, game: game.title }),
+      confirmLabel: t("sidebar.delete_lua_confirm"),
       variant: "danger",
     });
     if (!result.confirmed) return;
@@ -498,16 +500,16 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       const stillPresent = remaining.some((s) => s.file_name === script.file_name);
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
       if (stillPresent) {
-        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        showError(t("sidebar.deletion_failed"), { title: t("sidebar.deletion_failed_title") });
         return;
       }
       // Force refresh library state (bypass TTL) to reflect deletion
       await refresh({ force: true });
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
-      showSuccess("Lua script deleted.", { title: "Deleted" });
+      showSuccess(t("sidebar.lua_deleted"), { title: t("sidebar.lua_deleted_title") });
     } catch (err) {
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
-      showError(String(err), { title: "Error" });
+      showError(String(err), { title: t("sidebar.error") });
     }
   }
 
@@ -522,14 +524,14 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       {isFullMode && (
         <div className="mb-2 flex items-center justify-between px-1">
           <Gamepad2 className="h-4.5 w-4.5" />
-          <span className="text-xs font-bold text-(--color-text)">Juegos</span>
-          <span className="text-[10px] text-(--color-muted)">{installed.length} games</span>
+          <span className="text-xs font-bold text-(--color-text)">{t("sidebar.games")}</span>
+          <span className="text-[10px] text-(--color-muted)">{t("sidebar.games_count", { count: installed.length })}</span>
         </div>
       )}
 
       {isCompactMode && (
         <div className="mb-2 flex items-center justify-between px-1">
-          <span className="text-[11px] font-bold text-(--color-text)">Juegos</span>
+          <span className="text-[11px] font-bold text-(--color-text)">{t("sidebar.games")}</span>
           <span className="text-[10px] text-(--color-muted)">{installed.length}</span>
         </div>
       )}
@@ -541,7 +543,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           <input
             value={searchQuery}
             onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="Search library..."
+            placeholder={t("sidebar.search_placeholder")}
             className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1.5 pl-7 pr-2.5 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
           />
         </div>
@@ -553,7 +555,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           <input
             value={searchQuery}
             onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="Buscar..."
+            placeholder={t("sidebar.search_placeholder_compact")}
             className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1 pl-7 pr-2 text-[11px] text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
           />
         </div>
@@ -587,7 +589,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         )
       ) : filtered.length === 0 ? (
         isCollapsedMode ? null : (
-          <p className="py-2 text-center text-[10px] text-(--color-muted)">No games match.</p>
+          <p className="py-2 text-center text-[10px] text-(--color-muted)">{t("sidebar.no_games_match")}</p>
         )
       ) : (
         filtered.map((game) => {
@@ -597,7 +599,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const resolved = sidebarMediaMap[mediaKey] ?? null;
           const resolvedThumb = pickSidebarSrc(resolved, game.appId ?? undefined);
           const sidebarFallbackPath = pickSidebarFallbackPath(resolved);
-          const displayTitle = getSidebarTitle(game, appInfoEntry);
+          const displayTitle = getSidebarTitle(game, appInfoEntry, t);
           const gk = computeGameKey(game);
           const gs = getState(gk);
           const isRunning = gs === "running";
@@ -696,13 +698,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 </div>
                 {!isCompactMode && (
                   <div className="text-[10px] text-(--color-muted)">
-                    {isRunning ? "Running" : isLaunching ? "Launching" : getSidebarLabel(game)}
-                    {!isRunning && !isLaunching && game.hasUpdate && " · Update"}
+                    {isRunning ? t("sidebar.running") : isLaunching ? t("sidebar.launching") : getSidebarLabel(game)}
+                    {!isRunning && !isLaunching && game.hasUpdate && t("sidebar.update")}
                   </div>
                 )}
                 {isCompactMode && (
                   <div className="text-[9px] text-(--color-muted)">
-                    {isRunning ? "Running" : isLaunching ? "Launching" : getSidebarLabel(game)}
+                    {isRunning ? t("sidebar.running") : isLaunching ? t("sidebar.launching") : getSidebarLabel(game)}
                   </div>
                 )}
               </div>
@@ -737,50 +739,50 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
             <>
               {isRunning ? (
                 <MenuItem
-                  label="Stop"
+                  label={t("context_menu.stop")}
                   icon={<X className="h-3.5 w-3.5" />}
                   onClick={() => { handleMenuClose(); stopSession(mgk); }}
                 />
               ) : mPendingUninstall ? (
                 <MenuItem
-                  label="Uninstalling…"
+                  label={t("sidebar.uninstalling")}
                   icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   disabled
                 />
               ) : mAction === "play" ? (
                 <MenuItem
-                  label="Play"
+                  label={t("context_menu.play")}
                   icon={<Play className="h-3.5 w-3.5" />}
                   onClick={() => { handleMenuClose(); launchGame(menuGame); }}
                 />
               ) : mAction === "open-steam" ? (
                 <MenuItem
-                  label="Open in Steam"
+                  label={t("context_menu.open_steam")}
                   icon={<ExternalLink className="h-3.5 w-3.5" />}
                   onClick={() => { handleMenuClose(); if (menuGame.appId) openExternalUrl(getSteamStoreUrl(Number(menuGame.appId))); }}
                 />
               ) : mAction === "open-lua-folder" ? (
                 <MenuItem
-                  label="Lua Folder"
+                  label={t("context_menu.lua_folder")}
                   icon={<FolderOpen className="h-3.5 w-3.5" />}
                   onClick={() => {
                     handleMenuClose();
                     if (menuGame.luaScripts.length > 0) {
                       const scriptPath = menuGame.luaScripts[0].path;
                       const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
-                      if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
+                      if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(t("sidebar.could_not_open_folder", { error: err })));
                     }
                   }}
                 />
               ) : (
                 <MenuItem
-                  label="Install"
+                  label={t("context_menu.install")}
                   icon={<Download className="h-3.5 w-3.5" />}
                   onClick={() => { handleMenuClose(); }}
                 />
               )}
               <MenuItem
-                label={fav ? "Remove from favorites" : "Add to favorites"}
+                label={fav ? t("sidebar.remove_from_favorites") : t("sidebar.add_to_favorites")}
                 icon={<Heart className={`h-3.5 w-3.5 ${fav ? "fill-current" : ""}`} />}
                 onClick={() => {
                   const fk = getFavoriteKey(menuGame);
@@ -790,13 +792,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
               />
               {menuGame.appId && menuGame.source !== "epic" && menuGame.source !== "debrid" && (
                 <MenuItem
-                  label="Open in Steam"
+                  label={t("context_menu.open_steam")}
                   icon={<ExternalLink className="h-3.5 w-3.5" />}
                   onClick={() => { handleMenuClose(); openExternalUrl(getSteamStoreUrl(Number(menuGame.appId))); }}
                 />
               )}
               <MenuItem
-                label="Browse Local Files"
+                label={t("context_menu.browse_files")}
                 icon={<FolderOpen className="h-3.5 w-3.5" />}
                 onClick={() => {
                   handleMenuClose();
@@ -805,13 +807,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   const folder = (sep > 0 ? exe.substring(0, sep) : null) || menuGame.installDir || "";
                   if (folder) {
                     invoke("open_folder", { path: folder }).catch((err) => {
-                      showError(`Could not open folder: ${err}`);
+                      showError(t("sidebar.could_not_open_folder", { error: err }));
                     });
                   }
                 }}
               />
               <MenuItem
-                label="Game Fixes"
+                label={t("context_menu.game_fixes")}
                 icon={<Wrench className="h-3.5 w-3.5" />}
                 onClick={() => {
                   handleMenuClose();
@@ -820,7 +822,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 }}
               />
               <MenuItem
-                label="Create Shortcut"
+                label={t("context_menu.create_shortcut")}
                 icon={<FileText className="h-3.5 w-3.5" />}
                 onClick={async () => {
                   handleMenuClose();
@@ -829,7 +831,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                     const installDir = menuGame.installDir;
 
                     if (!installDir) {
-                      showError("Install directory not found");
+                      showError(t("sidebar.install_dir_not_found"));
                       return;
                     }
 
@@ -840,7 +842,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                     console.log("Executables found:", executables);
 
                     if (!executables.length) {
-                      showError("No executables found in this folder");
+                      showError(t("context_menu.exe_not_found"));
                       return;
                     }
 
@@ -850,25 +852,25 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
 
                     const path = await invoke<string>("create_shortcut", {
                       exePath,
-                      name: menuGame.title || `Game ${menuGame.appId}`,
+                      name: menuGame.title || t("sidebar.shortcut_game", { appId: menuGame.appId }),
                     });
 
-                    showSuccess(`Shortcut created:\n${path}`);
+                    showSuccess(t("context_menu.shortcut_created", { path }));
 
                   } catch (err) {
-                    showError(`Could not create shortcut: ${err}`);
+                    showError(t("context_menu.shortcut_error", { error: err }));
                   }
                 }}
               />
 
               <MenuItem
-                label="Manage"
+                label={t("context_menu.manage")}
                 icon={<Settings className="h-3.5 w-3.5" />}
                 children={[
                   ...(menuGame.source === "manual"
                     ? [
                         {
-                          label: "Edit Game Details",
+                          label: t("context_menu.edit_details"),
                           icon: <Pencil className="h-3.5 w-3.5" />,
                           onClick: () => {
                             setMenuOpen(false);
@@ -878,7 +880,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                           },
                         },
                         {
-                          label: "Manage Artwork",
+                          label: t("context_menu.manage_art"),
                           icon: <Image className="h-3.5 w-3.5" />,
                           onClick: () => {
                             setMenuOpen(false);
@@ -888,13 +890,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                           },
                         },
                         {
-                          label: "Delete Manual Game",
+                          label: t("context_menu.delete_manual"),
                           icon: <Trash2 className="h-3.5 w-3.5" />,
                           destructive: true,
                           disabled: isRunning,
                           onClick: () => {
                             if (isRunning) {
-                              showWarning("Stop the game before removing it from Library.", { title: "Game is running" });
+                              showWarning(t("context_menu.stop_before_remove"), { title: t("sidebar.game_is_running") });
                               return;
                             }
                             handleMenuClose();
@@ -903,10 +905,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                               try {
                                 if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][SIDEBAR] rawId=${rawId} title="${menuGame.title}"`);
                                 removeManualGame(rawId);
-                                showSuccess(`"${menuGame.title ?? "Manual game"}" deleted`);
+                                showSuccess(t("sidebar.deleted", { title: menuGame.title ?? t("sidebar.manual_game") }));
                                 refresh();
                               } catch (e) {
-                                showError(`Failed to delete: ${e}`);
+                                showError(t("sidebar.failed_delete", { error: e }));
                               }
                             }
                           },
@@ -915,19 +917,19 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                     : []),
                    ...(mPendingUninstall
                     ? [{
-                      label: "Cancel tracking",
+                      label: t("context_menu.cancel_tracking"),
                       icon: <XCircle className="h-3.5 w-3.5" />,
                       onClick: () => {
                         handleMenuClose();
                         console.log(`[UNINSTALL_PENDING] appid=${menuGame.appId} phase=manual-cancel before=${isPendingUninstall(String(menuGame.appId))}`);
                         clearPendingUninstall(String(menuGame.appId));
-                        showInfo(`"${menuGame.title ?? menuGame.appId}" uninstall tracking cancelled.`);
+                        showInfo(t("sidebar.uninstall_tracking_cancelled", { title: menuGame.title ?? menuGame.appId }));
                         console.log(`[UNINSTALL_PENDING] appid=${menuGame.appId} phase=manual-cancel after=${isPendingUninstall(String(menuGame.appId))}`);
                       },
                     }]
                     : menuGame.source === "debrid"
                       ? [{
-                        label: "Remove from Library",
+                        label: t("context_menu.remove_library"),
                         icon: <Trash2 className="h-3.5 w-3.5" />,
                         destructive: true as const,
                         onClick: () => {
@@ -935,23 +937,23 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                           const providerGameId = menuGame.providerGameId;
                           if (providerGameId) {
                             removeDebridGameFromLibrary(providerGameId);
-                            showSuccess(`"${menuGame.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                            showSuccess(t("sidebar.debrid_removed", { title: menuGame.title ?? providerGameId }));
                           } else {
-                            showError("Could not remove this game from the library.");
+                            showError(t("sidebar.debrid_remove_error"));
                           }
                         },
                       }]
                     : menuGame.source !== "manual" && menuGame.source !== "epic"
                       ? [{
-                        label: "Uninstall in Steam",
+                        label: t("context_menu.uninstall_steam"),
                         icon: <ExternalLink className="h-3.5 w-3.5" />,
                         disabled: !menuGame.steamInstalled,
-                        subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
+                        subtitle: !menuGame.steamInstalled ? t("context_menu.not_installed") : undefined,
                         onClick: menuGame.steamInstalled ? async () => {
                           handleMenuClose();
                           const appId = Number(menuGame.appId);
                           markPendingUninstall(String(appId));
-                          showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                          showInfo(t("sidebar.steam_uninstall_opened"), { title: t("sidebar.uninstall") });
                           try {
                             console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
                             await uninstallSteamApp(appId);
@@ -971,7 +973,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                       : []),
                   ...(mHasLua
                     ? [{
-                      label: "Delete Lua",
+                      label: t("game_tile.delete_lua"),
                       icon: <X className="h-3.5 w-3.5" />,
                       destructive: true as const,
                       onClick: () => { handleMenuClose(); handleDeleteScript(menuGame); },
@@ -1017,7 +1019,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
             className="flex flex-1 items-center gap-2 rounded-l-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
           >
             <Plus className="h-3 w-3" />
-            Add Game
+            {t("library_page.add_game")}
           </button>
           <button
             type="button"
@@ -1036,7 +1038,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
               >
                 <Scan className="h-3 w-3" />
-                Scan Installed
+                {t("library_page.scan_installed")}
               </button>
             </div>
           </>

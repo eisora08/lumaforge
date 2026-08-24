@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { countRender } from "../services/perfCounters";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
@@ -65,6 +66,7 @@ type Props = {
 
 export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   countRender("LibraryGameDetailPage");
+  const { t } = useTranslation();
   const { selectedGame, setSelectedGame, appInfoMap, refresh } = useLibraryGames();
   const downloadQueue = useDownloadQueueContext();
   const { settings } = useSettings();
@@ -132,8 +134,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           gameId: selectedGame?.id || "",
           appId: selectedGame?.appId,
           kind: "game-closed",
-          title: "Game session ended",
-          description: `Played for ${Math.round(durationMs / 60000)}m`,
+          title: t("library_details.game_session_ended"),
+          description: t("library_details.played_for", { minutes: Math.round(durationMs / 60000) }),
           source: "local",
           severity: "info",
         });
@@ -151,9 +153,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       await launchGame(game);
     } else if (game.source === "manual") {
-      showWarning("This manual game has no executable configured. Edit game details to set one.", { title: "Not available" });
+      showWarning(t("library_details.manual_no_executable"), { title: t("library_page.not_available") });
     } else {
-      showWarning("This game cannot be launched yet.", { title: "Not available" });
+      showWarning(t("library_page.not_available_cannot_launch"), { title: t("library_page.not_available") });
     }
   }
 
@@ -174,14 +176,14 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   async function handleDeleteScript(game: LibraryGame) {
     const script = game.luaScripts[0];
     if (!script) {
-      showWarning("No Lua script to delete.", { title: "No script" });
+      showWarning(t("sidebar.no_lua_script"), { title: t("library_details.no_script_title") });
       return;
     }
     if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${settings.luaPath}"`);
     const result = await confirm({
-      title: "Delete Lua script?",
-      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
-      confirmLabel: "Delete Lua",
+      title: t("sidebar.delete_lua_title"),
+      description: t("sidebar.delete_lua_desc", { file: script.file_name, game: game.title }),
+      confirmLabel: t("sidebar.delete_lua_confirm"),
       variant: "danger",
     });
     if (!result.confirmed) return;
@@ -192,25 +194,25 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       const stillPresent = remaining.some((s) => s.file_name === script.file_name);
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
       if (stillPresent) {
-        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        showError(t("sidebar.deletion_failed"), { title: t("sidebar.deletion_failed_title") });
         return;
       }
       // Force refresh library state (bypass TTL) to reflect deletion
       await refresh({ force: true });
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
-      showSuccess("Lua script deleted.", { title: "Deleted" });
+      showSuccess(t("sidebar.lua_deleted"), { title: t("sidebar.lua_deleted_title") });
     } catch (err) {
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
-      showError(String(err), { title: "Error" });
+      showError(String(err), { title: t("sidebar.error") });
     }
   }
 
   async function handleFindProcess() {
     const candidate = await session.findGameProcessForSession(gameKey);
     if (candidate) {
-      showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, { title: "Process found" });
+      showWarning(t("library_details.process_found", { name: candidate.name, pid: candidate.pid }), { title: t("library_details.process_found_title") });
     } else {
-      showWarning("Could not find the game process automatically.", { title: "No process found" });
+      showWarning(t("library_details.no_process_found"), { title: t("library_details.no_process_found_title") });
     }
   }
 
@@ -320,7 +322,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         // canonicalAppInfo.media: resolved asset:// URLs (not raw relative paths)
         setCanonicalAppInfo({
           appId: null as any,
-          name: selectedGame.title ?? "Epic Game",
+          name: selectedGame.title ?? t("library_details.epic_game_default"),
           media: {
             coverPath: cvUrl,
             landscapePath: lsUrl,
@@ -797,15 +799,15 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const isManual = selectedGame?.source === "manual";
     const isEpic = selectedGame?.source === "epic";
     if (!selectedGame?.appId && !isManual && !isEpic) {
-      showWarning("No App ID available for this game.", { title: "Artwork" });
+      showWarning(t("library_details.no_appid"), { title: t("library_details.artwork") });
       return;
     }
     if (isManual && !selectedGame?.appId) {
-      showInfo("Artwork refresh for manual games is managed through Edit Game Details.", { title: "Manual Game" });
+      showInfo(t("library_details.artwork_refresh_manual"), { title: t("library_details.manual_game") });
       return;
     }
     if (isEpic && selectedGame?.providerGameId) {
-      showInfo("Artwork for Epic games is managed through Edit Game Details.", { title: "Epic Game" });
+      showInfo(t("library_details.artwork_refresh_epic"), { title: t("library_details.epic_game") });
       return;
     }
 
@@ -829,7 +831,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     resetRepairedAppInfoIds();
     const appIdNum = Number(appIdStr);
     if (!appIdNum || isNaN(appIdNum)) {
-      showWarning("Invalid App ID.", { title: "Artwork" });
+      showWarning(t("library_details.invalid_appid"), { title: t("library_details.artwork") });
       return;
     }
 
@@ -1092,14 +1094,14 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     }
 
     if (hasQueued > 0) {
-      showWarning(`Artwork refresh queued (${hasQueued} roles).`, { title: "Artwork" });
+      showWarning(t("library_details.artwork_refresh_queued", { count: hasQueued }), { title: t("library_details.artwork") });
     } else {
       if (!hasAnyUrl) {
         if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=no-urls meta=${meta ? "resolved" : "null"} metaResolved=${meta?.resolved ?? "n/a"}`);
       } else {
         if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=all-urls-skipped after-queued-check`);
       }
-      showWarning("No artwork available for this game.", { title: "Artwork" });
+      showWarning(t("library_details.no_artwork"), { title: t("library_details.artwork") });
     }
 
     // ── Optional: SGDB enhancement for artwork gallery ──
@@ -1164,7 +1166,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
           if (!resolved.ok) {
             if (resolved.reason === "no-uri") {
-              showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+              showWarning(t("library_page.debrid_no_uri"), { title: t("library_page.not_available") });
             }
             return;
           }
@@ -1185,7 +1187,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       const providerGameId = game.providerGameId ?? game.id;
       const rawEntry = getDebridRepackEntry(providerGameId);
       if (!rawEntry) {
-        showWarning("Debrid game entry not found.", { title: "Not available" });
+        showWarning(t("library_page.debrid_not_found"), { title: t("library_page.not_available") });
         return;
       }
       const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
@@ -1213,24 +1215,24 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         await installSteamApp(Number(game.appId));
         installTrackerService.startTracking(game.appId, settings.steamRoot, game.title || String(game.appId), game.imageUrl);
       } catch (err) {
-        showError(String(err), { title: "Error" });
+        showError(String(err), { title: t("sidebar.error") });
       }
     } else {
-      showWarning("This game cannot be installed through Steam because it has no AppID.", { title: "Not available" });
+      showWarning(t("library_page.not_available_no_appid"), { title: t("library_page.not_available") });
     }
   }
 
   function handleOpenSteamStore(game: LibraryGame) {
     if (!game.appId) return;
     openExternalUrl(getSteamStoreUrl(Number(game.appId))).catch(() =>
-      showError("Could not open Steam page.", { title: "Error" })
+      showError(t("library_details.could_not_open_steam"), { title: t("sidebar.error") })
     );
   }
 
   function handleOpenSteamDb(game: LibraryGame) {
     if (!game.appId) return;
     openExternalUrl(getSteamDbUrl(Number(game.appId))).catch(() =>
-      showError("Could not open SteamDB.", { title: "Error" })
+      showError(t("library_details.could_not_open_steamdb"), { title: t("sidebar.error") })
     );
   }
 
@@ -1242,7 +1244,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   if (!selectedGame) {
     return (
       <div className="flex h-full items-center justify-center p-5 lg:p-7">
-        <p className="text-(--color-muted)">No game selected.</p>
+        <p className="text-(--color-muted)">{t("library_details.no_game_selected")}</p>
       </div>
     );
   }
@@ -1318,7 +1320,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           const resolved = await resolveDebridInstallUri(repack.downloadUris, confirm, debridInstallGame.title);
           if (!resolved.ok) {
             if (resolved.reason === "no-uri") {
-              showWarning("No download URI available for this Debrid source.", { title: "Not available" });
+              showWarning(t("library_page.debrid_no_uri_source"), { title: t("library_page.not_available") });
             }
             return;
           }

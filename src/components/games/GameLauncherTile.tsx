@@ -348,14 +348,14 @@ function GameLauncherTileInner({
     if (!entry || entry.status !== "update-available") return;
     const providerId = entry.providerId;
     if (!providerId) {
-      showError("Provider not found for this package.", { title: "Update" });
+      showError(t("game_tile.toast_provider_not_found", "Provider not found for this package."), { title: t("game_tile.update", "Update") });
       return;
     }
 
     setUpdateRunning(true);
     try {
       if (!settings.luaPath || !settings.depotcachePath) {
-        showWarning("Configure Lua and Depot paths in Settings.", { title: "Paths required" });
+        showWarning(t("game_tile.toast_paths_required", "Configure Lua and Depot paths in Settings."), { title: t("game_tile.toast_paths_required_title", "Paths required") });
         return;
       }
 
@@ -392,7 +392,7 @@ function GameLauncherTileInner({
       }
       if (!source || !source.downloadUrl) {
         console.log(`[PACKAGE][CARD_UPDATE_SOURCE_MISS] appid=${game.appId} provider=${providerId} reason=no-match-in-sources-cache-or-provider-def`);
-        showError("Source required. Open Store Details to choose a source.", { title: "Update" });
+        showError(t("game_tile.toast_source_required", "Source required. Open Store Details to choose a source."), { title: t("game_tile.update", "Update") });
         return;
       }
 
@@ -401,7 +401,7 @@ function GameLauncherTileInner({
 
       console.log(`[PACKAGE][CARD_UPDATE_START] appid=${game.appId} provider=${providerId}`);
 
-      showSuccess(`Updating from ${source.providerName}...`, { title: "Update started" });
+      showSuccess(t("game_tile.toast_updating_from", "Updating from {{provider}}...", { provider: source.providerName }), { title: t("game_tile.toast_update_started", "Update started") });
 
       await downloadAndInstallPackage({
         jobId: `card-update-${game.appId}-${Date.now()}`,
@@ -448,7 +448,7 @@ function GameLauncherTileInner({
       };
       await saveProviderStatusAfterInstall(game.appId, providerId, hubcapConfig, providerOpts);
 
-      showSuccess(`Package updated successfully.`, { title: "Update complete" });
+      showSuccess(t("game_tile.toast_update_success", "Package updated successfully."), { title: t("game_tile.toast_update_complete", "Update complete") });
       console.log(`[PACKAGE][CARD_UPDATE_SUCCESS] appid=${game.appId} provider=${providerId}`);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -460,21 +460,21 @@ function GameLauncherTileInner({
         const statusCode = parseInt(statusMatch[1], 10);
         if (statusCode === 401) {
           await saveProviderStatusAuthError(game.appId, providerId, "auth-required", "unauthorized").catch(() => {});
-          showError("Update failed: Auth required. Check API key in Settings.", { title: "Unauthorized" });
+          showError(t("game_tile.toast_auth_required", "Update failed: Auth required. Check API key in Settings."), { title: t("game_tile.toast_unauthorized", "Unauthorized") });
           console.log(`[PACKAGE][CARD_UPDATE_AUTH_ERROR] appid=${game.appId} status=401 reason=unauthorized`);
         } else if (statusCode === 403) {
           await saveProviderStatusAuthError(game.appId, providerId, "auth-required", "forbidden").catch(() => {});
-          showError("Update failed: Forbidden. Check API key permissions.", { title: "Forbidden" });
+          showError(t("game_tile.toast_forbidden", "Update failed: Forbidden. Check API key permissions."), { title: t("game_tile.toast_forbidden_title", "Forbidden") });
           console.log(`[PACKAGE][CARD_UPDATE_AUTH_ERROR] appid=${game.appId} status=403 reason=forbidden`);
         } else if (statusCode === 429) {
           await saveProviderStatusAuthError(game.appId, providerId, "rate-limited", "rate-limited").catch(() => {});
-          showError("Update failed: Rate limited. Try again later.", { title: "Rate limited" });
+          showError(t("game_tile.toast_rate_limited", "Update failed: Rate limited. Try again later."), { title: t("game_tile.toast_rate_limited_title", "Rate limited") });
           console.log(`[PACKAGE][CARD_UPDATE_AUTH_ERROR] appid=${game.appId} status=429 reason=rate-limited`);
         } else {
-          showError(`Update failed: ${errMsg.slice(0, 200)}`, { title: "Error" });
+          showError(`${t("game_tile.toast_update_failed", "Update failed")}: ${errMsg.slice(0, 200)}`, { title: t("toast.error", "Something went wrong") });
         }
       } else {
-        showError(`Update failed: ${errMsg.slice(0, 200)}`, { title: "Error" });
+        showError(`${t("game_tile.toast_update_failed", "Update failed")}: ${errMsg.slice(0, 200)}`, { title: t("toast.error", "Something went wrong") });
       }
     } finally {
       setUpdateRunning(false);
@@ -534,7 +534,7 @@ function GameLauncherTileInner({
         <div className="absolute inset-0 rounded-t-2xl bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none" />
         {luaUpdateStatus === "update-available" && game.steamInstalled && (
           <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-black">
-            Update
+            {t("game_tile.update", "Update")}
           </span>
         )}
         {game.source === "debrid" && game.repacker && (
@@ -590,16 +590,16 @@ function GameLauncherTileInner({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   {installJob.message || (
                     installJob.status === "waiting" || installJob.status === "queued"
-                      ? "Waiting for Steamâ€¦"
+                      ? t("game_tile.waiting_steam", "Waiting for Steam…")
                       : installJob.status === "downloading"
-                        ? `Downloading ${installJob.progress}%`
+                        ? t("game_tile.downloading", "Downloading {{pct}}%", { pct: installJob.progress })
                         : installJob.status === "extracting" || installJob.status === "installing"
-                          ? "Installingâ€¦"
+                          ? t("game_tile.installing", "Installing…")
                           : installJob.status === "checking"
-                            ? "Checkingâ€¦"
+                            ? t("game_tile.checking", "Checking…")
                             : installJob.status === "paused"
-                              ? "Paused"
-                              : "Installingâ€¦"
+                              ? t("game_tile.paused", "Paused")
+                              : t("game_tile.installing", "Installing…")
                   )}
                   {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
                     <span className="text-[10px] text-amber-400/40">
@@ -620,14 +620,14 @@ function GameLauncherTileInner({
               </div>
             ) : installState.status === "timeout" ? (
               <div className="inline-flex items-center gap-1.5">
-                <span className="text-[11px] text-amber-400/70">Install stuck?</span>
+                <span className="text-[11px] text-amber-400/70">{t("game_tile.install_stuck", "Install stuck?")}</span>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onInstall(game); }}
                   className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
                 >
                   <Download className="h-3 w-3" />
-                  Retry
+                  {t("game_tile.retry", "Retry")}
                 </button>
                 <button
                   type="button"
@@ -635,13 +635,13 @@ function GameLauncherTileInner({
                   className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-muted)/50 transition hover:text-(--color-muted)"
                 >
                   <X className="h-3 w-3" />
-                  Dismiss
+                  {t("game_tile.dismiss", "Dismiss")}
                 </button>
               </div>
             ) : hasPendingUninstall ? (
               <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/70">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Uninstallingâ€¦
+                {t("game_tile.uninstalling", "Uninstalling…")}
               </div>
             ) : (
               <>
@@ -652,7 +652,7 @@ function GameLauncherTileInner({
                     className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
                   >
                     <Play className="h-3 w-3" />
-                    Play
+                    {t("game_tile.play", "Play")}
                   </button>
                 )}
                 {action === "install" && (
@@ -662,7 +662,7 @@ function GameLauncherTileInner({
                     className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
                   >
                     <Download className="h-3 w-3" />
-                    Install
+                    {t("game_tile.install", "Install")}
                   </button>
                 )}
                 {action === "open-steam" && (
@@ -674,7 +674,7 @@ function GameLauncherTileInner({
                     className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
                   >
                     <ExternalLink className="h-3 w-3" />
-                    Open in Steam
+                    {t("game_tile.open_steam", "Open in Steam")}
                   </button>
                 )}
                 {action === "open-lua-folder" && (
@@ -684,22 +684,22 @@ function GameLauncherTileInner({
                       if (game.luaScripts.length > 0) {
                         const scriptPath = game.luaScripts[0].path;
                         const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
-                        if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
+                        if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(t("context_menu.open_folder_error", "Could not open folder: {{error}}", { error: String(err) })));
                       }
                     })}
                     className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
                   >
                     <FolderOpen className="h-3 w-3" />
-                    Lua Folder
+                    {t("game_tile.lua_folder", "Lua Folder")}
                   </button>
                 )}
                 {action === "missing-path" && (
-                  <span className="text-[10px] text-(--color-muted)/50">Missing Path</span>
+                  <span className="text-[10px] text-(--color-muted)/50">{t("game_tile.missing_path", "Missing Path")}</span>
                 )}
                 {action === "installing" && (
                   <span className="inline-flex items-center gap-1 text-[10px] text-(--color-muted)/50">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Installing
+                    {t("game_tile.installing_label", "Installing")}
                   </span>
                 )}
                 {action === "select-exe" && (
@@ -708,24 +708,24 @@ function GameLauncherTileInner({
                     onClick={(e) => handleActionClick(e, async () => {
                       try {
                         const selected = await open({
-                          title: "Select game executable",
+                          title: t("debrid.select_exe", "Select game executable"),
                           filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
                           defaultPath: game.installDir || "C:\\",
                           multiple: false,
                         });
                         if (selected && game.providerGameId) {
                           updateDebridGame(game.providerGameId, game.installDir || "", selected);
-                          showSuccess("Game executable set. Ready to play!");
+                          showSuccess(t("debrid.exe_set", "Game executable set. Ready to play!"));
                         }
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : String(err);
-                        showError(`File picker failed: ${msg}`);
+                        showError(t("debrid.file_picker_failed", "File picker failed: {{error}}", { error: msg }));
                       }
                     })}
                     className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
                   >
                     <FileSearch className="h-3 w-3" />
-                    Select EXE
+                    {t("game_tile.select_exe", "Select EXE")}
                   </button>
                 )}
               </>
@@ -735,11 +735,11 @@ function GameLauncherTileInner({
 
         {/* Three-dots menu */}
         <div className="relative shrink-0">
-          <Tooltip label="More actions" delay={600} disabled={menuOpen}>
+          <Tooltip label={t("game_tile.more_actions", "More actions")} delay={600} disabled={menuOpen}>
             <button
               ref={menuAnchorRef}
               type="button"
-              aria-label="More actions"
+              aria-label={t("game_tile.more_actions", "More actions")}
               onClick={handleMenuToggle}
               className="inline-flex cursor-pointer items-center justify-center rounded-lg p-1 text-(--color-muted)/50 transition hover:bg-white/[0.04] hover:text-(--color-text)"
             >
@@ -781,7 +781,7 @@ function GameLauncherTileInner({
                   if (game.luaScripts.length > 0) {
                     const scriptPath = game.luaScripts[0].path;
                     const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
-                    if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
+                    if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(t("context_menu.open_folder_error", "Could not open folder: {{error}}", { error: String(err) })));
                   }
                 }}
               />
@@ -800,18 +800,18 @@ function GameLauncherTileInner({
                   (async () => {
                     try {
                       const selected = await open({
-                        title: "Select game executable",
+                        title: t("debrid.select_exe", "Select game executable"),
                         filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
                         defaultPath: game.installDir || "C:\\",
                         multiple: false,
                       });
                       if (selected && game.providerGameId) {
                         updateDebridGame(game.providerGameId, game.installDir || "", selected);
-                        showSuccess("Game executable set. Ready to play!");
+                        showSuccess(t("debrid.exe_set", "Game executable set. Ready to play!"));
                       }
                     } catch (err) {
                       const msg = err instanceof Error ? err.message : String(err);
-                      showError(`File picker failed: ${msg}`);
+                      showError(t("debrid.file_picker_failed", "File picker failed: {{error}}", { error: msg }));
                     }
                   })();
                 }}
@@ -863,7 +863,7 @@ function GameLauncherTileInner({
                 const folder = (sep > 0 ? exe.substring(0, sep) : null) || game.installDir || "";
                 if (folder) {
                   invoke("open_folder", { path: folder }).catch((err) => {
-                    showError(`Could not open folder: ${err}`);
+                    showError(t("context_menu.open_folder_error", "Could not open folder: {{error}}", { error: String(err) }));
                   });
                 }
               }}
@@ -876,7 +876,7 @@ function GameLauncherTileInner({
 
                 try {
                   if (!game?.appId && !game?.executablePath && !game?.installDir) {
-                    showError("Game location not available");
+                    showError(t("context_menu.game_location_unavailable", "Game location not available"));
                     return;
                   }
 
@@ -920,7 +920,7 @@ function GameLauncherTileInner({
                   }
 
                   if (!exePath) {
-                    showError("Could not locate executable for this game");
+                    showError(t("context_menu.exe_not_located", "Could not locate executable for this game"));
                     return;
                   }
 
@@ -929,10 +929,10 @@ function GameLauncherTileInner({
                     name: game.title || `Game ${game.appId}`,
                   });
 
-                  showSuccess(`Shortcut created:\n${path}`);
+                  showSuccess(t("context_menu.shortcut_created", "Shortcut created:\n{{path}}", { path }));
 
                 } catch (err) {
-                  showError(`Could not create shortcut: ${err}`);
+                  showError(t("context_menu.shortcut_error", "Could not create shortcut: {{error}}", { error: String(err) }));
                 }
               }}
             />
@@ -968,9 +968,9 @@ function GameLauncherTileInner({
                             try {
                               if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][TILE] rawId=${rawId} title="${game.title}"`);
                               removeManualGame(rawId);
-                              showSuccess(`"${game.title ?? rawId}" deleted from library`);
+                              showSuccess(`"${game.title ?? rawId}" ${t("context_menu.deleted", "deleted")}`);
                             } catch (e) {
-                              showError(`Failed to delete: ${e}`);
+                              showError(`${t("game_tile.delete_failed", "Failed to delete")}: ${e}`);
                             }
                           }
                         },
@@ -978,19 +978,19 @@ function GameLauncherTileInner({
                   : []),
                 ...(hasPendingUninstall
                   ? [{
-                    label: "Cancel tracking",
+                    label: t("context_menu.cancel_tracking", "Cancel tracking"),
                     icon: <XCircle className="h-3.5 w-3.5" />,
                     onClick: () => {
                       setMenuOpen(false);
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel before=${isPendingUninstall(String(game.appId))}`);
                       clearPendingUninstall(String(game.appId));
-                      showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+                      showInfo(t("game_tile.tracking_cancelled", "\"{{title}}\" uninstall tracking cancelled.", { title: game.title ?? game.appId }));
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(String(game.appId))}`);
                     },
                   }]
                     : game.source === "debrid"
                       ? [{
-                        label: "Remove from Library",
+                        label: t("context_menu.remove_library", "Remove from Library"),
                         icon: <Trash2 className="h-3.5 w-3.5" />,
                         destructive: true as const,
                         onClick: () => {
@@ -999,23 +999,23 @@ function GameLauncherTileInner({
                           const providerGameId = game.providerGameId;
                           if (providerGameId) {
                             removeDebridGameFromLibrary(providerGameId);
-                            showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                            showSuccess(`"${game.title ?? providerGameId}" ${t("context_menu.removed_from_library", "removed from library. Files on disk are kept.")}`);
                           } else {
-                            showError("Could not remove this game from the library.");
+                            showError(t("context_menu.remove_error", "Could not remove this game from the library."));
                           }
                         },
                       }]
                       : game.source !== "manual" && game.source !== "epic"
                         ? [{
-                        label: "Uninstall in Steam",
+                        label: t("context_menu.uninstall_steam", "Uninstall in Steam"),
                         icon: <ExternalLink className="h-3.5 w-3.5" />,
                         disabled: !game.steamInstalled,
-                        subtitle: !game.steamInstalled ? "Not installed" : undefined,
+                        subtitle: !game.steamInstalled ? t("context_menu.not_installed", "Not installed") : undefined,
                       onClick: game.steamInstalled ? async () => {
                         setMenuOpen(false);
                         const appId = Number(game.appId);
                         markPendingUninstall(String(appId));
-                        showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                        showInfo(t("context_menu.steam_uninstall_opened", "Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically."), { title: t("game_tile.uninstall_title", "Uninstall") });
                         try {
                           console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
                           await uninstallSteamApp(appId);
@@ -1035,7 +1035,7 @@ function GameLauncherTileInner({
                     : []),
                 ...(hasLua
                   ? [{
-                    label: "Delete Lua",
+                    label: t("context_menu.delete_lua", "Delete Lua"),
                     icon: <X className="h-3.5 w-3.5" />,
                     destructive: true as const,
                     onClick: onDeleteScript

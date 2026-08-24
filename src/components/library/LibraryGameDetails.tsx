@@ -23,6 +23,7 @@ function sameHeroFile(a: string, b: string): boolean {
 }
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
 import {
@@ -192,8 +193,8 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
   return undefined;
 }
 
-function formatBytes(bytes?: number): string {
-  if (!bytes || bytes === 0) return "Unknown";
+function formatBytes(bytes?: number, t?: (key: string) => string): string {
+  if (!bytes || bytes === 0) return t ? t("library_details.unknown") : "Unknown";
   const units = ["B", "KB", "MB", "GB"];
   let size = bytes;
   let unitIndex = 0;
@@ -204,8 +205,8 @@ function formatBytes(bytes?: number): string {
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
-function formatPlaytime(minutes: number): string {
-  if (minutes <= 0) return "Not tracked";
+function formatPlaytime(minutes: number, t?: (key: string) => string): string {
+  if (minutes <= 0) return t ? t("library_details.notTracked") : "Not tracked";
   if (minutes < 60) return `${minutes}m`;
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -214,11 +215,11 @@ function formatPlaytime(minutes: number): string {
   return `${h}h ${m}m`;
 }
 
-function formatCloudStatus(status: string): string {
+function formatCloudStatus(status: string, t?: (key: string) => string): string {
   switch (status) {
-    case "synchronized": return "Up to date";
-    case "pending": return "Pending";
-    case "conflict": return "Conflict";
+    case "synchronized": return t ? t("library_details.cloudStatus.upToDate") : "Up to date";
+    case "pending": return t ? t("library_details.cloudStatus.pending") : "Pending";
+    case "conflict": return t ? t("library_details.cloudStatus.conflict") : "Conflict";
     default: return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
   }
 }
@@ -272,6 +273,7 @@ export default function LibraryGameDetails({
   onOpenStopModal,
   fallbackBundle,
 }: LibraryGameDetailsProps) {
+  const { t } = useTranslation();
   countRender("LibraryGameDetails");
   if (game.appId === "4717430") {
     console.log(`[LIB_MEDIA_DEBUG][FALLBACK_BUNDLE_PROP] appid=4717430 hasBundle=${!!fallbackBundle} hasBg=${!!fallbackBundle?.background?.url} bgUrl=${fallbackBundle?.background?.url ?? "(null)"} source=${fallbackBundle?.background?.source ?? "(null)"}`);
@@ -744,10 +746,10 @@ export default function LibraryGameDetails({
   const { recordLaunch: recordGameLaunch } = useGamePlayStats(game.id);
 
   const cloudStatus = game.steamCloudStatus
-    ? formatCloudStatus(game.steamCloudStatus)
+    ? formatCloudStatus(game.steamCloudStatus, t)
     : categories.includes("Steam Cloud")
-      ? "Supported"
-      : "Not tracked";
+      ? t("library_details.cloudStatus.supported")
+      : t("library_details.notTracked");
 
   // Subscribe to playtime store changes for re-render
   const [, setPlaytimeVersion] = useState(0);
@@ -783,8 +785,8 @@ export default function LibraryGameDetails({
     ? Math.round(totalSeconds / 60)
     : (game.steamPlaytimeMinutes ?? game.localPlaytimeMinutes ?? 0);
   const playTimeDisplay = playTimeValue > 0
-    ? (hasPlaytimeStore ? formatPlaytimeSeconds(totalSeconds) : formatPlaytime(playTimeValue))
-    : "Not tracked";
+    ? (hasPlaytimeStore ? formatPlaytimeSeconds(totalSeconds) : formatPlaytime(playTimeValue, t))
+    : t("library_details.notTracked");
   if (hasPlaytimeStore && ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
     console.log(`[ACTIVITY][PLAYTIME_DISPLAY] appid=${game.appId} totalSeconds=${totalSeconds} source=${sourceLabel} label=${playTimeDisplay}`);
   }
@@ -802,9 +804,9 @@ export default function LibraryGameDetails({
   const lastPlayed = lastPlayedSource > 0
     ? (() => {
       if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][LAST_PLAYED_DISPLAY] appid=${game.appId} value=${lastPlayedSource} source=${lastPlayedFromActivity ? "activity" : (game.localLastPlayedAt ? "local" : "steam")}`);
-      return formatTimestamp(lastPlayedSource);
+      return formatTimestamp(lastPlayedSource, t);
     })()
-    : "Never";
+    : t("library_details.timestamp.never");
 
   // Trace achievement render source for Cuphead debugging
   if (game.appId === "268910") {
@@ -1429,7 +1431,7 @@ export default function LibraryGameDetails({
                 className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3.5 py-1.5 text-xs font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
               >
                 <Play className="h-3.5 w-3.5" />
-                {effectiveAction === "install" ? "Install" : "Play"}
+                {effectiveAction === "install" ? t("library_details.install") : t("library_details.play")}
               </button>
 
               {/* Game cover icon */}
@@ -1473,7 +1475,7 @@ export default function LibraryGameDetails({
                 type="button"
                 onClick={() => { toggleFavorite(favoriteId); }}
                 className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full p-1.5 transition hover:bg-white/10"
-                title={favorite ? "Remove from favorites" : "Add to favorites"}
+                title={favorite ? t("library_details.removeFromFavorites") : t("library_details.addToFavorites")}
               >
                 <Heart
                   className={`h-4 w-4 ${favorite ? "text-rose-400" : "text-white/50"}`}
@@ -1623,7 +1625,7 @@ export default function LibraryGameDetails({
                           gameId: game.id,
                           appId: appIdStr,
                           kind: "game-launched",
-                          title: "Game launched",
+                          title: t("library_details.activity.gameLaunched"),
                           source: "local",
                           severity: "info",
                         });
@@ -1632,7 +1634,7 @@ export default function LibraryGameDetails({
                       className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <Play className="h-4 w-4" />
-                      Play
+                      {t("library_details.play")}
                     </button>
                   )}
                   {launchInfo?.state === "launching" && (
@@ -1650,11 +1652,11 @@ export default function LibraryGameDetails({
                           className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/30"
                         >
                           <X className="h-4 w-4" />
-                          Cancel
+                          {t("library_details.cancel")}
                         </button>
                         <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
                           <Loader2 className="h-3 w-3 animate-spin" />
-                          Launching...
+                          {t("library_details.launching")}
                         </span>
                       </div>
                     </>
@@ -1675,11 +1677,11 @@ export default function LibraryGameDetails({
                           className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-500/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-red-500/50"
                         >
                           <Square className="h-4 w-4" />
-                          Stop
+                          {t("library_details.stop")}
                         </button>
                         <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
                           <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                          Running
+                          {t("library_details.running")}
                         </span>
                       </div>
                     </>
@@ -1693,11 +1695,11 @@ export default function LibraryGameDetails({
                           className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) opacity-60 transition"
                         >
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          Stopping...
+                          {t("library_details.stopping")}
                         </button>
                         <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
                           <Loader2 className="h-3 w-3 animate-spin" />
-                          Stopping...
+                          {t("library_details.stopping")}
                         </span>
                       </div>
                     </>
@@ -1711,16 +1713,16 @@ export default function LibraryGameDetails({
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {installJob.message || (
                         installJob.status === "waiting" || installJob.status === "queued"
-                          ? "Waiting for Steam…"
+                          ? t("library_details.installProgress.waitingForSteam")
                           : installJob.status === "downloading"
-                            ? `Downloading ${installJob.progress}%`
+                            ? t("library_details.installProgress.downloading", { pct: installJob.progress })
                             : installJob.status === "extracting" || installJob.status === "installing"
-                              ? "Installing…"
+                              ? t("library_details.installProgress.installing")
                               : installJob.status === "checking"
-                                ? "Checking…"
+                                ? t("library_details.installProgress.checking")
                                 : installJob.status === "paused"
-                                  ? "Paused"
-                                  : "Installing…"
+                                  ? t("library_details.installProgress.paused")
+                                  : t("library_details.installProgress.installing")
                       )}
                     </div>
                     <span className="text-[11px] text-amber-400/50">
@@ -1740,20 +1742,20 @@ export default function LibraryGameDetails({
                   </div>
                   {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
                     <div className="text-[11px] text-amber-400/40">
-                      {formatBytes(installJob.bytesRead)} / {formatBytes(installJob.totalBytes)}
+                      {formatBytes(installJob.bytesRead, t)} / {formatBytes(installJob.totalBytes, t)}
                     </div>
                   )}
                 </div>
               ) : installState.status === "timeout" ? (
                 <div className="inline-flex items-center gap-2">
-                  <span className="text-sm text-amber-400/70">Install taking longer than expected?</span>
+                  <span className="text-sm text-amber-400/70">{t("library_details.installTakingLonger")}</span>
                   <button
                     type="button"
                     onClick={() => onInstall(game)}
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
                   >
                     <Download className="h-4 w-4" />
-                    Retry
+                    {t("library_details.retry")}
                   </button>
                   <button
                     type="button"
@@ -1761,14 +1763,14 @@ export default function LibraryGameDetails({
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/5"
                   >
                     <X className="h-4 w-4" />
-                    Dismiss
+                    {t("library_details.dismiss")}
                   </button>
                 </div>
               ) : hasPendingUninstall ? (
                 <div className="inline-flex items-center gap-3">
                   <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
                     <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
-                    <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
+                    <span className="text-sm font-medium text-amber-400">{t("library_details.uninstalling")}</span>
                   </div>
                   <button
                     type="button"
@@ -1776,13 +1778,13 @@ export default function LibraryGameDetails({
                       if (!game.appId) return;
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel before=${isPendingUninstall(game.appId)}`);
                       clearPendingUninstall(game.appId);
-                      showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+                      showInfo(t("library_details.toast.uninstallTrackingCancelled", { title: game.title ?? game.appId }));
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(game.appId)}`);
                     }}
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/5"
                   >
                     <XCircle className="h-3.5 w-3.5" />
-                    Cancel tracking
+                    {t("library_details.actions.cancelTracking")}
                   </button>
                 </div>
               ) : (
@@ -1794,7 +1796,7 @@ export default function LibraryGameDetails({
                       className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <Download className="h-4 w-4" />
-                      Install
+                      {t("library_details.install")}
                     </button>
                   )}
                   {action === "open-steam" && (
@@ -1804,7 +1806,7 @@ export default function LibraryGameDetails({
                       className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <ExternalLink className="h-4 w-4" />
-                      Open in Steam
+                      {t("library_details.openInSteam")}
                     </button>
                   )}
                   {action === "open-lua-folder" && (
@@ -1814,24 +1816,24 @@ export default function LibraryGameDetails({
                         if (game.luaScripts.length > 0) {
                           const scriptPath = game.luaScripts[0].path;
                           const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
-                          if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => toast.error(`Could not open folder: ${err}`));
+                          if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => toast.error(t("library_details.toast.couldNotOpenFolder", { error: String(err) })));
                         }
                       }}
                       className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <FolderOpen className="h-4 w-4" />
-                      Lua Folder
+                      {t("library_details.luaFolder")}
                     </button>
                   )}
                   {action === "missing-path" && (
                     <span className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300">
-                      Missing Path
+                      {t("library_details.missingPath")}
                     </span>
                   )}
                   {action === "installing" && (
                     <span className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-bold text-(--color-muted)/50">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Installing
+                      {t("library_details.installing")}
                     </span>
                   )}
                   {action === "select-exe" && (
@@ -1840,24 +1842,24 @@ export default function LibraryGameDetails({
                       onClick={async () => {
                         try {
                           const selected = await open({
-                            title: "Select game executable",
+                            title: t("library_details.selectGameExecutable"),
                             filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
                             defaultPath: game.installDir || "C:\\",
                             multiple: false,
                           });
                           if (selected && game.providerGameId) {
                             updateDebridGame(game.providerGameId, game.installDir || "", selected);
-                            toast.success("Game executable set. Ready to play!");
+                            toast.success(t("library_details.toast.gameExecutableSet"));
                           }
                         } catch (err) {
                           const msg = err instanceof Error ? err.message : String(err);
-                          toast.error(`File picker failed: ${msg}`);
+                          toast.error(t("library_details.toast.filePickerFailed", { error: msg }));
                         }
                       }}
                       className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                     >
                       <FileSearch className="h-4 w-4" />
-                      Select Executable
+                      {t("library_details.selectExecutable")}
                     </button>
                   )}
                 </>
@@ -1867,17 +1869,17 @@ export default function LibraryGameDetails({
             {/* Inline stats */}
             <div className="flex min-w-0 flex-1 animate-stats-in flex-wrap items-center gap-x-4 gap-y-1">
               {/*    */}
-              <StatInline icon={<CalendarClock className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
-              <StatInline icon={<ClockFading className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
-              <StatInline icon={<HardDrive className="h-5 w-5" />} label="Size" value={formatBytes(game.sizeOnDisk)} />
+              <StatInline icon={<CalendarClock className="h-5 w-5" />} label={t("library_details.lastPlayed")} value={lastPlayed} />
+              <StatInline icon={<ClockFading className="h-5 w-5" />} label={t("library_details.playTime")} value={playTimeDisplay} />
+              <StatInline icon={<HardDrive className="h-5 w-5" />} label={t("library_details.size")} value={formatBytes(game.sizeOnDisk, t)} />
               {isPerfected ? (
                 <div className="inline-flex items-center gap-1.5 text-xs">
                   <Trophy className="h-4 w-4 fill-amber-400 text-amber-400" />
-                  <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-amber-400/80">Perfected:</span>
+                  <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-amber-400/80">{t("library_details.perfected")}:</span>
                   <span className="font-medium text-amber-400">{effectiveUnlocked}/{effectiveTotal}</span>
                 </div>
               ) : (
-                <StatInline icon={<Trophy className="h-5 w-5" />} label="Achievements" value={achievementsStatus} />
+                <StatInline icon={<Trophy className="h-5 w-5" />} label={t("library_details.achievements")} value={achievementsStatus} />
               )}
             </div>
 
@@ -1895,7 +1897,7 @@ export default function LibraryGameDetails({
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 >
                   <MoreHorizontal className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Actions</span>
+                  <span className="hidden sm:inline">{t("library_details.actionsLabel")}</span>
                 </button>
               </div>
 
@@ -1904,7 +1906,7 @@ export default function LibraryGameDetails({
                 type="button"
                 onClick={() => { toggleFavorite(favoriteId); }}
                 className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs transition hover:bg-white/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                title={favorite ? "Remove from favorites" : "Add to favorites"}
+                title={favorite ? t("library_details.removeFromFavorites") : t("library_details.addToFavorites")}
               >
                 <Heart
                   className={`h-3.5 w-3.5 ${favorite ? "text-rose-400" : "text-(--color-muted)"}`}
@@ -1940,7 +1942,7 @@ export default function LibraryGameDetails({
                     {genres.length > 0 && (
                       <div>
                         <h3 className="mb-2.5 text-[11px] font-bold uppercase tracking-widest text-(--color-muted)">
-                          Genres
+                          {t("library_details.genres")}
                         </h3>
                         <div className="flex flex-wrap gap-1.5">
                           {genres.map((genre) => (
@@ -1959,7 +1961,7 @@ export default function LibraryGameDetails({
                     {categories.length > 0 && (
                       <div>
                         <h3 className="mb-2.5 text-[11px] font-bold uppercase tracking-widest text-(--color-muted)">
-                          Features
+                          {t("library_details.features")}
                         </h3>
                         <div className="flex flex-wrap gap-1.5">
                           {categories.map((cat) => (
@@ -1986,7 +1988,7 @@ export default function LibraryGameDetails({
                 <section>
                   <h2 className="mb-3 text-base font-bold text-(--color-text)">
                     <BookOpen className="mr-2 inline h-4 w-4 text-(--color-accent)" />
-                    About This Game
+                    {t("library_details.aboutThisGame")}
                   </h2>
                   <div className="space-y-3">
                     <p className="whitespace-pre-line text-sm leading-relaxed text-(--color-text)/70">
@@ -1998,7 +2000,7 @@ export default function LibraryGameDetails({
                         onClick={() => setShowFullDescription(!showFullDescription)}
                         className="cursor-pointer text-xs font-medium text-(--color-accent) transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                       >
-                        {showFullDescription ? "Show less" : "Show more"}
+                        {showFullDescription ? t("library_details.showLess") : t("library_details.showMore")}
                       </button>
                     )}
                   </div>
@@ -2007,7 +2009,7 @@ export default function LibraryGameDetails({
 
               {!shortIntro && !longDescText && canonicalLoaded && (
                 <p className="text-sm text-(--color-muted)">
-                  Game description is not available yet.
+                  {t("library_details.gameDescriptionNotAvailable")}
                 </p>
               )}
 
@@ -2016,15 +2018,15 @@ export default function LibraryGameDetails({
                 <section>
                   <h2 className="mb-3 text-base font-bold text-(--color-text)">
                     <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
-                    Updates
+                    {t("library_details.updates")}
                   </h2>
 
                   {!appIdStr ? (
                     <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
                       <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
-                      <p className="mt-2 text-sm text-(--color-muted)">
-                        Game updates are only available for Steam apps.
-                      </p>
+                        <p className="mt-2 text-sm text-(--color-muted)">
+                          {t("library_details.updatesSteamOnly")}
+                        </p>
                     </div>
                   ) : newsLoading ? (
                     <div className="space-y-3">
@@ -2054,7 +2056,7 @@ export default function LibraryGameDetails({
                         {newsError}
                       </p>
                       <p className="mt-1 text-xs text-(--color-muted)/50">
-                        Steam news may be unavailable or blocked. Try again later.
+                        {t("library_details.steamNewsUnavailable")}
                       </p>
                       <button
                         type="button"
@@ -2062,7 +2064,7 @@ export default function LibraryGameDetails({
                         className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-3.5 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
                       >
                         <RefreshCw className="h-3 w-3" />
-                        Retry
+                        {t("library_details.retry")}
                       </button>
                     </div>
                   ) : steamNews.length > 0 ? (
@@ -2079,9 +2081,9 @@ export default function LibraryGameDetails({
                   ) : (
                     <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
                       <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
-                      <p className="mt-2 text-sm text-(--color-muted)">
-                        No recent game updates found.
-                      </p>
+                        <p className="mt-2 text-sm text-(--color-muted)">
+                          {t("library_details.noRecentUpdates")}
+                        </p>
                     </div>
                   )}
                 </section>
@@ -2095,14 +2097,14 @@ export default function LibraryGameDetails({
               {(!isManualGame || linkedSteamAppId || !!appIdStr) && (!isEpicGame || linkedSteamAppId) && (
                 <div className="space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                   <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
-                    {isManualGame ? "Steam Links" : "Links"}
+                    {isManualGame ? t("library_details.steamLinks") : t("library_details.links")}
                   </h3>
                   <div className="space-y-1">
                     {isManualGame && linkedSteamAppId ? (
                       <>
                         <ShortcutRow
                           icon={<ExternalLink className="h-3.5 w-3.5" />}
-                          label="Steam Store Page"
+                          label={t("library_details.steamStorePage")}
                           enabled={!!linkedSteamAppId}
                           onClick={() => {
                             if (linkedSteamAppId) openExternalUrl(getSteamStoreUrl(Number(linkedSteamAppId)));
@@ -2110,7 +2112,7 @@ export default function LibraryGameDetails({
                         />
                         <ShortcutRow
                           icon={<Database className="h-3.5 w-3.5" />}
-                          label="SteamDB"
+                          label={t("library_details.steamdb")}
                           enabled={!!linkedSteamAppId}
                           onClick={() => {
                             if (linkedSteamAppId) openExternalUrl(getSteamDbUrl(Number(linkedSteamAppId)));
@@ -2121,7 +2123,7 @@ export default function LibraryGameDetails({
                       <>
                         <ShortcutRow
                           icon={<ExternalLink className="h-3.5 w-3.5" />}
-                          label="Store Page"
+                          label={t("library_details.storePage")}
                           enabled={!!appIdNum}
                           onClick={() => {
                             if (appIdNum && onOpenSteam) onOpenSteam(game);
@@ -2131,10 +2133,10 @@ export default function LibraryGameDetails({
 
                         <ShortcutRow
                           icon={<Puzzle className="h-3.5 w-3.5" />}
-                          label="DLC"
+                          label={t("library_details.dlc")}
                           subtitle={
                             game.metadata && game.metadata.dlc_count > 0
-                              ? `${game.metadata.dlc_count} available`
+                              ? t("library_details.dlcAvailable", { count: game.metadata.dlc_count })
                               : undefined
                           }
                           enabled={!!appIdNum}
@@ -2145,7 +2147,7 @@ export default function LibraryGameDetails({
 
                         <ShortcutRow
                           icon={<MessageCircle className="h-3.5 w-3.5" />}
-                          label="Community Hub"
+                          label={t("library_details.communityHub")}
                           enabled={!!appIdNum}
                           onClick={() => {
                             if (appIdNum) openExternalUrl(getSteamCommunityUrl(appIdNum));
@@ -2154,7 +2156,7 @@ export default function LibraryGameDetails({
 
                         <ShortcutRow
                           icon={<MessageCircle className="h-3.5 w-3.5" />}
-                          label="Discussions"
+                          label={t("library_details.discussions")}
                           enabled={!!appIdNum}
                           onClick={() => {
                             if (appIdNum) openExternalUrl(getSteamDiscussionsUrl(appIdNum));
@@ -2163,7 +2165,7 @@ export default function LibraryGameDetails({
 
                         <ShortcutRow
                           icon={<BookMarked className="h-3.5 w-3.5" />}
-                          label="Guides"
+                          label={t("library_details.guides")}
                           enabled={!!appIdNum}
                           onClick={() => {
                             if (appIdNum) openExternalUrl(getSteamGuidesUrl(appIdNum));
@@ -2172,7 +2174,7 @@ export default function LibraryGameDetails({
 
                         <ShortcutRow
                           icon={<LifeBuoy className="h-3.5 w-3.5" />}
-                          label="Support"
+                          label={t("library_details.support")}
                           enabled={!!appIdNum}
                           onClick={() => {
                             if (appIdNum) openExternalUrl(getSteamSupportUrl(appIdNum));
@@ -2181,7 +2183,7 @@ export default function LibraryGameDetails({
 
                         <ShortcutRow
                           icon={<Database className="h-3.5 w-3.5" />}
-                          label="SteamDB"
+                          label={t("library_details.steamdb")}
                           enabled={!!appIdNum}
                           onClick={() => {
                             if (appIdNum && onOpenSteamDb) onOpenSteamDb(game);
@@ -2200,7 +2202,7 @@ export default function LibraryGameDetails({
                   {!isPerfected && (
                     <h3 className="text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 text-(--color-muted)">
                       <Trophy className="h-3.5 w-3.5" />
-                      Achievements
+                      {t("library_details.achievements")}
                     </h3>
                   )}
 
@@ -2214,30 +2216,30 @@ export default function LibraryGameDetails({
                     </div>
                   ) : achievementsSummary && achievementsSummary.source === "disabled" ? (
                     <div className="mt-3">
-                      <p className="text-xs text-(--color-muted)">
-                        Steam Achievements Tracking is disabled.
-                      </p>
-                      <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
-                        onClick={() => onNavigate?.("settings")}
-                      >
-                        Enable in Settings
+                        <p className="text-xs text-(--color-muted)">
+                          {t("library_details.steamAchievementsTrackingDisabled")}
+                        </p>
+                        <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
+                          onClick={() => onNavigate?.("settings")}
+                        >
+                          {t("library_details.enableInSettings")}
                       </p>
                     </div>
                   ) : achievementsSummary && achievementsSummary.errorReason === "missing-appid" ? (
                     <div className="mt-3">
-                      <p className="text-xs text-(--color-muted)">
-                        Achievements are unavailable because this game has no Steam AppID.
-                      </p>
+                        <p className="text-xs text-(--color-muted)">
+                          {t("library_details.achievementsUnavailableNoAppid")}
+                        </p>
                     </div>
                   ) : achievementsSummary && achievementsSummary.source === "setup-required" ? (
                     <div className="mt-3">
-                      <p className="text-xs text-(--color-muted)">
-                        Configure Steam Web API in Settings to load achievement progress.
-                      </p>
-                      <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
-                        onClick={() => onNavigate?.("settings")}
-                      >
-                        Open Settings
+                        <p className="text-xs text-(--color-muted)">
+                          {t("library_details.configureSteamWebApi")}
+                        </p>
+                        <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
+                          onClick={() => onNavigate?.("settings")}
+                        >
+                          {t("library_details.openSettings")}
                       </p>
                     </div>
                   ) : achievementsSummary && effectiveProgressAvailable && effectiveTotal > 0 ? (
@@ -2249,8 +2251,8 @@ export default function LibraryGameDetails({
                         <div className="rounded-xl bg-amber-500/8 border border-amber-400/15 px-3.5 py-2.5 flex items-center gap-3">
                           <Trophy className="h-5 w-5 fill-amber-400 text-amber-400 shrink-0" />
                           <div className="min-w-0">
-                            <p className="text-xs font-semibold text-amber-300">Perfected</p>
-                            <p className="text-[10px] text-amber-400/60">All achievements unlocked</p>
+                            <p className="text-xs font-semibold text-amber-300">{t("library_details.perfected")}</p>
+                            <p className="text-[10px] text-amber-400/60">{t("library_details.allAchievementsUnlocked")}</p>
                           </div>
                           <span className="ml-auto shrink-0 text-[11px] font-bold text-amber-400/80">
                             {effectiveUnlocked}/{effectiveTotal} &middot; 100%
@@ -2266,8 +2268,8 @@ export default function LibraryGameDetails({
                             onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
                             className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
                           >
-                            <option value="steam-official">Steam Official</option>
-                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                            <option value="steam-official">{t("library_details.steamOfficial")}</option>
+                            <option value="steam">{t("library_details.crackSave")}</option>
                           </select>
                           <button
                             type="button"
@@ -2311,7 +2313,7 @@ export default function LibraryGameDetails({
                               }
                             }}
                             className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[10px] text-(--color-muted) transition hover:bg-white/10"
-                            title="Refresh from selected source"
+                            title={t("library_details.refreshFromSource")}
                           >
                             {achievementsLoading ? "..." : "↻"}
                           </button>
@@ -2356,7 +2358,7 @@ export default function LibraryGameDetails({
                             </div>
                             <span className={`shrink-0 text-[9px] font-medium ${ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
                               }`}>
-                              {ach.unlocked ? "Unlocked" : "Locked"}
+                              {ach.unlocked ? t("library_details.unlocked") : t("library_details.locked")}
                             </span>
                           </div>
                         ))}
@@ -2369,7 +2371,7 @@ export default function LibraryGameDetails({
                             className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-amber-400/20 bg-amber-500/8 px-3 py-2 text-xs font-medium text-amber-400 transition hover:bg-amber-500/12 focus-visible:ring-2 focus-visible:ring-amber-400/50"
                           >
                             <Trophy className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                            View all · {achievementsSummary.total} achievements
+                            {t("library_details.viewAllAchievements")} · {achievementsSummary.total}
                           </button>
                         ) : (
                           <button
@@ -2378,7 +2380,7 @@ export default function LibraryGameDetails({
                             className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                           >
                             <Trophy className="h-3.5 w-3.5" />
-                            View all achievements ({achievementsSummary.total})
+                            {t("library_details.viewAllAchievementsCount", { count: achievementsSummary.total })}
                           </button>
                         )}
                         {SHOW_ACH_DEBUG_BUTTONS && (
@@ -2472,11 +2474,11 @@ export default function LibraryGameDetails({
                       )}
 
                       <p className="text-xs text-(--color-muted)">
-                        Achievement list available. Progress unavailable for this source.
+                        {t("library_details.achievementListAvailable")}
                       </p>
                       {achievementsSummary.errorReason === "api-403-fallback" && (
                         <p className="text-[10px] text-(--color-muted)/60">
-                          Steam Web API could not load your progress. LumaForge will try local Steam cache.
+                          {t("library_details.steamWebApiFallback")}
                         </p>
                       )}
                       <div className="space-y-1">
@@ -2507,21 +2509,21 @@ export default function LibraryGameDetails({
                                 <span className="block text-[9px] text-(--color-muted)/30">N/A rarity</span>
                               )}
                             </div>
-                            <span className={`shrink-0 text-[9px] font-medium ${ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
+                              <span className={`shrink-0 text-[9px] font-medium ${ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
                               }`}>
-                              {ach.unlocked ? "Unlocked" : "Locked"}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowAchievementsModal(true)}
-                          className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                        >
-                          <Trophy className="h-3.5 w-3.5" />
-                          View all achievements
+                                {ach.unlocked ? t("library_details.unlocked") : t("library_details.locked")}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowAchievementsModal(true)}
+                            className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                          >
+                            <Trophy className="h-3.5 w-3.5" />
+                            {t("library_details.viewAllAchievements")}
                         </button>
                         {SHOW_ACH_DEBUG_BUTTONS && (
                           <button
@@ -2546,26 +2548,26 @@ export default function LibraryGameDetails({
                       {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
                       {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
                         <div className="flex items-center gap-2">
-                          <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
-                          <select
-                            value={achSource}
-                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                          >
-                            <option value="steam-official">Steam Official (appcache/stats)</option>
-                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
-                          </select>
-                        </div>
-                      )}
-                      <p className="text-xs text-(--color-muted)">
-                        {achSource === "steam"
-                          ? "No achievement data found in crack save directory."
-                          : "Achievement tracking requires Steam Web API setup."}
-                      </p>
-                      <p className="text-[10px] text-(--color-muted)/60">
-                        {achSource === "steam"
-                          ? "Try Manual Refresh to read from crack save (achievements.ini)."
-                          : "Configure in Settings or switch to Crack Save source."}
+                           <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{t("library_details.source")}:</label>
+                           <select
+                             value={achSource}
+                             onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                             className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                           >
+                             <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
+                             <option value="steam">{t("library_details.crackSave")}</option>
+                           </select>
+                         </div>
+                       )}
+                       <p className="text-xs text-(--color-muted)">
+                         {achSource === "steam"
+                           ? t("library_details.noAchievementDataCrack")
+                           : t("library_details.achievementTrackingRequiresApi")}
+                       </p>
+                       <p className="text-[10px] text-(--color-muted)/60">
+                         {achSource === "steam"
+                           ? t("library_details.tryManualRefreshCrack")
+                           : t("library_details.configureOrSwitchSource")}
                       </p>
                       <div className="flex gap-2">
                         <button
@@ -2605,14 +2607,14 @@ export default function LibraryGameDetails({
                               }
                             } catch (err) {
                               console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
-                              toast.error("Failed to refresh achievements");
+                              toast.error(t("library_details.toast.failedToRefreshAchievements"));
                             } finally {
                               setAchievementsLoading(false);
                             }
                           }}
                           className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
                         >
-                          {achievementsLoading ? "Loading..." : "Refresh Achievements"}
+                          {achievementsLoading ? t("library_details.loading") : t("library_details.refreshAchievements")}
                         </button>
                         {achSource === "steam-official" && (
                           <button
@@ -2620,7 +2622,7 @@ export default function LibraryGameDetails({
                             onClick={() => onNavigate?.("settings")}
                             className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-muted) transition hover:bg-white/10"
                           >
-                            Settings
+                            {t("library_details.settings")}
                           </button>
                         )}
                       </div>
@@ -2630,24 +2632,24 @@ export default function LibraryGameDetails({
                       {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
                       {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
                         <div className="flex items-center gap-2">
-                          <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
+                          <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{t("library_details.source")}:</label>
                           <select
                             value={achSource}
                             onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
                             className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
                           >
-                            <option value="steam-official">Steam Official (appcache/stats)</option>
-                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                            <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
+                            <option value="steam">{t("library_details.crackSave")}</option>
                           </select>
                         </div>
                       )}
                       <p className="text-xs text-(--color-muted)">
-                        Achievements not loaded for this source.
+                        {t("library_details.achievementsNotLoaded")}
                       </p>
                       <p className="text-[10px] text-(--color-muted)/60">
                         {achSource === "steam"
-                          ? "Reading from crack save directory (achievements.ini)."
-                          : "Reading from Steam appcache/stats binary files."}
+                          ? t("library_details.crackSaveInfo")
+                          : t("library_details.steamOfficialInfo")}
                       </p>
                       <button
                         type="button"
@@ -2699,20 +2701,20 @@ export default function LibraryGameDetails({
                             }
                           } catch (err) {
                             console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
-                            toast.error("Failed to refresh achievements");
+                            toast.error(t("library_details.toast.failedToRefreshAchievements"));
                           } finally {
                             setAchievementsLoading(false);
                           }
                         }}
                         className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
                       >
-                        {achievementsLoading ? "Loading..." : "Refresh Achievements"}
+                        {achievementsLoading ? t("library_details.loading") : t("library_details.refreshAchievements")}
                       </button>
                     </div>
                   ) : (
                     <div className="mt-3">
                       <p className="text-xs text-(--color-muted)">
-                        Achievements are not supported for this game.
+                        {t("library_details.achievementsNotSupported")}
                       </p>
                     </div>
                   )}
@@ -2723,12 +2725,12 @@ export default function LibraryGameDetails({
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                   <Calendar className="mr-1.5 inline h-3.5 w-3.5" />
-                  Release Date
+                  {t("library_details.releaseDate")}
                 </h3>
                 <p className="mt-1 text-sm text-(--color-text)">
                   {canonicalLoaded
-                    ? (game.metadata?.release_date || (localDetailsData as any)?.releaseDate || "Unknown")
-                    : "Loading…"}
+                    ? (game.metadata?.release_date || (localDetailsData as any)?.releaseDate || t("library_details.unknown"))
+                    : t("library_details.loading")}
                 </p>
               </div>
 
@@ -2737,30 +2739,30 @@ export default function LibraryGameDetails({
                 <div className="mt-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                   <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                     <FileCode2 className="mr-1.5 inline h-3.5 w-3.5" />
-                    Lua
+                    {t("library_details.lua")}
                   </h3>
                   <div className="space-y-2">
                     {script && (
                       <>
                         <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5">
-                          <p className="text-[10px] text-(--color-muted)">Script</p>
+                          <p className="text-[10px] text-(--color-muted)">{t("library_details.script")}</p>
                           <p className="mt-0.5 text-xs font-medium text-(--color-text)">
                             {script.file_name}
                           </p>
                         </div>
                         <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5">
-                          <p className="text-[10px] text-(--color-muted)">Status</p>
+                          <p className="text-[10px] text-(--color-muted)">{t("library_details.status")}</p>
                           <p className="mt-0.5 text-xs text-(--color-text)">
-                            {game.isLuaDisabled ? "Disabled" : "Active"}
+                            {game.isLuaDisabled ? t("library_details.disabled") : t("library_details.active")}
                           </p>
                         </div>
                       </>
                     )}
                     {!script && game.hasLuaSource && (
                       <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5">
-                        <p className="text-[10px] text-(--color-muted)">Source</p>
+                        <p className="text-[10px] text-(--color-muted)">{t("library_details.source")}</p>
                         <p className="mt-0.5 text-xs text-(--color-text)">
-                          Available — sync to install
+                          {t("library_details.availableSync")}
                         </p>
                       </div>
                     )}
@@ -2772,7 +2774,7 @@ export default function LibraryGameDetails({
               {game.appId && (
                 <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                   <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
-                    App ID
+                    {t("library_details.appId")}
                   </h3>
                   <p className="mt-1 text-sm font-mono text-(--color-text)">
                     {game.appId}
@@ -2826,7 +2828,7 @@ export default function LibraryGameDetails({
                 };
                 setAchievementsSummary(staleSummary);
                 if (appIdStr) achievementStore.setSummary(appIdStr, staleSummary, achSource);
-                toast("Showing last known achievement progress.", { duration: 4000, icon: "🔄" });
+                toast(t("library_details.toast.showingLastKnownProgress"), { duration: 4000, icon: "🔄" });
               } else {
                 setAchievementsSummary(s);
                 if (appIdStr) achievementStore.setSummary(appIdStr, s, achSource);
@@ -2843,7 +2845,7 @@ export default function LibraryGameDetails({
             const handleError = (err: unknown) => {
               console.warn(`[ACH][REFRESH] failed keeping previous summary reason=${err}`);
               setAchievementsRefreshing(false);
-              toast.error("Failed to refresh achievements", { duration: 3000 });
+              toast.error(t("library_details.toast.failedToRefreshAchievements"), { duration: 3000 });
             };
 
             // CRITICAL: delete existing store entry BEFORE resolving, mirroring the
@@ -2904,57 +2906,57 @@ export default function LibraryGameDetails({
             style={{ top: anchorRect.top, right: anchorRect.right }}
           >
             {hasPendingUninstall ? (
-              <DropdownItem label="Cancel tracking" onClick={() => {
+              <DropdownItem label={t("library_details.actions.cancelTracking")} onClick={() => {
                 setShowActions(false);
                 if (!game.appId) return;
                 clearPendingUninstall(game.appId);
-                showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+                showInfo(t("library_details.toast.uninstallTrackingCancelled", { title: game.title ?? game.appId }));
               }} />
             ) : game.source === "debrid" ? (
-              <DropdownItem label="Remove from Library" destructive onClick={() => {
+              <DropdownItem label={t("library_details.actions.removeFromLibrary")} destructive onClick={() => {
                 setShowActions(false);
                 const providerGameId = game.providerGameId;
                 if (providerGameId) {
                   removeDebridGameFromLibrary(providerGameId);
-                  showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                  showSuccess(t("library_details.toast.removedFromLibrary", { title: game.title ?? providerGameId }));
                 } else {
-                  showError("Could not remove this game from the library.");
+                  showError(t("library_details.toast.couldNotRemove"));
                 }
               }} />
             ) : game.steamInstalled && game.source !== "epic" ? (
-              <DropdownItem label="Uninstall in Steam" onClick={async () => {
+              <DropdownItem label={t("library_details.actions.uninstallInSteam")} onClick={async () => {
                 setShowActions(false);
                 const appIdNum = Number(game.appId);
                 markPendingUninstall(String(game.appId));
-                showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                showInfo(t("library_details.toast.steamUninstallOpened"), { title: t("library_details.toast.uninstall") });
                 try { await uninstallSteamApp(appIdNum); } catch { try { await openSteamStoreApp(appIdNum); } catch { await openExternalUrl(getSteamStoreUrl(appIdNum)); } }
               }} />
             ) : null}
             {script && onDeleteScript && (
-              <DropdownItem label="Delete Lua" onClick={() => { setShowActions(false); onDeleteScript(game); }} />
+              <DropdownItem label={t("library_details.actions.deleteLua")} onClick={() => { setShowActions(false); onDeleteScript(game); }} />
             )}
             {(!script || !onDeleteScript) && (
-              <DropdownItem label="Delete Lua" disabled={!script} subtitle={!script ? "No Lua script" : undefined} />
+              <DropdownItem label={t("library_details.actions.deleteLua")} disabled={!script} subtitle={!script ? t("library_details.noLuaScript") : undefined} />
             )}
             <div className="border-t border-(--surface-active-border) my-1" />
             {game.source === "manual" && (
-              <DropdownItem label="Remove from Library" destructive disabled={isManualRunning}
-                subtitle={isManualRunning ? "Stop the game first" : undefined}
+              <DropdownItem label={t("library_details.actions.removeFromLibrary")} destructive disabled={isManualRunning}
+                subtitle={isManualRunning ? t("library_details.stopBeforeRemove") : undefined}
                 onClick={() => {
                   if (isManualRunning) return;
                   setShowActions(false);
                   const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
-                  if (rawId && window.confirm(`Remove "${game.title}" from your library?`)) {
+                  if (rawId && window.confirm(t("library_details.confirm.removeGame", { title: game.title }))) {
                     if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][DETAILS] rawId=${rawId} title="${game.title}"`);
                     removeManualGame(rawId);
-                    showInfo(`"${game.title ?? rawId}" removed from library`);
+                    showInfo(t("library_details.toast.removedFromLibrary", { title: game.title ?? rawId }));
                     onBack();
                   }
                 }} />
             )}
-            <DropdownItem label="Edit Game Details" onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
+            <DropdownItem label={t("library_details.actions.editGameDetails")} onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
             <DropdownItem
-              label={game.source === "epic" || (game.source === "manual" && !game.appId) ? "Manage Artwork" : "Refresh Artwork"}
+              label={game.source === "epic" || (game.source === "manual" && !game.appId) ? t("library_details.actions.manageArtwork") : t("library_details.actions.refreshArtwork")}
               onClick={() => {
                 setShowActions(false);
                 if (game.source === "epic" || (game.source === "manual" && !game.appId)) {
@@ -2963,9 +2965,9 @@ export default function LibraryGameDetails({
                 } else { onRefreshArtwork?.(); }
               }} />
             {onOpenTools && (
-              <DropdownItem label="Game Fixes" onClick={() => { setShowActions(false); onOpenTools(game); }} />
+              <DropdownItem label={t("library_details.actions.gameFixes")} onClick={() => { setShowActions(false); onOpenTools(game); }} />
             )}
-            <DropdownItem label="Close" onClick={() => setShowActions(false)} />
+            <DropdownItem label={t("library_details.actions.close")} onClick={() => setShowActions(false)} />
           </div>
         </>,
         document.body
@@ -2974,21 +2976,21 @@ export default function LibraryGameDetails({
   );
 }
 
-function formatTimestamp(ts: number) {
-  if (!ts || ts <= 0) return "Recently";
+function formatTimestamp(ts: number, t?: (key: string, opts?: Record<string, unknown>) => string) {
+  if (!ts || ts <= 0) return t ? t("library_details.timestamp.recently") : "Recently";
   // Normalize seconds to milliseconds if needed (timestamps < 10^12 are seconds)
   if (ts < 1000000000000) ts *= 1000;
-  if (ts < 1000000000000) return "Recently";
+  if (ts < 1000000000000) return t ? t("library_details.timestamp.recently") : "Recently";
 
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
 
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
+  if (mins < 1) return t ? t("library_details.timestamp.justNow") : "Just now";
+  if (mins < 60) return t ? t("library_details.timestamp.minutesAgo", { count: mins }) : `${mins}m ago`;
+  if (hours < 24) return t ? t("library_details.timestamp.hoursAgo", { count: hours }) : `${hours}h ago`;
+  if (days < 7) return t ? t("library_details.timestamp.daysAgo", { count: days }) : `${days}d ago`;
   return new Date(ts).toLocaleDateString();
 }
 
@@ -3161,6 +3163,7 @@ function AchievementProgressBar({
   isPerfected: boolean;
   syncing: boolean;
 }) {
+  const { t } = useTranslation();
   const grow = useGrowOnMount();
   const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
 
@@ -3188,10 +3191,10 @@ function AchievementProgressBar({
       </div>
       <p className={`mt-1 text-[10px] ${isPerfected ? "text-amber-400/50" : "text-(--color-muted)/60"}`}>
         {isPerfected
-          ? "All achievements unlocked"
-          : `${percent}% complete`}
+          ? t("library_details.allAchievementsUnlocked")
+          : t("library_details.percentComplete", { percent })}
         {syncing && (
-          <span className="ml-2 italic">Syncing...</span>
+          <span className="ml-2 italic">{t("library_details.syncing")}</span>
         )}
       </p>
     </div>
