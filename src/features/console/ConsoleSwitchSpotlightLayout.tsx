@@ -115,6 +115,8 @@ export default function ConsoleSwitchSpotlightLayout({
     const MAX_H = 150;
     return Math.max(MIN_H, Math.min(MAX_H, logoNaturalHeight));
   })();
+  const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
+
   const scs = settings.spotlightCardStyle;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
@@ -277,9 +279,20 @@ export default function ConsoleSwitchSpotlightLayout({
           }}
         >
           {/* Row 1: Status badges */}
-          {focusedGame.hasUpdate && (
+          {(focusedGame.steamInstalled || focusedGame.isLuaActive || focusedGame.hasUpdate || isFav) && (
             <div className="flex flex-wrap justify-end gap-1.5">
-              <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">Update</span>
+              {focusedGame.steamInstalled && (
+                <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">Installed</span>
+              )}
+              {focusedGame.isLuaActive && (
+                <span className="rounded-md bg-violet-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Lua</span>
+              )}
+              {focusedGame.hasUpdate && (
+                <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">Update</span>
+              )}
+              {isFav && (
+                <span className="rounded-md bg-rose-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Favorite</span>
+              )}
             </div>
           )}
 
@@ -490,7 +503,7 @@ export default function ConsoleSwitchSpotlightLayout({
                         </div>
                       )}
 
-                      {/* Badges */}
+                      {/* Badges — only Update on cards */}
                       <div className="absolute bottom-2 left-2 flex flex-wrap gap-1">
                         {game.hasUpdate && (
                           <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">

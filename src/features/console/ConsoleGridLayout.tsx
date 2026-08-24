@@ -407,11 +407,26 @@ export default function ConsoleGridLayout({
 
                 {/* Badges row */}
                 <div className="flex flex-wrap gap-1.5">
+                  {focusedGame.steamInstalled && (
+                    <span className="rounded-md bg-emerald-500/80 px-2.5 py-0.5 text-xs font-medium text-black">Installed</span>
+                  )}
+                  {focusedGame.isLuaActive && (
+                    <span className="rounded-md bg-violet-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Lua</span>
+                  )}
                   {focusedGame.hasUpdate && (
                     <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black">Update</span>
                   )}
+                  {focusedGame.source === "manual" && (
+                    <span className="rounded-md bg-sky-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Manual</span>
+                  )}
                   {isFav && (
                     <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Favorite</span>
+                  )}
+                  {focusedGame.metadata?.legal_notice?.toLowerCase().includes("denuvo") && (
+                    <span className="rounded-md bg-red-500/70 px-2.5 py-0.5 text-xs font-medium text-white">Denuvo</span>
+                  )}
+                  {focusedGame.source === "debrid" && focusedGame.repacker && (
+                    <span className="rounded-md bg-cyan-500/80 px-2.5 py-0.5 text-xs font-medium text-black">{focusedGame.repacker.toUpperCase()}</span>
                   )}
                 </div>
 
