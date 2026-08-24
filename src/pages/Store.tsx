@@ -537,6 +537,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   >(() => _persistedInteractionsRef.current.events);
   const [trendRecalcKey, setTrendRecalcKey] = useState(0);
 
+  // Precomputed sizes — avoid repeated Object.keys().length (O(n)) in hot paths.
+  // These change whenever the corresponding state changes (React guarantees fresh values).
+  const metadataCount = Object.keys(storeMetadataByAppId).length;
+  const reviewCount = Object.keys(reviewSummaryByAppId).length;
+  const providerCount = Object.keys(providerOverlayByAppId).length;
+  const interactionCount = Object.keys(interactionScoreByAppId).length;
+
   // Persist interaction data to localStorage (debounced, cross-session)
   const _persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -1015,12 +1022,25 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       return cached.highQualityPool;
     }
 
+    // Debounce: skip expensive 10K re-scoring if <500ms since last build.
+    // During async hydration, each input (metadata, reviews, overlays) arrives
+    // one-by-one, causing 3-5 redundant recomputes. This collapses them into 1.
+    const inputFp = `${rankedSteamCatalog.length}:${catalogFingerprint}:${providerCount}:${metadataCount}:${reviewCount}:${interactionCount}`;
+    const now = Date.now();
+    if (_lastHighQualityResultRef.current && _lastHighQualityResultRef.current.fp === inputFp) {
+      return _lastHighQualityResultRef.current.result;
+    }
+    if (_lastHighQualityBuildMsRef.current > 0 && now - _lastHighQualityBuildMsRef.current < 500 && _lastHighQualityResultRef.current) {
+      return _lastHighQualityResultRef.current.result;
+    }
+    _lastHighQualityBuildMsRef.current = now;
+
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] highQualityPool catalogSize=${rankedSteamCatalog.length}`);
     // Cap to HIGH_QUALITY_POOL_MAX entries — scoring all 162K+ is wasteful
     const candidates = rankedSteamCatalog.length > HIGH_QUALITY_POOL_MAX
       ? rankedSteamCatalog.slice(0, HIGH_QUALITY_POOL_MAX)
       : rankedSteamCatalog;
-    return candidates.map((entry) => {
+    const _hqResult = candidates.map((entry) => {
       const id = String(entry.appid);
       const appIdNum = entry.appid;
       const overlay = providerOverlayByAppId[id];
@@ -1059,6 +1079,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         hasMeta: metaScore > 0,
       };
     }).sort((a, b) => b.score - a.score);
+
+    // Cache result for debounce
+    _lastHighQualityResultRef.current = { fp: inputFp, result: _hqResult };
+    return _hqResult;
   }, [rankedSteamCatalog, providerOverlayByAppId, storeMetadataByAppId, reviewSummaryByAppId, interactionScoreByAppId, genreConfidence, catalogFingerprint]);
 
   // ── Compiled Discovery Index ──
@@ -1070,7 +1094,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     const cached = getCachedDiscoveryIndex();
     const cachedDiscover = getCachedStoreDiscover();
     // Return cached index when fingerprint matches and no new reviews have arrived
-    if (cached && cached.version === DISCOVERY_INDEX_VERSION && Object.keys(reviewSummaryByAppId).length > 0) {
+    if (cached && cached.version === DISCOVERY_INDEX_VERSION && reviewCount > 0) {
       if (cachedDiscover && cachedDiscover.catalogFingerprint === catalogFingerprint) {
         return cached;
       }
@@ -1134,7 +1158,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   // Full catalog base — independent of visibleCount for Browse filters
   const catalogBaseGames = useMemo(() => {
-    return rankedSteamCatalog.map((entry) => {
+    // Only map the items actually consumed by catalogGames (slice of visibleCount).
+    // Mapping all 162K entries is wasteful — catalogGames only ever reads the first visibleCount.
+    const cap = Math.max(visibleCount, 100);
+    return rankedSteamCatalog.slice(0, cap).map((entry) => {
       const appId = String(entry.appid);
       const meta = storeMetadataByAppId[entry.appid];
       const cachedImage = getStoreDisplayImage(appId, "capsule") || getStoreDisplayImage(appId, "header");
@@ -1148,7 +1175,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     });
     // NOTE: storeMetadataByAppId intentionally omitted from deps — imageUrl is best-effort
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rankedSteamCatalog]);
+  }, [rankedSteamCatalog, visibleCount]);
 
   // Visible catalog window — used by non-Browse consumers (discover sections, etc.)
   const catalogGames = useMemo(() => {
@@ -1300,10 +1327,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // OUTSIDE the memo so it participates in the dependency array — otherwise the
   // hero would stay persisted because none of the async inputs are memo deps.
   const featuredInputsReady =
-    Object.keys(storeMetadataByAppId).length > 20 &&
-    Object.keys(reviewSummaryByAppId).length > 0 &&
+    metadataCount > 20 &&
+    reviewCount > 0 &&
     installedStatusByAppId.size > 0 &&
-    Object.keys(providerOverlayByAppId).length > 0;
+    providerCount > 0;
 
   const featuredGames = useMemo(() => {
     const HERO_MAX = 8;
@@ -1443,6 +1470,8 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // Phase 2+3: Input fingerprint to skip expensive 300-line section builder when material inputs unchanged.
   const _sectionBuildFpRef = useRef({ fp: "", sections: null as StoreDiscoverSection[] | null });
   const _lastSectionBuildMsRef = useRef(0);
+  const _lastHighQualityBuildMsRef = useRef(0);
+  const _lastHighQualityResultRef = useRef<{ fp: string; result: { appId: string; title: string; score: number; hasSource: boolean; hasMeta: boolean }[] } | null>(null);
   // Freeze "For You" per catalog fingerprint: computed once per catalog, cached for the session.
   // Prevents the async hydration (~500ms) from re-windowing the personalized rail on every recomposition.
   const _forYouCacheRef = useRef({ fp: "", items: null as StoreGame[] | null });
@@ -1454,15 +1483,18 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     // provider overlays, enriched catalog). Each triggers a different section composition.
     // Returning cached sections until all inputs are present prevents 3-4 visible section
     // recompositions — the user sees the same stable sections from T+0 until the full rebuild.
-    const _gateMeta = Object.keys(storeMetadataByAppId).length;
-    const _gateReviews = Object.keys(reviewSummaryByAppId).length;
+    const _gateMeta = metadataCount;
+    const _gateReviews = reviewCount;
     const _gateInstalled = installedStatusByAppId.size;
-    const _gateProviders = Object.keys(providerOverlayByAppId).length;
+    const _gateProviders = providerCount;
     // Free-catalog datasets load async AFTER first paint (SteamSpy / local catalog).
     // Holding cached sections while `freeCatalogLoading` prevents the async fetch from
     // replacing the stable cached sections with a progressively-built version on boot —
     // the same composition the user sees when navigating back into the Store.
-    const allCriticalReady = _gateMeta > 20 && _gateReviews > 0 && _gateInstalled > 0 && _gateProviders > 0 && featuredGames.length > 0 && !freeCatalogLoading;
+    // Hold cached sections until bulk async hydration is complete (metadata arrives in
+    // batches of ~50-100; 100+ ensures at least 2 batches have landed, avoiding premature
+    // section rebuilds during the ~500ms hydration window).
+    const allCriticalReady = _gateMeta > 100 && _gateReviews > 0 && _gateInstalled > 0 && _gateProviders > 0 && featuredGames.length > 0 && !freeCatalogLoading;
 
     if (cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache && !allCriticalReady) {
       // Filter deprecated sections that may exist in stale caches
@@ -1474,11 +1506,11 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     // Fingerprint captures: metadata count, review count, installed count,
     // interaction count, provider overlay count, featured count, enriched sections, discovery index hash.
     const inputFp = [
-      Object.keys(storeMetadataByAppId).length,
-      Object.keys(reviewSummaryByAppId).length,
+      metadataCount,
+      reviewCount,
       installedStatusByAppId.size,
-      Object.keys(interactionScoreByAppId).length,
-      Object.keys(providerOverlayByAppId).length,
+      interactionCount,
+      providerCount,
       featuredGames.length,
       enrichedCatalogSections.length,
       compiledDiscoveryIndex?.sections.topPicks.length ?? 0,
@@ -1495,9 +1527,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       return _sectionBuildFpRef.current.sections;
     }
 
-    // Debounce: skip full rebuild if last build was <200ms ago (rapid input changes)
+    // Debounce: skip full rebuild if last build was <500ms ago (rapid input changes
+    // during async hydration — each async input shifts the fingerprint slightly).
     const now = Date.now();
-    if (_lastSectionBuildMsRef.current > 0 && now - _lastSectionBuildMsRef.current < 200 && _sectionBuildFpRef.current.sections) {
+    if (_lastSectionBuildMsRef.current > 0 && now - _lastSectionBuildMsRef.current < 500 && _sectionBuildFpRef.current.sections) {
       return _sectionBuildFpRef.current.sections;
     }
     _lastSectionBuildMsRef.current = now;
@@ -1681,7 +1714,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         if (meta?.genres) meta.genres.forEach((g) => preferredGenres.add(g));
       }
 
-      if (preferredGenres.size > 0 || Object.keys(interactionScoreByAppId).length > 0) {
+      if (preferredGenres.size > 0 || interactionCount > 0) {
         const scored = topGames.map((g) => {
           let matchScore = 0;
           const meta = storeMetadataByAppId[Number(g.appId)];
@@ -1880,7 +1913,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       featuredGames.length + ":" + featuredGames.slice(0, 3).map(g => g.appId).join(","),
       sectionModels.length + ":" + sectionModels.map(s => s.id + ":" + s.games.length).join("|"),
       highQualityPool.length,
-      Object.keys(storeMetadataByAppId).length,
+      metadataCount,
       rankedSteamCatalog.length,
     ].join("|");
 
@@ -1898,15 +1931,19 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     const scoreFp = highQualityPool.length + ":" +
       highQualityPool.slice(0, 5).map(h => h.appId.slice(0, 8) + ":" + Math.round(h.score)).join(",");
 
-    // Phase 8: Use module-level cached pool to avoid re-filtering 162k entries.
-    // Only rebuild pool when catalog, exclusions, or scores change.
+    // Phase 8: Use module-level cached pool to avoid re-filtering entries.
+    // Cap to HIGH_QUALITY_POOL_MAX before filtering — games beyond this threshold
+    // all have score=0 and would sort to the bottom anyway.
     const excludeFp = computeExcludeFingerprint(featuredGames, sectionModels);
     if (!_cachedMorePool || _cachedMorePool.catalogFp !== catalogFingerprint || _cachedMorePool.excludeFp !== excludeFp || _cachedMorePool.scoreFp !== scoreFp) {
       const excludeIds = new Set<string>();
       featuredGames.forEach((g) => excludeIds.add(g.appId));
       sectionModels.forEach((s) => s.games.forEach((g) => excludeIds.add(g.appId)));
       const seen = new Set<string>();
-      const pool = rankedSteamCatalog.filter((entry) => {
+      const sourcePool = rankedSteamCatalog.length > HIGH_QUALITY_POOL_MAX
+        ? rankedSteamCatalog.slice(0, HIGH_QUALITY_POOL_MAX)
+        : rankedSteamCatalog;
+      const pool = sourcePool.filter((entry) => {
         const appId = String(entry.appid);
         if (excludeIds.has(appId)) return false;
         if (seen.has(appId)) return false;
@@ -2509,14 +2546,14 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   // Persist metadata to module-level cache so it survives mount/unmount
   useEffect(() => {
-    if (Object.keys(storeMetadataByAppId).length > 0) {
+    if (metadataCount > 0) {
       setCachedStoreMetadata(storeMetadataByAppId as unknown as Record<number, Record<string, unknown>>);
     }
   }, [storeMetadataByAppId]);
 
   // Persist review summaries to module-level cache (same pattern as metadata)
   useEffect(() => {
-    if (Object.keys(reviewSummaryByAppId).length > 0) {
+    if (reviewCount > 0) {
       setCachedReviewSummaries(reviewSummaryByAppId as unknown as Record<number, Record<string, unknown>>);
     }
   }, [reviewSummaryByAppId]);
