@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { LayoutDashboard, Columns3, RotateCcw } from "lucide-react";
+import { LayoutDashboard, Columns3, RotateCcw, MousePointer2, PanelTop } from "lucide-react";
 import { useSettings } from "../../context/SettingsContext";
 import ToggleOption from "./ToggleOption";
 
@@ -658,17 +658,57 @@ export default function CardLayoutEditor() {
               }
             />
             {tab === "library" && (
-              <ToggleOption
-                label={t("settings.cardLayout.landscape_artwork", "Landscape artwork")}
-                description={t("settings.cardLayout.landscape_artwork_desc", "Use landscape artwork for library cards instead of portrait posters.")}
-                enabled={settings.libraryCardArtworkMode === "landscape"}
-                onChange={(v) =>
-                  updateSetting(
-                    "libraryCardArtworkMode",
-                    v ? "landscape" : "poster"
-                  )
-                }
-              />
+              <>
+                <ToggleOption
+                  label={t("settings.cardLayout.landscape_artwork", "Landscape artwork")}
+                  description={t("settings.cardLayout.landscape_artwork_desc", "Use landscape artwork for library cards instead of portrait posters.")}
+                  enabled={settings.libraryCardArtworkMode === "landscape"}
+                  onChange={(v) =>
+                    updateSetting(
+                      "libraryCardArtworkMode",
+                      v ? "landscape" : "poster"
+                    )
+                  }
+                />
+
+                {/* Hover mode selector */}
+                <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border px-4 py-3">
+                  <div>
+                    <span className="text-sm text-(--color-text)">
+                      {t("settings.cardLayout.hover_mode", "Card hover")}
+                    </span>
+                    <p className="mt-0.5 text-[11px] text-(--color-muted)">
+                      {t("settings.cardLayout.hover_mode_desc", "How card info is shown on hover.")}
+                    </p>
+                  </div>
+                  <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
+                    <button
+                      type="button"
+                      onClick={() => updateSetting("libraryHoverMode", "preview")}
+                      className={`flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition ${
+                        settings.libraryHoverMode === "preview"
+                          ? "bg-(--color-accent) text-(--color-accent-text)"
+                          : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                      }`}
+                    >
+                      <PanelTop className="h-3 w-3" />
+                      {t("settings.cardLayout.hover_preview", "Preview")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSetting("libraryHoverMode", "inline")}
+                      className={`flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition ${
+                        settings.libraryHoverMode === "inline"
+                          ? "bg-(--color-accent) text-(--color-accent-text)"
+                          : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                      }`}
+                    >
+                      <MousePointer2 className="h-3 w-3" />
+                      {t("settings.cardLayout.hover_inline", "Inline")}
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
           </div>
 

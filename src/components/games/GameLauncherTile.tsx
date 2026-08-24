@@ -534,22 +534,58 @@ function GameLauncherTileInner({
           </Tooltip>
         </div>
 
-        {/* Hover overlay — developer + genre only (detailed info in GameHoverPreview) */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none">
-          <div className="absolute bottom-0 left-0 right-0 p-2.5">
-            <h3 className="lf-card-title line-clamp-1 text-[13px] font-semibold text-white">{displayTitle}</h3>
-            {developer && (
-              <p className="mt-0.5 truncate text-[10px] text-white/60">{developer}</p>
-            )}
-            <div className="mt-1 flex flex-wrap gap-1">
-              {game.metadata?.genres?.slice(0, 2).map((genre) => (
-                <span key={genre} className="rounded bg-white/15 px-1.5 py-0.5 text-[9px] text-white/80">
-                  {genre}
-                </span>
-              ))}
+        {/* Hover overlay — mode-dependent */}
+        {settings.libraryHoverMode === "inline" ? (
+          /* ── Inline mode: full info slide-up (store-style) ── */
+          <div className="absolute inset-0 bg-black/0 transition-colors duration-300 group-hover:bg-black/50 pointer-events-none">
+            <div className="absolute inset-x-0 bottom-0 z-10 translate-y-2 opacity-0 transition-all duration-300 ease-out group-hover:translate-y-0 group-hover:opacity-100">
+              <div className="bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2.5 pb-2">
+                <h3 className="line-clamp-1 text-[13px] font-semibold text-white drop-shadow-lg">{displayTitle}</h3>
+                {developer && (
+                  <p className="mt-0.5 line-clamp-1 text-[10px] text-white/70">{developer}</p>
+                )}
+                {game.metadata?.genres && game.metadata.genres.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {game.metadata.genres.slice(0, 2).map((genre) => (
+                      <span key={genre} className="rounded-full bg-white/15 px-1.5 py-0.5 text-[9px] font-medium text-white/80 backdrop-blur-sm">
+                        {genre}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-1 flex items-center gap-1.5">
+                  {(() => {
+                    const srcBadge = game.hasLua
+                      ? { label: "LUA", cls: "bg-emerald-500/30 text-emerald-300" }
+                      : game.source === "epic"
+                        ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300" }
+                        : game.source === "debrid"
+                          ? { label: "DEBRID", cls: "bg-cyan-500/30 text-cyan-300" }
+                          : game.source === "manual"
+                            ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
+                            : game.source === "steam"
+                              ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
+                              : null;
+                    if (!srcBadge) return null;
+                    return (
+                      <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
+                        {srcBadge.label}
+                      </span>
+                    );
+                  })()}
+                  {game.repacker && (
+                    <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-cyan-300">
+                      {game.repacker}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          /* ── Preview mode: subtle tint (popup handled by Library.tsx) ── */
+          <div className="absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none" />
+        )}
 
         {/* Update badge — always visible (important notification) */}
         {luaUpdateStatus === "update-available" && game.steamInstalled && (

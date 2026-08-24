@@ -82,6 +82,7 @@ export const defaultSettings: AppSettings = {
   libraryCardCornerRadius: 12,
   hideDashboardCardLabels: false,
   hideLibraryCardLabels: true,
+  libraryHoverMode: "preview",
 
   // ── Dashboard Home Layout ──────────────────────────────────────────
   dashboardHeroEnabled: true,

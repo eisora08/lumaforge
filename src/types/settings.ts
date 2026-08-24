@@ -68,6 +68,7 @@ export type AppSettings = {
   libraryCardCornerRadius: number;
   hideDashboardCardLabels: boolean;
   hideLibraryCardLabels: boolean;
+  libraryHoverMode: "preview" | "inline";
 
   // ── Dashboard Home Layout ──────────────────────────────────────────
   dashboardHeroEnabled: boolean;

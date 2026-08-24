@@ -34,6 +34,7 @@ export const APPEARANCE_SETTINGS_KEYS: string[] = [
   "compactMode",
   "hideDashboardCardLabels",
   "hideLibraryCardLabels",
+  "libraryHoverMode",
   "dashboardCardCornerRadius",
   "libraryCardCornerRadius",
   "libraryCardArtworkMode",
