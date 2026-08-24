@@ -10,7 +10,7 @@
     "section_system": "System",
     "games": "Games",
     "games_count": "{{count}} games",
-    "search_placeholder": "Search library...",
+    "search_placeholder": "Search games...",
     "search_placeholder_compact": "Search...",
     "no_games_match": "No games match.",
     "running": "Running",
@@ -39,7 +39,18 @@
     "deletion_failed": "File still exists on disk after deletion attempt.",
     "deletion_failed_title": "Deletion failed",
     "error": "Error",
-    "manual_game": "Manual game"
+    "manual_game": "Manual game",
+    "add_to_favorites": "Add to favorites",
+    "remove_from_favorites": "Remove from favorites",
+    "browse_local_files": "Browse local files",
+    "create_shortcut": "Create shortcut",
+    "manage": "Manage",
+    "edit_game_details": "Edit game details",
+    "manage_artwork": "Manage artwork",
+    "delete_manual_game": "Delete manual game",
+    "scan_installed": "Scan installed",
+    "add_game": "Add game",
+    "game_fixes": "Game fixes"
   },
   "topbar": {
     "search_placeholder": "Search Steam games…",
@@ -841,7 +852,7 @@
     "name": "Name",
     "appid": "AppID",
     "developer": "Developer",
-    "dlc": "DLC Content",
+    "dlc": "DLC",
     "dlc_found": "{count} DLC(s) detected",
     "dlc_none": "Not detected",
     "platforms": "Platforms",
@@ -852,7 +863,18 @@
     "modified": "Modified",
     "update_status": "Update status",
     "full_path": "Full path",
-    "actions": "Actions",
+    "actions": {
+      "label": "Actions",
+      "cancelTracking": "Cancel tracking",
+      "removeFromLibrary": "Remove from Library",
+      "uninstallInSteam": "Uninstall in Steam",
+      "deleteLua": "Delete Lua",
+      "editGameDetails": "Edit Game Details",
+      "manageArtwork": "Manage Artwork",
+      "refreshArtwork": "Refresh Artwork",
+      "gameFixes": "Game Fixes",
+      "close": "Close"
+    },
     "open_steam": "Open Steam",
     "open_steamdb": "Open SteamDB",
     "enable_lua": "Enable Lua",
@@ -940,7 +962,6 @@
     "steamStorePage": "Steam Store Page",
     "steamdb": "SteamDB",
     "storePage": "Store Page",
-    "dlc": "DLC",
     "dlcAvailable": "{{count}} available",
     "communityHub": "Community Hub",
     "discussions": "Discussions",
@@ -953,7 +974,6 @@
     "showLess": "Show less",
     "lastPlayed": "Last Played",
     "playTime": "Play Time",
-    "size": "Size",
     "perfected": "Perfected",
     "actionsLabel": "Actions",
     "addToFavorites": "Add to favorites",
@@ -2144,13 +2164,12 @@
       "legendary": "Legendary"
     },
     "status": {
-      "hidden": "This is a hidden achievement",
-      "unlocked": "Achievement Unlocked",
+      "unlocked": "Achievement unlocked",
       "locked": "Locked",
+      "hidden": "This is a hidden achievement",
       "requirement": "Requirement: ",
       "close": "Close",
-      "level": "Level",
-      "achievement_label": "Achievement: "
+      "level": "Level"
     },
     "achievements": {
       "starter-collection": {
@@ -2273,29 +2292,6 @@
         "title": "Marathon Master",
         "description": "Complete 20 sessions of 4+ hours"
       }
-    },
-    "categories": {
-      "library": "Library",
-      "play": "Play",
-      "completion": "Completion",
-      "streak": "Streak",
-      "exploration": "Exploration",
-      "session": "Session"
-    },
-    "rarity": {
-      "common": "Common",
-      "uncommon": "Uncommon",
-      "rare": "Rare",
-      "epic": "Epic",
-      "legendary": "Legendary"
-    },
-    "status": {
-      "unlocked": "Achievement unlocked",
-      "locked": "Locked",
-      "hidden": "This is a hidden achievement",
-      "requirement": "Requirement: ",
-      "close": "Close",
-      "level": "Level"
     },
     "progress": {
       "games_in_library": "Games in library",

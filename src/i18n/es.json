@@ -10,7 +10,7 @@
     "section_system": "Sistema",
     "games": "Juegos",
     "games_count": "{{count}} juegos",
-    "search_placeholder": "Search library...",
+    "search_placeholder": "Buscar juego...",
     "search_placeholder_compact": "Buscar...",
     "no_games_match": "No hay juegos que coincidan.",
     "running": "Ejecutando",
@@ -39,7 +39,18 @@
     "deletion_failed": "El archivo sigue existiendo después del intento de eliminación.",
     "deletion_failed_title": "Eliminación fallida",
     "error": "Error",
-    "manual_game": "Juego manual"
+    "manual_game": "Juego manual",
+    "add_to_favorites": "Agregar a favoritos",
+    "remove_from_favorites": "Quitar de favoritos",
+    "browse_local_files": "Explorar archivos locales",
+    "create_shortcut": "Crear acceso directo",
+    "manage": "Gestionar",
+    "edit_game_details": "Editar detalles del juego",
+    "manage_artwork": "Gestionar arte",
+    "delete_manual_game": "Eliminar juego manual",
+    "scan_installed": "Escanear instalados",
+    "add_game": "Agregar juego",
+    "game_fixes": "Soluciones de juego"
   },
   "topbar": {
     "search_placeholder": "Buscar juegos de Steam…",
@@ -841,7 +852,7 @@
     "name": "Nombre",
     "appid": "AppID",
     "developer": "Desarrollador",
-    "dlc": "Contenido DLC",
+    "dlc": "DLC",
     "dlc_found": "{count} DLC(s) detectado(s)",
     "dlc_none": "No detectado",
     "platforms": "Plataformas",
@@ -852,7 +863,18 @@
     "modified": "Modificado",
     "update_status": "Estado de update",
     "full_path": "Ruta completa",
-    "actions": "Acciones",
+    "actions": {
+      "label": "Acciones",
+      "cancelTracking": "Cancelar seguimiento",
+      "removeFromLibrary": "Quitar de la biblioteca",
+      "uninstallInSteam": "Desinstalar en Steam",
+      "deleteLua": "Eliminar Lua",
+      "editGameDetails": "Editar detalles del juego",
+      "manageArtwork": "Gestionar arte",
+      "refreshArtwork": "Actualizar arte",
+      "gameFixes": "Soluciones de juego",
+      "close": "Cerrar"
+    },
     "open_steam": "Abrir Steam",
     "open_steamdb": "Abrir SteamDB",
     "enable_lua": "Activar Lua",
@@ -940,7 +962,6 @@
     "steamStorePage": "Página de Steam Store",
     "steamdb": "SteamDB",
     "storePage": "Página de la tienda",
-    "dlc": "DLC",
     "dlcAvailable": "{{count}} disponible(s)",
     "communityHub": "Centro comunitario",
     "discussions": "Discusiones",
@@ -953,7 +974,6 @@
     "showLess": "Mostrar menos",
     "lastPlayed": "Última vez jugado",
     "playTime": "Tiempo jugado",
-    "size": "Tamaño",
     "perfected": "Perfeccionado",
     "actionsLabel": "Acciones",
     "addToFavorites": "Agregar a favoritos",
@@ -2144,13 +2164,12 @@
       "legendary": "Legendario"
     },
     "status": {
-      "hidden": "Este es un logro oculto",
       "unlocked": "Logro desbloqueado",
       "locked": "Bloqueado",
+      "hidden": "Este es un logro oculto",
       "requirement": "Requisito: ",
       "close": "Cerrar",
-      "level": "Nivel",
-      "achievement_label": "Logro: "
+      "level": "Nivel"
     },
     "achievements": {
       "starter-collection": {
@@ -2273,29 +2292,6 @@
         "title": "Maestro del maratón",
         "description": "Completa 20 sesiones de 4+ horas"
       }
-    },
-    "categories": {
-      "library": "Biblioteca",
-      "play": "Juego",
-      "completion": "Completado",
-      "streak": "Racha",
-      "exploration": "Exploración",
-      "session": "Sesión"
-    },
-    "rarity": {
-      "common": "Común",
-      "uncommon": "Poco común",
-      "rare": "Raro",
-      "epic": "Épico",
-      "legendary": "Legendario"
-    },
-    "status": {
-      "unlocked": "Logro desbloqueado",
-      "locked": "Bloqueado",
-      "hidden": "Este es un logro oculto",
-      "requirement": "Requisito: ",
-      "close": "Cerrar",
-      "level": "Nivel"
     },
     "progress": {
       "games_in_library": "Juegos en biblioteca",
