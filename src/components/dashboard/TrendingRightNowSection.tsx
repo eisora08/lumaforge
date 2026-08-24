@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Zap } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
 import { useSettings } from "../../context/SettingsContext";
@@ -18,7 +19,7 @@ type Props = {
   maxItems?: number;
 };
 
-function formatReleaseDate(date?: string | null): string | null {
+function formatReleaseDate(date: string | null | undefined, t: (key: string, options?: Record<string, unknown>) => string): string | null {
   if (!date) return null;
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
@@ -26,14 +27,15 @@ function formatReleaseDate(date?: string | null): string | null {
   const diffMs = now - d.getTime();
   const diffDays = Math.floor(diffMs / 86400000);
   if (diffDays < 0) return null;
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  if (diffDays === 0) return t("store.dates.today", { defaultValue: "Today" });
+  if (diffDays === 1) return t("store.dates.yesterday", { defaultValue: "Yesterday" });
+  if (diffDays < 7) return t("store.dates.days_ago", { count: diffDays });
+  if (diffDays < 30) return t("store.dates.weeks_ago", { count: Math.floor(diffDays / 7) });
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 export default function TrendingRightNowSection({ onNavigate, maxItems }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [sections, setSections] = useState(() => getCachedCatalogSections());
@@ -123,10 +125,10 @@ export default function TrendingRightNowSection({ onNavigate, maxItems }: Props)
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Trending Right Now
+            {t("store.sections.trending_right_now", "Trending Right Now")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            New and noteworthy releases
+            {t("store.sections.trending_right_now_desc", "New and noteworthy releases")}
           </p>
         </div>
       </div>
@@ -178,11 +180,11 @@ export default function TrendingRightNowSection({ onNavigate, maxItems }: Props)
                   </h3>
                   <div className="mt-1 flex items-center gap-1.5">
                     <span className="inline-block rounded-full bg-orange-400/15 px-2 py-0.5 text-[10px] font-medium text-orange-400">
-                      New
+                      {t("store.badges.new", "New")}
                     </span>
-                    {formatReleaseDate(game.releaseDate) && (
+                    {formatReleaseDate(game.releaseDate, t) && (
                       <span className="text-[10px] text-(--color-muted)">
-                        {formatReleaseDate(game.releaseDate)}
+                        {formatReleaseDate(game.releaseDate, t)}
                       </span>
                     )}
                   </div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { countRender, isInteractionBusy } from "../services/perfCounters";
 import { isBootReady } from "../services/appBootCoordinator";
 import {
@@ -354,6 +355,7 @@ function batchedLoad<T>(
 
 export default function Store({ onNavigate }: StoreProps = {}) {
   countRender("Store");
+  const { t } = useTranslation();
   const {
     results,
     loading,
@@ -1563,37 +1565,37 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (freeTrendingScraped.length > 0) {
       const items = takeUnique(freeTrendingScraped, 20);
       if (items.length > 0) {
-        sections.push({ id: "free-trending", title: "Trending Now", type: "rail", items, source: "catalog" as const });
+        sections.push({ id: "free-trending", title: t("store.sections.trending_now", "Trending Now"), type: "rail", items, source: "catalog" as const });
       }
     }
     if (freeNewReleases.length > 0) {
       const items = takeUnique(freeNewReleases, 20);
       if (items.length > 0) {
-        sections.push({ id: "free-new-releases", title: "New Releases", type: "rail", items, source: "catalog" as const });
+        sections.push({ id: "free-new-releases", title: t("store.sections.new_releases", "New Releases"), type: "rail", items, source: "catalog" as const });
       }
     }
     if (freeLeaderboardGames.length > 0) {
       const items = takeUnique(freeLeaderboardGames, 20);
       if (items.length > 0) {
-        sections.push({ id: "free-leaderboard", title: "Leaderboard", type: "featured", items, source: "catalog" as const });
+        sections.push({ id: "free-leaderboard", title: t("store.sections.leaderboard", "Leaderboard"), type: "featured", items, source: "catalog" as const });
       }
     }
     if (freeFeaturedGames.length > 0) {
       const items = takeUnique(freeFeaturedGames, 20);
       if (items.length > 0) {
-        sections.push({ id: "free-featured", title: "Staff Picks", type: "featured", items, source: "catalog" as const });
+        sections.push({ id: "free-featured", title: t("store.sections.staff_picks", "Staff Picks"), type: "featured", items, source: "catalog" as const });
       }
     }
     if (freeHiddenGems.length > 0) {
       const items = takeUnique(freeHiddenGems, 16);
       if (items.length > 0) {
-        sections.push({ id: "free-hidden-gems", title: "Hidden Gems", type: "rail", items, source: "catalog" as const });
+        sections.push({ id: "free-hidden-gems", title: t("store.sections.hidden_gems", "Hidden Gems"), type: "rail", items, source: "catalog" as const });
       }
     }
     if (freeMostPlayed.length > 0) {
       const items = takeUnique(freeMostPlayed, 16);
       if (items.length > 0) {
-        sections.push({ id: "free-most-played", title: "Dedicated Fan Bases", type: "rail", items, source: "catalog" as const });
+        sections.push({ id: "free-most-played", title: t("store.sections.dedicated_fan_bases", "Dedicated Fan Bases"), type: "rail", items, source: "catalog" as const });
       }
     }
 
@@ -1660,7 +1662,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (_forYouCacheRef.current.items && _forYouCacheRef.current.fp === catalogFingerprint) {
       const frozen = _forYouCacheRef.current.items;
       if (frozen.length > 0) {
-        sections.push({ id: "for-you", title: "For You", type: "rail", items: frozen, source: "personalized" });
+        sections.push({ id: "for-you", title: t("store.sections.for_you", "For You"), type: "rail", items: frozen, source: "personalized" });
       }
     } else {
       const preferredGenres = new Set<string>();
@@ -1693,7 +1695,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         const rec = takeUnique(scored.filter((s) => s.score >= 0).map((s) => s.game), 20);
         if (rec.length > 0) {
           _forYouCacheRef.current = { fp: catalogFingerprint, items: rec };
-          sections.push({ id: "for-you", title: "For You", type: "rail", items: rec, source: "personalized" });
+          sections.push({ id: "for-you", title: t("store.sections.for_you", "For You"), type: "rail", items: rec, source: "personalized" });
         }
       }
     }
@@ -1713,7 +1715,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         20,
       );
       if (items.length >= 2) {
-        sections.push({ id: "top-picks", title: "Top Picks", type: "featured", items, source: "catalog" });
+        sections.push({ id: "top-picks", title: t("store.sections.top_picks", "Top Picks"), type: "featured", items, source: "catalog" });
         if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_SECTION] name=Top Picks count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
       } else {
         if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_FALLBACK] section=Top Picks reason=not-enough-unique items=${items.length}`);
@@ -1773,7 +1775,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (genreGroupsForCollection.length > 0) {
       sections.push({
         id: "browse-by-genre",
-        title: "Browse by Genre",
+        title: t("store.sections.browse_by_genre", "Browse by Genre"),
         type: "genre-collection",
         items: [],
         source: "genre",
@@ -3412,12 +3414,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
     // 1. Recommended
     if (interaction >= 1 && !isInstalled) {
-      candidates.push({ type: "recommended", label: "Recommended", score: 6 });
+      candidates.push({ type: "recommended", label: t("store.badges.recommended", "Recommended"), score: 6 });
     }
 
     // 2. Trending: high interaction or has sources + not every game
     if (interaction >= 2 || (overlay && (overlay.sources ?? []).some((s) => s.available) && (interaction >= 1))) {
-      candidates.push({ type: "trending", label: "Trending", score: 5 });
+      candidates.push({ type: "trending", label: t("store.badges.trending", "Trending"), score: 5 });
     }
 
     // 3. Top Rated: only shown when compiled discovery index exists (reviews loaded + scored)
@@ -3425,12 +3427,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       ? qualifiesTopRated(compiledDiscoveryIndex, appId)
       : false;
     if (isTopRated) {
-      candidates.push({ type: "top-rated", label: "Top Rated", score: 4 });
+      candidates.push({ type: "top-rated", label: t("store.badges.top_rated", "Top Rated"), score: 4 });
     }
 
     // 4. Popular
     if (interaction >= 3) {
-      candidates.push({ type: "popular", label: "Popular", score: 3 });
+      candidates.push({ type: "popular", label: t("store.badges.popular", "Popular"), score: 3 });
     }
 
     // 5. New: uses discovery index if available; otherwise release_date check
@@ -3445,12 +3447,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           return false;
         })() : false);
     if (isNew) {
-      candidates.push({ type: "new", label: "New", score: 2 });
+      candidates.push({ type: "new", label: t("store.badges.new", "New"), score: 2 });
     }
 
     // 6. Has Sources
     if (overlay && overlay.sources.some((s) => s.available)) {
-      candidates.push({ type: "has-sources", label: "Has Sources", score: 1 });
+      candidates.push({ type: "has-sources", label: t("store.badges.has_sources", "Has Sources"), score: 1 });
     }
 
     candidates.sort((a, b) => b.score - a.score);
@@ -4091,7 +4093,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                   <section className="space-y-4">
                     <div>
                       <h2 className="text-xl font-bold">{section.title}</h2>
-                      <p className="mt-1 text-sm text-white/50">Explore games by category.</p>
+                      <p className="mt-1 text-sm text-white/50">{t("store.sections.desc_explore_category", "Explore games by category.")}</p>
                     </div>
                     <div className="flex gap-5 overflow-x-auto pb-2 scrollbar-none">
                       {section.genreGroups.map((group) => (
@@ -4109,43 +4111,43 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             }
 
             const desc = section.id === "for-you"
-              ? "Personalized picks based on your activity."
+              ? t("store.sections.desc_for_you", "Personalized picks based on your activity.")
               : section.id === "top-picks"
-                ? "Highest scored games in the catalog."
+                ? t("store.sections.desc_top_picks", "Highest scored games in the catalog.")
                 : section.id === "popular-genres"
-                  ? "Browse games by genre."
+                  ? t("store.sections.desc_browse_genre", "Browse games by genre.")
                     : section.id === "vgi-trending"
-                          ? "Games gaining traction right now."
+                          ? t("store.sections.desc_vgi_trending", "Games gaining traction right now.")
                           : section.id === "vgi-top-players"
-                            ? "Most played games today."
+                            ? t("store.sections.desc_vgi_top_players", "Most played games today.")
                             : section.id === "vgi-leaderboard"
-                              ? "Highest rated games of all time."
+                              ? t("store.sections.desc_vgi_leaderboard", "Highest rated games of all time.")
                               : section.id === "vgi-featured"
-                                ? "Staff picks — standout games across every genre."
+                                ? t("store.sections.desc_vgi_featured", "Staff picks — standout games across every genre.")
                                 : section.id === "vgi-hidden-gems"
-                                  ? "Under-the-radar gems worth discovering."
+                                  ? t("store.sections.desc_vgi_hidden_gems", "Under-the-radar gems worth discovering.")
                                     : section.id === "vgi-most-played"
-                                    ? "Games with deeply dedicated fan bases."
+                                    ? t("store.sections.desc_vgi_most_played", "Games with deeply dedicated fan bases.")
                                     : section.id === "free-recent"
-                                    ? "Fresh releases getting attention right now."
+                                    ? t("store.sections.desc_free_recent", "Fresh releases getting attention right now.")
                                     : section.id === "free-trending"
-                                    ? "Games with sustained momentum over 2 weeks."
+                                    ? t("store.sections.desc_free_trending", "Games with sustained momentum over 2 weeks.")
                                     : section.id === "free-top-players"
-                                    ? "Most played games today."
+                                    ? t("store.sections.desc_free_top_players", "Most played games today.")
                                     : section.id === "free-leaderboard"
-                                    ? "Highest rated games in the catalog."
+                                    ? t("store.sections.desc_free_leaderboard", "Highest rated games in the catalog.")
                                     : section.id === "free-featured"
-                                    ? "Staff picks — standout games across every genre."
+                                    ? t("store.sections.desc_free_featured", "Staff picks — standout games across every genre.")
                                     : section.id === "free-hidden-gems"
-                                    ? "Under-the-radar gems worth discovering."
+                                    ? t("store.sections.desc_free_hidden_gems", "Under-the-radar gems worth discovering.")
                                     : section.id === "free-most-played"
-                                    ? "Games with deeply dedicated fan bases."
+                                    ? t("store.sections.desc_free_most_played", "Games with deeply dedicated fan bases.")
                                     : section.id === "most-played-now"
-                                    ? "Highest concurrent players across all of Steam."
+                                    ? t("store.sections.desc_most_played_now", "Highest concurrent players across all of Steam.")
                                     : section.id === "rising-stars"
-                                    ? "Games gaining momentum relative to their all-time base."
+                                    ? t("store.sections.desc_rising_stars", "Games gaining momentum relative to their all-time base.")
                                     : section.id.startsWith("genre-")
-                                    ? `Popular ${section.title} games.`
+                                    ? t("store.sections.popular_genre", { title: section.title })
                                     : "";
             const isFreeCatalog = section.id.startsWith("free-");
             const sectionLoading = isFreeCatalog && freeCatalogLoading && section.items.length === 0;
@@ -4246,6 +4248,7 @@ function StoreLoadingState() {
 }
 
 function StoreEmptyState() {
+  const { t } = useTranslation();
   return (
     <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/[0.04]">
@@ -4253,11 +4256,11 @@ function StoreEmptyState() {
       </div>
 
       <h2 className="mt-4 font-semibold text-(--color-text)">
-        No games match these filters
+        {t("store.empty.no_games_match", "No games match these filters")}
       </h2>
 
       <p className="mt-1.5 text-sm text-(--color-muted)">
-        Try adjusting your filters or clearing them.
+        {t("store.empty.try_adjusting", "Try adjusting your filters or clearing them.")}
       </p>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Trophy } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -75,6 +76,7 @@ function formatPlaytime(seconds: number): string {
 }
 
 export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, maxItems }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
@@ -158,10 +160,10 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, 
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Top 10 Most Played
+            {t("store.sections.top_played_title", "Top 10 Most Played")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Your most played games
+            {t("store.sections.top_played_subtitle", "Your most played games")}
           </p>
         </div>
       </div>
@@ -215,7 +217,7 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, 
                   </h3>
                   {totalStr && (
                     <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
-                      {totalStr} played
+                      {totalStr} {t("store.badges.played", "played")}
                     </span>
                   )}
                 </div>

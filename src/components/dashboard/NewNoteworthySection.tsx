@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Sparkles } from "lucide-react";
 
 const DEBUG_DASH_GLOBAL_MEDIA = false;
@@ -39,6 +40,7 @@ function resolveBestMedia(game: NormalizedCatalogGame): string | null {
 }
 
 export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
+  const { t, i18n } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [sections, setSections] = useState(() => getCachedCatalogSections());
@@ -145,7 +147,7 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
 
   function formatDate(ts: number): string {
     if (!ts) return "";
-    return new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    return new Date(ts).toLocaleDateString(i18n.language || "es", { year: "numeric", month: "short", day: "numeric" });
   }
 
   return (
@@ -153,10 +155,10 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            New & Noteworthy
+            {t("store.sections.new_noteworthy_title", "New & Noteworthy")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Recently released games
+            {t("store.sections.new_noteworthy_subtitle", "Recently released games")}
           </p>
         </div>
       </div>
@@ -216,7 +218,7 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
                   )}
                   {game.isNew && game.releaseTimestamp === 0 && (
                     <span className="mt-1 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
-                      New
+                      {t("store.badges.new", "New")}
                     </span>
                   )}
                 </div>

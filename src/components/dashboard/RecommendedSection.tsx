@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Heart, Sparkles } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { GameEntry } from "../../services/tauri";
@@ -39,6 +40,7 @@ function resolveImageSrc(src: string | undefined): string | undefined {
 }
 
 export default function RecommendedSection({ onNavigate, continuePlayingAppIds, maxItems }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
@@ -171,17 +173,17 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-(--color-text)">
-              Recommended for You
+              {t("store.sections.recommended_title", "Recommended for You")}
             </h2>
             <p className="mt-0.5 text-sm text-(--color-muted)">
-              Personalized game suggestions
+              {t("store.sections.recommended_empty_subtitle", "Personalized game suggestions")}
             </p>
           </div>
         </div>
         <div className="flex flex-col items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-6 py-12 text-center">
           <Sparkles className="mb-3 h-8 w-8 text-(--color-muted)/30" />
           <p className="text-sm text-(--color-muted)">
-            Play some games or add favorites to get recommendations.
+            {t("store.sections.recommended_empty_message", "Play some games or add favorites to get recommendations.")}
           </p>
         </div>
       </section>
@@ -208,12 +210,12 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Recommended for You
+            {t("store.sections.recommended_title", "Recommended for You")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
             {hasUserData
-              ? "Based on your favorites and playtime"
-              : "Genre-matched games from the catalog"}
+              ? t("store.sections.recommended_subtitle_favorites", "Based on your favorites and playtime")
+              : t("store.sections.recommended_subtitle_genre", "Genre-matched games from the catalog")}
           </p>
         </div>
       </div>
@@ -268,7 +270,7 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
                       if (fk) toggleFavorite(fk);
                     }}
                     className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
-                    title={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? "Remove from favorites" : "Add to favorites"}
+                    title={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? t("sidebar.remove_from_favorites", "Remove from favorites") : t("sidebar.add_to_favorites", "Add to favorites")}
                   >
                     <Heart
                       className="h-4 w-4"

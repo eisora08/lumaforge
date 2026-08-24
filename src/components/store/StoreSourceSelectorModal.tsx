@@ -135,11 +135,9 @@ export default function StoreSourceSelectorModal({
 }: StoreSourceSelectorModalProps) {
   const { t } = useTranslation();
 
-  if (!open || !game) return null;
+  const providerSources = game?.sources ?? [];
 
-  const providerSources = game.sources;
-
-  const bestSource = getBestAvailableSource({ ...game, sources: providerSources });
+  const bestSource = game ? getBestAvailableSource({ ...game, sources: providerSources }) : null;
   const initialKey = selectedSource
     ? getSourceKey(selectedSource)
     : bestSource
@@ -151,6 +149,8 @@ export default function StoreSourceSelectorModal({
   useEffect(() => {
     setSelectedKey(initialKey);
   }, [game?.appId, initialKey]);
+
+  if (!open || !game) return null;
 
   const selectedSourceForDownload = selectedKey
     ? game.sources.find((s) => getSourceKey(s) === selectedKey)

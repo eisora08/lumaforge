@@ -1,4 +1,5 @@
 import { Children, memo, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowRight } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -37,6 +38,7 @@ function StoreGridSectionRaw({
   skeletonCount = 12,
   accent = false,
 }: StoreGridSectionProps) {
+  const { t } = useTranslation();
   countRender("StoreGridSection");
 
   const items = Children.toArray(children);
@@ -64,7 +66,7 @@ function StoreGridSectionRaw({
             onClick={onViewAll}
             className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
           >
-            Ver todo
+            {t("store.view_all", "View all")}
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         )}

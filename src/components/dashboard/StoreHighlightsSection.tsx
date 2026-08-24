@@ -1,4 +1,5 @@
 import { Gamepad2, Sparkles, Store } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useTheme } from "../../context/ThemeContext";
 import type { AppPage } from "../../types/navigation";
 
@@ -7,6 +8,7 @@ type Props = {
 };
 
 export default function StoreHighlightsSection({ onNavigate }: Props) {
+  const { t } = useTranslation();
   const { surfaceMode } = useTheme();
   const isSolid = surfaceMode === "solid";
 
@@ -33,13 +35,13 @@ export default function StoreHighlightsSection({ onNavigate }: Props) {
           <div>
             <div className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-2.5 py-0.5 text-[10px] text-(--color-accent)">
               <Sparkles className="h-3 w-3" />
-              Store
+              {t("store.badges.store", "Store")}
             </div>
             <h3 className="text-base font-bold text-(--color-text)">
-              Discover New Games
+              {t("store.sections.discover_new_games", "Discover New Games")}
             </h3>
             <p className="mt-0.5 text-sm text-(--color-muted)">
-              Browse featured titles, top sellers, and Lua-ready games.
+              {t("store.sections.discover_new_games_desc", "Browse featured titles, top sellers, and Lua-ready games.")}
             </p>
           </div>
         </div>
@@ -49,7 +51,7 @@ export default function StoreHighlightsSection({ onNavigate }: Props) {
           className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
         >
           <Gamepad2 className="h-4 w-4" />
-          Browse Store
+          {t("store.sections.browse_store", "Browse Store")}
         </button>
       </div>
     </section>

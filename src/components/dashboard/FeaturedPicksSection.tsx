@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 const DEBUG_DASH_FEATURED = false;
 import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
@@ -20,6 +21,7 @@ type Props = {
 };
 
 export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
+  const { t } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [sections, setSections] = useState(() => getCachedCatalogSections());
@@ -123,10 +125,10 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Featured Picks
+            {t("store.sections.featured_picks", "Featured Picks")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Curated games from the store catalog
+            {t("store.sections.featured_picks_desc", "Curated games from the store catalog")}
           </p>
         </div>
       </div>
@@ -180,7 +182,7 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
                     {game.title}
                   </h3>
                   <span className="mt-1 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
-                    Available
+                    {t("store.badges.available", "Available")}
                   </span>
                 </div>
               </div>
