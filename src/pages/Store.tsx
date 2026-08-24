@@ -1014,6 +1014,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     return scores;
   }, [interactionEventsByAppId, storeMetadataByAppId, trendRecalcKey]);
 
+  // Debounce refs for highQualityPool — declared before the memo that uses them.
+  const _lastHighQualityBuildMsRef = useRef(0);
+  const _lastHighQualityResultRef = useRef<{ fp: string; result: { appId: string; title: string; score: number; hasSource: boolean; hasMeta: boolean }[] } | null>(null);
+
   const highQualityPool = useMemo(() => {
     if (rankedSteamCatalog.length === 0) return [];
 
@@ -1470,8 +1474,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // Phase 2+3: Input fingerprint to skip expensive 300-line section builder when material inputs unchanged.
   const _sectionBuildFpRef = useRef({ fp: "", sections: null as StoreDiscoverSection[] | null });
   const _lastSectionBuildMsRef = useRef(0);
-  const _lastHighQualityBuildMsRef = useRef(0);
-  const _lastHighQualityResultRef = useRef<{ fp: string; result: { appId: string; title: string; score: number; hasSource: boolean; hasMeta: boolean }[] } | null>(null);
   // Freeze "For You" per catalog fingerprint: computed once per catalog, cached for the session.
   // Prevents the async hydration (~500ms) from re-windowing the personalized rail on every recomposition.
   const _forYouCacheRef = useRef({ fp: "", items: null as StoreGame[] | null });
