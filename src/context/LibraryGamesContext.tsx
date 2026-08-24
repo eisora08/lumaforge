@@ -1,7 +1,9 @@
 ﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import i18n from "i18next";
 import type { LibraryGame } from "../types/libraryGame";
 import type { AppSettings } from "../types/settings";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
+import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { loadCachedGames, isCacheExpired, saveCachedGames } from "../services/gameDetectionCache";
 import { loadLibraryAppInfo, updateLibraryAppInfo } from "../services/libraryLocalCacheService";
 import type { LibraryAppInfoEntry, LibraryAppInfoMap } from "../services/tauri";
@@ -1055,6 +1057,27 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     console.log(`[LIBRARY_CONTEXT][SNAPSHOT_SCHEDULE] games=${games.length} delay=60000`);
     scheduleSnapshotWrite(games, appInfoMap, null, 60000, "library-reconcile");
   }, [games, appInfoMap]);
+
+  // Step 10: Re-resolve metadata when language changes so Library Game Details shows the new locale
+  const lastLanguageRef = useRef(i18n.language);
+  useEffect(() => {
+    if (lastLanguageRef.current === i18n.language) return;
+    lastLanguageRef.current = i18n.language;
+    const currentGames = gamesRef.current;
+    if (currentGames.length === 0) return;
+    const appIds = currentGames
+      .filter((g) => g.appId && !isNaN(Number(g.appId)))
+      .map((g) => Number(g.appId));
+    if (appIds.length === 0) return;
+    resolveGameMetadata(appIds).then((metaMap) => {
+      setGames((prev) =>
+        prev.map((g) => {
+          const meta = g.appId ? metaMap[Number(g.appId)] : undefined;
+          return meta ? { ...g, metadata: meta } : g;
+        }),
+      );
+    }).catch(() => {});
+  }, [i18n.language]);
 
   // Step 8: Manual refresh must not wipe on failure
   const refresh = useCallback(async (options?: { force?: boolean }) => {

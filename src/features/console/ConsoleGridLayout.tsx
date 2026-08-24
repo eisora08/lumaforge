@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Trophy, Star,
 } from "lucide-react";
@@ -60,6 +61,7 @@ export default function ConsoleGridLayout({
   allGames, onRefreshLibrary,
   dockFocusedIndex: _dockFocusedIndex,
 }: Props) {
+  const { t } = useTranslation();
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const gridScrollRef = useRef<HTMLDivElement>(null);
@@ -408,25 +410,25 @@ export default function ConsoleGridLayout({
                 {/* Badges row */}
                 <div className="flex flex-wrap gap-1.5">
                   {focusedGame.steamInstalled && (
-                    <span className="rounded-md bg-emerald-500/80 px-2.5 py-0.5 text-xs font-medium text-black">Installed</span>
+                    <span className="rounded-md bg-emerald-500/80 px-2.5 py-0.5 text-xs font-medium text-black">{t("settings.installed", "Installed")}</span>
                   )}
                   {focusedGame.isLuaActive && (
-                    <span className="rounded-md bg-violet-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Lua</span>
+                    <span className="rounded-md bg-violet-500/80 px-2.5 py-0.5 text-xs font-medium text-white">{t("console_settings.lua", "Lua")}</span>
                   )}
                   {focusedGame.hasUpdate && (
-                    <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black">Update</span>
+                    <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black">{t("console_settings.update", "Update")}</span>
                   )}
                   {focusedGame.source === "steam" && !focusedGame.hasLua && (
-                    <span className="rounded-md bg-blue-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Steam</span>
+                    <span className="rounded-md bg-blue-500/80 px-2.5 py-0.5 text-xs font-medium text-white">{t("console_settings.steam", "Steam")}</span>
                   )}
                   {focusedGame.source === "epic" && (
-                    <span className="rounded-md bg-purple-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Epic</span>
+                    <span className="rounded-md bg-purple-500/80 px-2.5 py-0.5 text-xs font-medium text-white">{t("console_settings.epic", "Epic")}</span>
                   )}
                   {focusedGame.source === "manual" && (
-                    <span className="rounded-md bg-sky-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Manual</span>
+                    <span className="rounded-md bg-sky-500/80 px-2.5 py-0.5 text-xs font-medium text-white">{t("console_settings.manual", "Manual")}</span>
                   )}
                   {isFav && (
-                    <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Favorite</span>
+                    <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white">{t("console_settings.favorite", "Favorite")}</span>
                   )}
                   {focusedGame.metadata?.legal_notice?.toLowerCase().includes("denuvo") && (
                     <span className="rounded-md bg-red-500/70 px-2.5 py-0.5 text-xs font-medium text-white">Denuvo</span>
@@ -439,25 +441,25 @@ export default function ConsoleGridLayout({
                 {/* Info grid: 2-col stats */}
                 <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                   <div>
-                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Time played</span>
+                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.time_played", "Time played")}</span>
                     <p className="mt-0.5 font-semibold text-(--color-text)">
                       {playtimeDisplay ?? "—"}
                     </p>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Last played</span>
+                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.last_played", "Last played")}</span>
                     <p className="mt-0.5 font-semibold text-(--color-text)">
                       {lastPlayedStr ?? "—"}
                     </p>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Status</span>
+                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.status", "Status")}</span>
                     <p className="mt-0.5 font-semibold text-(--color-accent)">
                       {completionStatus ?? "—"}
                     </p>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Released</span>
+                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.released", "Released")}</span>
                     <p className="mt-0.5 font-semibold text-(--color-text)">
                       {focusedGame.metadata?.release_date
                         ? (() => {
@@ -469,7 +471,7 @@ export default function ConsoleGridLayout({
                     </p>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Size</span>
+                    <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.size", "Size")}</span>
                     <p className="mt-0.5 font-semibold text-(--color-text)">
                       {formatBytes(focusedGame.sizeOnDisk)}
                     </p>
@@ -481,19 +483,19 @@ export default function ConsoleGridLayout({
                   <div className="flex flex-col gap-1.5 text-sm">
                     {focusedGame.metadata.developer && (
                       <div>
-                        <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Developer</span>
+                        <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.developer", "Developer")}</span>
                         <p className="mt-0.5 font-medium text-(--color-text)">{focusedGame.metadata.developer}</p>
                       </div>
                     )}
                     {focusedGame.metadata.publishers && focusedGame.metadata.publishers.length > 0 && (
                       <div>
-                        <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Publisher</span>
+                        <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.publisher", "Publisher")}</span>
                         <p className="mt-0.5 font-medium text-(--color-text)">{focusedGame.metadata.publishers.join(", ")}</p>
                       </div>
                     )}
                     {focusedGame.source === "debrid" && focusedGame.repacker && (
                       <div>
-                        <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Repacker</span>
+                        <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">{t("console_settings.repacker", "Repacker")}</span>
                         <p className="mt-0.5 font-medium text-(--color-text)">{focusedGame.repacker}</p>
                       </div>
                     )}
@@ -504,22 +506,22 @@ export default function ConsoleGridLayout({
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
                   {heroSrc && (
                     <span className="text-(--color-muted)/50">
-                      Artwork: <span className="font-medium text-(--color-muted)/70">{isManualGame ? "manual" : "steam-metadata"}</span>
+                      {t("console_settings.artwork", "Artwork")}: <span className="font-medium text-(--color-muted)/70">{isManualGame ? "manual" : "steam-metadata"}</span>
                     </span>
                   )}
                   {focusedGame.steamInstalled && (
                     <span className="text-(--color-muted)/50">
-                      Source: <span className="font-medium text-(--color-muted)/70">local</span>
+                      {t("console_settings.source_label", "Source")}: <span className="font-medium text-(--color-muted)/70">local</span>
                     </span>
                   )}
                   {isManualGame && (
                     <span className="text-(--color-muted)/50">
-                      Source: <span className="font-medium text-(--color-muted)/70">manual</span>
+                      {t("console_settings.source_label", "Source")}: <span className="font-medium text-(--color-muted)/70">manual</span>
                     </span>
                   )}
                   {focusedGame.source === "debrid" && (
                     <span className="text-(--color-muted)/50">
-                      Source: <span className="font-medium text-(--color-muted)/70">debrid</span>
+                      {t("console_settings.source_label", "Source")}: <span className="font-medium text-(--color-muted)/70">debrid</span>
                     </span>
                   )}
                 </div>
@@ -531,7 +533,7 @@ export default function ConsoleGridLayout({
                 <div>
                   <div className="flex items-center gap-2">
                     <Trophy className="h-4 w-4 text-(--color-muted)" />
-                    <span className="text-sm font-semibold text-(--color-text)">Achievements</span>
+                    <span className="text-sm font-semibold text-(--color-text)">{t("console_settings.achievements", "Achievements")}</span>
                   </div>
                   {gridHasAchievements ? (
                     <div className="mt-2.5">
@@ -551,7 +553,7 @@ export default function ConsoleGridLayout({
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs text-(--color-muted)">No achievement data</p>
+                    <p className="mt-2 text-xs text-(--color-muted)">{t("console_settings.no_achievement_data", "No achievement data")}</p>
                   )}
                 </div>
 
@@ -559,34 +561,34 @@ export default function ConsoleGridLayout({
                 <div>
                   <div className="flex items-center gap-2">
                     <Star className="h-4 w-4 text-(--color-muted)" />
-                    <span className="text-sm font-semibold text-(--color-text)">Reviews</span>
+                    <span className="text-sm font-semibold text-(--color-text)">{t("console_settings.reviews", "Reviews")}</span>
                   </div>
                   {gridHasReviews ? (
                     <div className="mt-2">
                       <p className="text-sm font-bold text-green-400">{reviewSummary!.review_score_desc}</p>
                       <p className="mt-0.5 text-xs text-(--color-muted)">
                         {reviewSummary!.positive_percent != null
-                          ? `${Math.round(reviewSummary!.positive_percent)}% positive`
-                          : `${reviewSummary!.total_positive.toLocaleString()} positive`}
+                          ? `${Math.round(reviewSummary!.positive_percent)}% ${t("console_settings.positive", "positive")}`
+                          : `${reviewSummary!.total_positive.toLocaleString()} ${t("console_settings.positive", "positive")}`}
                       </p>
                       <p className="mt-0.5 text-[10px] text-(--color-muted)/60">
-                        {reviewSummary!.total_reviews.toLocaleString()} reviews
+                        {reviewSummary!.total_reviews.toLocaleString()} {t("console_settings.reviews_count", "reviews")}
                       </p>
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs text-(--color-muted)">No review data</p>
+                    <p className="mt-2 text-xs text-(--color-muted)">{t("console_settings.no_review_data", "No review data")}</p>
                   )}
                 </div>
 
                 {/* Genre chips */}
                 {tags && (
                   <div className="flex flex-wrap gap-1.5">
-                    {tags.map((t) => (
+                    {tags.map((tag) => (
                       <span
-                        key={t}
+                        key={tag}
                         className="rounded-md bg-(--color-surface) px-3 py-1 text-xs text-(--color-muted)"
                       >
-                        {t}
+                        {tag}
                       </span>
                     ))}
                   </div>
@@ -603,10 +605,10 @@ export default function ConsoleGridLayout({
             </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 px-8">
-              <p className="text-center text-sm text-(--color-muted)">No game selected</p>
+              <p className="text-center text-sm text-(--color-muted)">{t("console_settings.no_game_selected", "No game selected")}</p>
               {currentRail.length === 0 && (
                 <p className="text-center text-xs text-(--color-muted)/50">
-                  This category has no games. Switch categories or browse All Games.
+                  {t("console_settings.category_empty_hint", "This category has no games. Switch categories or browse All Games.")}
                 </p>
               )}
             </div>

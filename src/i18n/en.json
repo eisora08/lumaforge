@@ -2059,7 +2059,21 @@
     "help_layout": "Layout",
     "help_input": "Input",
     "help_profile_settings": "Profile",
-    "footer_hint": "LumaForge Console Mode · Press [B] or Esc to go back"
+    "footer_hint": "LumaForge Console Mode · Press [B] or Esc to go back",
+    "update": "Update",
+    "manual": "Manual",
+    "favorite": "Favorite",
+    "released": "Released",
+    "publisher": "Publisher",
+    "repacker": "Repacker",
+    "source_label": "Source",
+    "no_achievement_data": "No achievement data",
+    "reviews": "Reviews",
+    "positive": "positive",
+    "reviews_count": "reviews",
+    "no_review_data": "No review data",
+    "category_empty_hint": "This category has no games. Switch categories or browse All Games.",
+    "no_games_in_category": "No games in"
   },
   "confirm": {
     "stop_game": "Stop game?",

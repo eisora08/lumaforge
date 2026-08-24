@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import i18n from "i18next";
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
@@ -541,14 +542,19 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   layoutModeRef.current = consoleSettings.layoutMode;
 
   /* ── Metadata resolution for non-Steam games with appId ── */
-  const [metadataCache, setMetadataCache] = useState<Map<string, SteamAppMetadata>>(new Map());
+  const [metadataCache, setMetadataCache] = useState<Map<string, { data: SteamAppMetadata; lang: string }>>(new Map());
+
+  // Clear metadata cache when language changes so all metadata re-resolves in the new locale
+  useEffect(() => {
+    setMetadataCache(new Map());
+  }, [i18n.language]);
 
   // Resolve metadata for the settled focused game (grid panel + spotlight)
   useEffect(() => {
     const game = currentSettledFocusedGame;
     if (!game?.appId) return;
-    if (game.metadata?.resolved) return;
-    if (metadataCache.has(game.appId)) return;
+    const cached = metadataCache.get(game.appId);
+    if (cached && cached.lang === i18n.language) return;
     const appIdNum = Number(game.appId);
     if (isNaN(appIdNum) || appIdNum <= 0) return;
     resolveGameMetadata([appIdNum]).then((metaMap) => {
@@ -556,19 +562,19 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (meta) {
         setMetadataCache((prev) => {
           const next = new Map(prev);
-          next.set(game.appId!, meta);
+          next.set(game.appId!, { data: meta, lang: i18n.language });
           return next;
         });
       }
     }).catch(() => {});
-  }, [currentSettledFocusedGame?.appId, currentSettledFocusedGame?.metadata]);
+  }, [currentSettledFocusedGame?.appId, currentSettledFocusedGame?.metadata, i18n.language]);
 
   // Resolve metadata for the detail overlay game
   useEffect(() => {
     const game = detailGame;
     if (!game?.appId) return;
-    if (game.metadata?.resolved) return;
-    if (metadataCache.has(game.appId)) return;
+    const cached = metadataCache.get(game.appId);
+    if (cached && cached.lang === i18n.language) return;
     const appIdNum = Number(game.appId);
     if (isNaN(appIdNum) || appIdNum <= 0) return;
     resolveGameMetadata([appIdNum]).then((metaMap) => {
@@ -576,21 +582,20 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (meta) {
         setMetadataCache((prev) => {
           const next = new Map(prev);
-          next.set(game.appId!, meta);
+          next.set(game.appId!, { data: meta, lang: i18n.language });
           return next;
         });
       }
     }).catch(() => {});
-  }, [detailGame?.appId, detailGame?.metadata]);
+  }, [detailGame?.appId, detailGame?.metadata, i18n.language]);
 
-  // Merge cached metadata into game object
+  // Merge cached metadata into game object — prefer cache (locale-aware) over library metadata
   const enrichWithMetadata = useCallback((game: LibraryGame | null): LibraryGame | null => {
     if (!game?.appId) return game;
-    if (game.metadata?.resolved) return game;
     const cached = metadataCache.get(game.appId);
-    if (!cached) return game;
-    return { ...game, metadata: cached };
-  }, [metadataCache]);
+    if (cached && cached.lang === i18n.language) return { ...game, metadata: cached.data };
+    return game;
+  }, [metadataCache, i18n.language]);
 
   /* ── Debounce settled focus for preview (avoids heavy work during held navigation) ── */
   useEffect(() => {

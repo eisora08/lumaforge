@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Trophy } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
@@ -75,6 +76,7 @@ export default function ConsoleSpotlightLayout({
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
 }: Props) {
+  const { t } = useTranslation();
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -179,22 +181,22 @@ export default function ConsoleSpotlightLayout({
 
           <div className="mb-3 flex flex-wrap gap-2">
             {focusedGame.steamInstalled && (
-              <span className="rounded-md bg-emerald-500/80 px-2.5 py-0.5 text-xs font-medium text-black backdrop-blur-sm">Installed</span>
+              <span className="rounded-md bg-emerald-500/80 px-2.5 py-0.5 text-xs font-medium text-black backdrop-blur-sm">{t("settings.installed", "Installed")}</span>
             )}
             {focusedGame.isLuaActive && (
-              <span className="rounded-md bg-violet-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">Lua</span>
+              <span className="rounded-md bg-violet-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">{t("console_settings.lua", "Lua")}</span>
             )}
             {focusedGame.hasUpdate && (
-              <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black backdrop-blur-sm">Update</span>
+              <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black backdrop-blur-sm">{t("console_settings.update", "Update")}</span>
             )}
             {focusedGame.source === "steam" && !focusedGame.hasLua && (
-              <span className="rounded-md bg-blue-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">Steam</span>
+              <span className="rounded-md bg-blue-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">{t("console_settings.steam", "Steam")}</span>
             )}
             {focusedGame.source === "epic" && (
-              <span className="rounded-md bg-purple-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">Epic</span>
+              <span className="rounded-md bg-purple-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">{t("console_settings.epic", "Epic")}</span>
             )}
             {isFav && (
-              <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">Favorite</span>
+              <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">{t("console_settings.favorite", "Favorite")}</span>
             )}
           </div>
 
@@ -302,7 +304,7 @@ export default function ConsoleSpotlightLayout({
         ) : (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-(--color-muted)/60">
-              No games in {sectionLabel}
+              {t("console_settings.no_games_in_category", "No games in")} {sectionLabel}
             </p>
           </div>
         )}

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useCallback, useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
@@ -98,6 +99,7 @@ export default function ConsoleSwitchSpotlightLayout({
   allGames, onRefreshLibrary,
   dockFocusedIndex = -1,
 }: Props) {
+  const { t } = useTranslation();
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -282,22 +284,22 @@ export default function ConsoleSwitchSpotlightLayout({
           {(focusedGame.steamInstalled || focusedGame.isLuaActive || focusedGame.hasUpdate || focusedGame.source === "steam" || focusedGame.source === "epic" || isFav) && (
             <div className="flex flex-wrap justify-end gap-1.5">
               {focusedGame.steamInstalled && (
-                <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">Installed</span>
+                <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">{t("settings.installed", "Installed")}</span>
               )}
               {focusedGame.isLuaActive && (
-                <span className="rounded-md bg-violet-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Lua</span>
+                <span className="rounded-md bg-violet-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">{t("console_settings.lua", "Lua")}</span>
               )}
               {focusedGame.hasUpdate && (
-                <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">Update</span>
+                <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">{t("console_settings.update", "Update")}</span>
               )}
               {focusedGame.source === "steam" && !focusedGame.hasLua && (
-                <span className="rounded-md bg-blue-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Steam</span>
+                <span className="rounded-md bg-blue-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">{t("console_settings.steam", "Steam")}</span>
               )}
               {focusedGame.source === "epic" && (
-                <span className="rounded-md bg-purple-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Epic</span>
+                <span className="rounded-md bg-purple-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">{t("console_settings.epic", "Epic")}</span>
               )}
               {isFav && (
-                <span className="rounded-md bg-rose-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">Favorite</span>
+                <span className="rounded-md bg-rose-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">{t("console_settings.favorite", "Favorite")}</span>
               )}
             </div>
           )}
