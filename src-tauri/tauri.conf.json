@@ -15,12 +15,13 @@
         "label": "splashscreen",
         "url": "/splashscreen.html",
         "title": "LumaForge",
-        "width": 720,
-        "height": 420,
+        "width": 1000,
+        "height": 600,
         "visible": true,
         "decorations": false,
         "center": true,
-        "resizable": false
+        "resizable": false,
+        "transparent": true
       },
       {
         "label": "main",
