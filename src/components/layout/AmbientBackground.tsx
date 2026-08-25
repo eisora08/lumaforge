@@ -95,7 +95,7 @@ export default function AmbientBackground() {
                 src={prevUrl}
                 alt=""
                 draggable={false}
-                loading="eager"
+                loading="lazy"
                 className={`animate-ambient-out absolute inset-0 h-full w-full scale-110 object-cover ${style.blur}`}
               />
             )}
@@ -104,7 +104,7 @@ export default function AmbientBackground() {
               src={url}
               alt=""
               draggable={false}
-              loading="eager"
+              loading="lazy"
               className={`animate-ambient-in absolute inset-0 h-full w-full scale-110 object-cover ${style.blur}`}
             />
           </>

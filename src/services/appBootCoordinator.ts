@@ -57,6 +57,7 @@ let _snapshotReady: Promise<void> = new Promise((resolve) => {
   _snapshotResolve = resolve;
 });
 let _splashClosed = false;
+let _earlyShowListeners: Set<() => void> = new Set();
 let _cachedSettings: AppSettings | null = null;
 let _cachedGameIndex: SteamGameIndexEntry[] | null = null;
 let _enrichedTitleAppIds: Map<string, string> = new Map();
@@ -144,6 +145,19 @@ export function getCachedSettings(): AppSettings | null {
 export function subscribe(fn: () => void): () => void {
   _listeners.add(fn);
   return () => { _listeners.delete(fn); };
+}
+
+// Subscribe to early-show event — fires after Stage 3 (snapshot loaded) when the
+// main window becomes visible, BEFORE remaining boot stages complete.
+export function subscribeEarlyShow(fn: () => void): () => void {
+  _earlyShowListeners.add(fn);
+  return () => { _earlyShowListeners.delete(fn); };
+}
+
+function emitEarlyShow(): void {
+  for (const fn of _earlyShowListeners) {
+    try { fn(); } catch { /* ignore */ }
+  }
 }
 
 export async function runBootTasks(): Promise<void> {
@@ -260,6 +274,14 @@ export async function runBootTasks(): Promise<void> {
           if (_snapshotResolve) _snapshotResolve();
           setBootPhaseLabel("critical-done");
           logBoot("phase=critical-done");
+
+          // ── Early show: close Tauri native splash + show main window ──
+          // The snapshot is loaded — the Home page has enough data to render.
+          // Remaining boot stages (3.25–8) continue in the background while the
+          // user already sees the UI. This cuts LCP from ~9s to ~1-2s.
+          await closeSplashscreenAndShowMainOnce();
+          emitEarlyShow();
+          logBoot("early-show: main window visible, boot continues in background");
 
           // Stage 3.25: Load manual games from AppData JSON (migrate from localStorage if needed)
           await track("load-manual-games", async () => {

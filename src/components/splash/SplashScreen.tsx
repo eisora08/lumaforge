@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { subscribe, getBootStatus, getBootProgress, getBootError } from "../../services/appBootCoordinator";
+import { subscribe, subscribeEarlyShow, getBootStatus, getBootProgress, getBootError } from "../../services/appBootCoordinator";
 
 // Simple deterministic status cycle when we don't have per-task tracking
 const STATUS_CYCLE: string[] = [
@@ -53,12 +53,12 @@ export default function SplashScreen({ wizardActive = false }: SplashScreenProps
 
     setTimeout(() => {
       setVisible(false);
-    }, 400);
+    }, 150);
   }
 
-  // Observe boot coordinator
+  // Observe boot coordinator — also listen for early-show (snapshot loaded, window visible)
   useEffect(() => {
-    const unsub = subscribe(() => {
+    const unsubBoot = subscribe(() => {
       const status = getBootStatus();
       setProgress(getBootProgress());
 
@@ -70,14 +70,25 @@ export default function SplashScreen({ wizardActive = false }: SplashScreenProps
         if (err) setStatusText(`Warning: ${err}`);
       }
     });
-    return unsub;
+
+    // Early-show: Tauri native splash already closed by boot coordinator,
+    // just fade the React overlay (don't invoke Tauri command again)
+    const unsubEarly = subscribeEarlyShow(() => {
+      if (hasClosedSplashRef.current) return;
+      hasClosedSplashRef.current = true;
+      setProgress(90);
+      setFadeOut(true);
+      setTimeout(() => setVisible(false), 150);
+    });
+
+    return () => { unsubBoot(); unsubEarly(); };
   }, []);
 
   if (!visible) return null;
 
   return (
     <div
-      className={`fixed inset-0 z-[9999] flex select-none flex-col items-center justify-center transition-opacity duration-400 ${
+      className={`fixed inset-0 z-[9999] flex select-none flex-col items-center justify-center transition-opacity duration-150 ${
         fadeOut ? "opacity-0" : "opacity-100"
       }`}
       style={{
