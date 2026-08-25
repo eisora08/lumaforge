@@ -13,6 +13,7 @@ import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
 import TopPicksDashboardSection from "../components/dashboard/TopPicksDashboardSection";
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
+import LazySectionWrapper from "../components/store/LazySectionWrapper";
 
 import { getCachedSnapshot, subscribeSnapshotUpdated } from "../services/startupSnapshotService";
 import type { StartupSnapshot } from "../services/startupSnapshotService";
@@ -50,14 +51,6 @@ function isSectionVisible(sectionId: string, visibility: Record<string, boolean>
 function getSectionLimit(sectionId: string, limits: Record<string, number>, fallback: number = 12): number {
   if (sectionId in limits) return Math.max(2, limits[sectionId]);
   return fallback;
-}
-
-/* ================================================================== */
-/*  SECTION WRAPPER                                                    */
-/* ================================================================== */
-
-function SectionWrap({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
 }
 
 /* ================================================================== */
@@ -188,53 +181,53 @@ export default function Home({ onNavigate }: Props) {
 
         {/* ── Library sections ──────────────────────────────────── */}
         {isSectionVisible("continue-playing", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="continue-playing" immediate>
             <ContinuePlayingSection
               snapshot={snapshot}
               onNavigate={onNavigate}
               excludeAppId={runningAppId}
               maxItems={getSectionLimit("continue-playing", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {isSectionVisible("in-progress", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="in-progress" immediate>
             <InProgressSection
               onNavigate={onNavigate}
               maxItems={getSectionLimit("in-progress", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {isSectionVisible("completed", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="completed">
             <CompletedSection
               onNavigate={onNavigate}
               maxItems={getSectionLimit("completed", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {isSectionVisible("favorites", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="favorites">
             <FavoritesSection
               snapshot={snapshot}
               onNavigate={onNavigate}
               excludeAppIds={[runningAppId].filter(Boolean) as string[]}
               maxItems={getSectionLimit("favorites", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {isSectionVisible("recommended", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="recommended">
             <RecommendedSection
               onNavigate={onNavigate}
               continuePlayingAppIds={continuePlayingAppIds}
               maxItems={getSectionLimit("recommended", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {/* ── Catalog discovery sections ────────────────────────── */}
@@ -265,39 +258,39 @@ export default function Home({ onNavigate }: Props) {
         )}
 
         {dashboardDiscoveryReady && isSectionVisible("trending-right-now", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="trending-right-now">
             <TrendingRightNowSection onNavigate={onNavigate} maxItems={getSectionLimit("trending-right-now", sectionLimits, 8)} />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {dashboardDiscoveryReady && isSectionVisible("featured-picks", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="featured-picks">
             <FeaturedPicksSection
               onNavigate={onNavigate}
               maxItems={getSectionLimit("featured-picks", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {dashboardDiscoveryReady && isSectionVisible("top-picks", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="top-picks">
             <TopPicksDashboardSection
               onNavigate={onNavigate}
               maxItems={getSectionLimit("top-picks", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {/* ── Bottom sections ──────────────────────────────────── */}
         {isSectionVisible("top-played", sectionVisibility) && (
-          <SectionWrap>
+          <LazySectionWrapper sectionId="top-played">
             <TopPlayedSection
               snapshot={snapshot}
               onNavigate={onNavigate}
               excludeAppIds={[runningAppId].filter(Boolean) as string[]}
               maxItems={getSectionLimit("top-played", sectionLimits, 12)}
             />
-          </SectionWrap>
+          </LazySectionWrapper>
         )}
 
         {/* <QuickActionsCompact onNavigate={onNavigate} /> */}

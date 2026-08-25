@@ -3,20 +3,20 @@ import { countRender, logRenderSummary, startRenderSession, markNavigation } fro
 
 import AppLayout from "./components/layout/AppLayout";
 import SettingsOverlay from "./components/settings/SettingsOverlay";
-import Settings from "./pages/Settings";
+const Settings = lazy(() => import("./pages/Settings"));
 
 import Home from "./pages/Home";
-import Library from "./pages/Library";
+const Library = lazy(() => import("./pages/Library"));
 const Store = lazy(() => import("./pages/Store"));
-import Games from "./pages/Games";
-import GlobalSearchResults from "./pages/GlobalSearchResults";
-import Achievements from "./pages/Achievements";
-import ActivityStats from "./pages/ActivityStats";
-import LauncherAchievements from "./pages/LauncherAchievements";
-import Verification from "./pages/Verification";
-import GameDetailsPage from "./pages/GameDetails";
-import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
-import ConsoleModePage from "./features/console/ConsoleModePage";
+const Games = lazy(() => import("./pages/Games"));
+const GlobalSearchResults = lazy(() => import("./pages/GlobalSearchResults"));
+const Achievements = lazy(() => import("./pages/Achievements"));
+const ActivityStats = lazy(() => import("./pages/ActivityStats"));
+const LauncherAchievements = lazy(() => import("./pages/LauncherAchievements"));
+const Verification = lazy(() => import("./pages/Verification"));
+const GameDetailsPage = lazy(() => import("./pages/GameDetails"));
+const LibraryGameDetailPage = lazy(() => import("./pages/LibraryGameDetailPage"));
+const ConsoleModePage = lazy(() => import("./features/console/ConsoleModePage"));
 import { GameDetailsProvider } from "./context/GameDetailsContext";
 import { GameSessionProvider, useGameSession } from "./context/GameSessionContext";
 import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
@@ -168,6 +168,7 @@ function App() {
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
   const activePageRef = useRef(activePage);
+  const libraryMountedRef = useRef(activePage === "library");
   const { settings } = useSettings();
   const [showWizard, setShowWizard] = useState(() => {
     try {
@@ -392,6 +393,9 @@ function App() {
     setTimeout(() => resumeBackgroundFill(), 2000);
   }
 
+  // Track when Library is first mounted for keep-alive
+  if (activePage === "library") libraryMountedRef.current = true;
+
   function renderPage() {
     if (DEBUG_ROUTE_RENDER && import.meta.env.DEV) {
       console.log(`[ROUTE][PAGE_RENDER] active=${activePage}`);
@@ -402,7 +406,7 @@ function App() {
         pageComponent = <Home onNavigate={handleNavigate} />;
         break;
       case "library":
-        pageComponent = <Library onNavigate={handleNavigate} />;
+        // Library is handled by keep-alive above
         break;
       case "games":
         pageComponent = <Games />;
@@ -464,12 +468,19 @@ function App() {
                 </div>
               </div>
             }>
-              {renderPage() ?? (
+              {/* Keep-alive: Library stays mounted but hidden when navigating away */}
+              {libraryMountedRef.current && (
+                <div style={activePage !== "library" ? { display: "none" } : undefined}>
+                  <Library onNavigate={handleNavigate} />
+                </div>
+              )}
+              {/* Render active page (except Library, handled above) */}
+              {activePage !== "library" && (renderPage() ?? (
                 <div className="flex h-full items-center justify-center text-(--color-muted)">
                   {DEBUG_ROUTE_SHELL && console.warn(`[ROUTE][EMPTY] activePage=${activePage} renderPage returned null`)}
                   <span>Page failed to render</span>
                 </div>
-              )}
+              ))}
             </Suspense>
           </AppRouteTransition>
         </AppLayout>

@@ -25,7 +25,8 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hot-toast": "^2.6.0",
-    "react-i18next": "^17.0.12"
+    "react-i18next": "^17.0.12",
+    "react-virtuoso": "^4.18.12"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

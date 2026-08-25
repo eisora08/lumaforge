@@ -236,6 +236,7 @@ export async function runBootTasks(): Promise<void> {
                 logBoot(`snapshot hydrated from file — games: ${gameCount}, sidebar items: ${sidebarCount}`);
                 if (DEBUG_BOOT) console.log(`[BOOT][CACHE] snapshotFresh=${!!isFresh}`);
                 if (DEBUG_BOOT) console.log(`[BOOT][CACHE] rebuildNeeded=${!isFresh}`);
+
                 // Hydrate media stats
                 let withLandscape = 0, withCover = 0, withIcon = 0, missingMedia = 0;
                 for (const g of _snapshotLoaded.library.games) {
@@ -249,7 +250,7 @@ export async function runBootTasks(): Promise<void> {
                 if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] withCover=${withCover}`);
                 if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] withIcon=${withIcon}`);
                 if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] missingMedia=${missingMedia}`);
-                // Hydrate: repair missing media paths from canonical appinfo
+                // Hydrate: repair missing media paths + completionStatus from canonical appinfo
                 const { hydrateStartupSnapshotMedia } = await import("./startupSnapshotService");
                 const hydrateResult = await hydrateStartupSnapshotMedia(_snapshotLoaded);
                 if (DEBUG_BOOT) console.log(`[BOOT][CACHE] hydrateResult: changed=${hydrateResult.changed} repaired=${hydrateResult.repairedCount} ready=${hydrateResult.readyCount} partial=${hydrateResult.partialCount} missing=${hydrateResult.missingCount} stale=${hydrateResult.staleCount}`);
@@ -261,27 +262,36 @@ export async function runBootTasks(): Promise<void> {
                 if (!hasFingerprints) {
                   if (DEBUG_BOOT) console.log(`[BOOT][CACHE] fingerprintBaseline=missing (first boot or old snapshot)`);
                 }
+
+                // ── Early show: close splash + show main window AFTER hydrate ──
+                // hydrateStartupSnapshotMedia patches completionStatus + media paths
+                // into the snapshot object. LibraryGamesContext reads these values when
+                // it wakes up, so hydrate MUST complete before _snapshotResolve().
+                if (_snapshotResolve) _snapshotResolve();
+                setBootPhaseLabel("critical-done");
+                logBoot("phase=critical-done");
+                await closeSplashscreenAndShowMainOnce();
+                emitEarlyShow();
+                logBoot("early-show: main window visible, boot continues in background");
               } else {
                 if (DEBUG_BOOT) console.log(`[BOOT][CACHE] snapshotFresh=false (no snapshot file)`);
+                // No snapshot — still show the window so the user sees an empty state
+                if (_snapshotResolve) _snapshotResolve();
+                setBootPhaseLabel("critical-done");
+                await closeSplashscreenAndShowMainOnce();
+                emitEarlyShow();
               }
             } catch {
               _snapshotLoaded = null;
+              // Error — still show the window
+              if (_snapshotResolve) _snapshotResolve();
+              setBootPhaseLabel("critical-done");
+              await closeSplashscreenAndShowMainOnce();
+              emitEarlyShow();
             }
             logBoot("load snapshot end");
           });
           reportLibraryProgress({ phase: "done", source: "snapshot" });
-
-          if (_snapshotResolve) _snapshotResolve();
-          setBootPhaseLabel("critical-done");
-          logBoot("phase=critical-done");
-
-          // ── Early show: close Tauri native splash + show main window ──
-          // The snapshot is loaded — the Home page has enough data to render.
-          // Remaining boot stages (3.25–8) continue in the background while the
-          // user already sees the UI. This cuts LCP from ~9s to ~1-2s.
-          await closeSplashscreenAndShowMainOnce();
-          emitEarlyShow();
-          logBoot("early-show: main window visible, boot continues in background");
 
           // Stage 3.25: Load manual games from AppData JSON (migrate from localStorage if needed)
           await track("load-manual-games", async () => {

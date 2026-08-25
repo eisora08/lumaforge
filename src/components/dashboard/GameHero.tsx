@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Gamepad2, Loader2, Play, Square, Sparkles, Store, XCircle } from "lucide-react";
+
+// ─── Diagnostic: module-level timestamp for hero timing logs ──
+const _heroT0 = performance.now();
 import { getCachedSnapshot, subscribeSnapshotUpdated } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -149,6 +152,19 @@ function buildEpicPlaytime(epicGames: LibraryGame[]) {
   return map;
 }
 
+// ─── Hero source → section ID mapping for maxItems limits ──
+// Each hero source corresponds to a dashboard section with its own item limit.
+// The hero rotation pool should match the section's display limit.
+const SOURCE_TO_SECTION: Record<string, string> = {
+  continuePlaying: "continue-playing",
+  favorites: "favorites",
+  topPlayed: "top-played",
+  recommended: "recommended",
+  featured: "featured-picks",
+  topPicks: "top-picks",
+  // recentlyPlayed, manualGames, steamGames — no section, no limit
+};
+
 /** Build candidates from selected hero sources in source-priority order. */
 function buildHeroCandidates(
   snapshotGames: SnapshotGame[],
@@ -156,6 +172,7 @@ function buildHeroCandidates(
   manualGames: LibraryGame[],
   epicGames: LibraryGame[],
   heroSources: string[],
+  sectionLimits: Record<string, number> = {},
 ): HeroCandidate[] {
   const manualPlaytime = buildManualPlaytime(manualGames);
   const epicPlaytime = buildEpicPlaytime(epicGames);
@@ -163,6 +180,9 @@ function buildHeroCandidates(
 
   for (let si = 0; si < heroSources.length; si++) {
     const sourceId = heroSources[si];
+    // Look up the section limit for this source (default 12)
+    const sectionId = SOURCE_TO_SECTION[sourceId];
+    const sourceLimit = sectionId ? (sectionLimits[sectionId] ?? 12) : 12;
     switch (sourceId) {
       case "continuePlaying": {
         const all: HeroCandidate[] = [];
@@ -189,27 +209,29 @@ function buildHeroCandidates(
           const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
           return bLp - aLp;
         });
-        candidates.push(...all);
+        candidates.push(...all.slice(0, sourceLimit));
         break;
       }
       case "favorites": {
+        const favs: HeroCandidate[] = [];
         for (const g of snapshotGames) {
           if (g.appId && favoriteIds.has(g.appId) && hasValidMedia(g)) {
-            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+            favs.push({ type: "snapshot", game: g, sourceIndex: si });
           }
         }
         for (const mg of manualGames) {
           const favKey = mg.libraryId || mg.id;
           if (favoriteIds.has(favKey) && hasManualValidMedia(mg)) {
-            candidates.push({ type: "manual", game: mg, sourceIndex: si });
+            favs.push({ type: "manual", game: mg, sourceIndex: si });
           }
         }
         for (const eg of epicGames) {
           const favKey = eg.libraryId || eg.id;
           if (favoriteIds.has(favKey) && hasManualValidMedia(eg)) {
-            candidates.push({ type: "epic", game: eg, sourceIndex: si });
+            favs.push({ type: "epic", game: eg, sourceIndex: si });
           }
         }
+        candidates.push(...favs.slice(0, sourceLimit));
         break;
       }
       case "recentlyPlayed": {
@@ -237,7 +259,7 @@ function buildHeroCandidates(
           const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
           return bLp - aLp;
         });
-        candidates.push(...all);
+        candidates.push(...all.slice(0, sourceLimit));
         break;
       }
       case "topPlayed": {
@@ -260,52 +282,62 @@ function buildHeroCandidates(
           const bSec = b.type === "snapshot" ? getPlaytimeSecondsForAppId((b.game as SnapshotGame).appId) : (b.type === "epic" ? (epicPlaytime.get((b.game as LibraryGame).id)?.totalSeconds ?? 0) : (manualPlaytime.get((b.game as LibraryGame).id)?.totalSeconds ?? 0));
           return bSec - aSec;
         });
-        candidates.push(...all);
+        candidates.push(...all.slice(0, sourceLimit));
         break;
       }
       case "recommended": {
+        const recs: HeroCandidate[] = [];
         for (const g of snapshotGames) {
           if (g.appId && g.title && hasValidMedia(g)) {
-            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+            recs.push({ type: "snapshot", game: g, sourceIndex: si });
           }
         }
+        candidates.push(...recs.slice(0, sourceLimit));
         break;
       }
       case "featured": {
+        const feats: HeroCandidate[] = [];
         for (const g of snapshotGames) {
           if (g.appId && g.title && hasValidMedia(g)) {
-            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+            feats.push({ type: "snapshot", game: g, sourceIndex: si });
           }
         }
+        candidates.push(...feats.slice(0, sourceLimit));
         break;
       }
       case "newNoteworthy": {
+        const nn: HeroCandidate[] = [];
         for (const g of snapshotGames) {
           if (g.appId && g.title && hasValidMedia(g)) {
-            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+            nn.push({ type: "snapshot", game: g, sourceIndex: si });
           }
         }
+        candidates.push(...nn.slice(0, sourceLimit));
         break;
       }
       case "manualGames": {
+        const manuals: HeroCandidate[] = [];
         for (const mg of manualGames) {
           if (mg.title && hasManualValidMedia(mg)) {
-            candidates.push({ type: "manual", game: mg, sourceIndex: si });
+            manuals.push({ type: "manual", game: mg, sourceIndex: si });
           }
         }
         for (const eg of epicGames) {
           if (eg.title && hasManualValidMedia(eg)) {
-            candidates.push({ type: "epic", game: eg, sourceIndex: si });
+            manuals.push({ type: "epic", game: eg, sourceIndex: si });
           }
         }
+        candidates.push(...manuals.slice(0, sourceLimit));
         break;
       }
       case "steamGames": {
+        const steam: HeroCandidate[] = [];
         for (const g of snapshotGames) {
           if (g.appId && g.title) {
-            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+            steam.push({ type: "snapshot", game: g, sourceIndex: si });
           }
         }
+        candidates.push(...steam.slice(0, sourceLimit));
         break;
       }
       // "collections" — disabled, no candidates
@@ -325,7 +357,18 @@ function pickNonRunningHero(
   rotateIndex: number,
   heroCandidates: HeroCandidate[],
 ): HeroGameResult {
-  // Auto-rotate: pick from candidates by rotate index
+  // Build a representative list: top 1 candidate per source priority.
+  // This prevents one large source from drowning out other sources.
+  // Used for single-pick (non-rotate) mode only.
+  const sourceCount = _heroSources.length;
+  const representative: HeroCandidate[] = [];
+  for (let si = 0; si < sourceCount; si++) {
+    const first = heroCandidates.find((c) => c.sourceIndex === si);
+    if (first) representative.push(first);
+  }
+
+  // Auto-rotate: pick from ALL candidates (already section-limited) by rotate index.
+  // This allows rotation within a single source, not just between sources.
   if (heroAutoRotate && heroCandidates.length > 0) {
     const idx = rotateIndex % heroCandidates.length;
     const c = heroCandidates[idx];
@@ -334,9 +377,9 @@ function pickNonRunningHero(
     return { game: null, sessionKey: null, manualGame: c.game as LibraryGame };
   }
 
-  // Single pick: first candidate from selected sources
-  if (heroCandidates.length > 0) {
-    const c = heroCandidates[0];
+  // Single pick: first representative candidate (respects source priority order)
+  if (representative.length > 0) {
+    const c = representative[0];
     if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
     if (c.type === "epic") return { game: null, sessionKey: null, epicGame: c.game as LibraryGame };
     return { game: null, sessionKey: null, manualGame: c.game as LibraryGame };
@@ -445,6 +488,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const heroSources = settings.dashboardHeroSources ?? ["continuePlaying", "favorites"];
   const heroAutoRotate = settings.dashboardHeroAutoRotate ?? false;
   const heroRotateSeconds = settings.dashboardHeroRotateSeconds ?? 15;
+  const sectionLimits = settings.dashboardSectionLimits ?? {};
 
   // ─── FIX 2: Active session lookup — searches sessions by state priority ──
   const activeSession = useMemo(() => findActiveSession(sessions), [sessions]);
@@ -457,8 +501,21 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   // Build candidates from selected hero sources (for non-running rotate + single-pick)
   const heroCandidates = useMemo(() => {
-    return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, heroSources);
-  }, [snapshotGames, favoriteIds, manualGames, epicGames, heroSources]);
+    return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, heroSources, sectionLimits);
+  }, [snapshotGames, favoriteIds, manualGames, epicGames, heroSources, sectionLimits]);
+
+  // ─── DIAGNOSTIC: log candidates by source ──
+  useEffect(() => {
+    const bySource = heroSources.map((s) => {
+      const count = heroCandidates.filter((c) => {
+        if (s === "continuePlaying") return c.sourceIndex === heroSources.indexOf(s);
+        if (s === "favorites") return c.sourceIndex === heroSources.indexOf(s);
+        return c.sourceIndex === heroSources.indexOf(s);
+      }).length;
+      return `${s}=${count}`;
+    }).join(" ");
+    console.log(`[HERO_CANDIDATES] t=${Math.round(performance.now() - _heroT0)}ms total=${heroCandidates.length} ${bySource} heroAutoRotate=${heroAutoRotate}`);
+  }, [heroCandidates, heroSources, heroAutoRotate]);
 
   // Auto-rotate state
   const [rotateIndex, setRotateIndex] = useState(0);
@@ -499,6 +556,14 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const hasActiveSession = isRunning || isStopping || isLaunching;
 
   const heroAppId = heroGame?.appId;
+
+  // ─── DIAGNOSTIC: log hero pick ──
+  useEffect(() => {
+    const chosen = heroGame?.title ?? heroManualGame?.title ?? heroEpicGame?.title ?? "null";
+    const chosenType = heroGame ? "snapshot" : heroManualGame ? "manual" : heroEpicGame ? "epic" : "none";
+    console.log(`[HERO_PICK] t=${Math.round(performance.now() - _heroT0)}ms chosen="${chosen}" type=${chosenType} appId=${heroAppId ?? "null"} source=${heroGame?.source ?? "none"}`);
+  }, [heroGame, heroManualGame, heroEpicGame, heroAppId]);
+
   const { getJobByAppId } = useDownloadQueueContext();
   const heroInstallJob = heroAppId ? getJobByAppId(heroAppId) : undefined;
   const activeInstallStatuses = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
@@ -544,10 +609,35 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     );
   }, [sessions, activeSession, libraryGames, runningLibGame]);
 
+  // ─── Steam CDN fallback chain for hero images ──
+  // header.jpg and library_hero.jpg are more universal than library_600x900.jpg
+  const steamCdnHeroUrls = (appId: string | undefined | null): string[] => {
+    if (!appId) return [];
+    const akamai = `https://steamcdn-a.akamaihd.net/steam/apps/${appId}`;
+    const static_ = `https://shared.steamstatic.com/store_item_assets/steam/apps/${appId}`;
+    return [
+      `${akamai}/header.jpg`,
+      `${static_}/capsule_616x353.jpg`,
+      `${static_}/library_600x900.jpg`,
+    ];
+  };
+  const steamCdnHero = (appId: string | undefined | null): string | null => {
+    const urls = steamCdnHeroUrls(appId);
+    return urls[0] ?? null;
+  };
+
   // ─── FIX 5: Hero background resolution — running game first, then non-running ──
   const [bgUrl, setBgUrl] = useState<string | null>(null);
   const [sharpImgError, setSharpImgError] = useState(false);
   const bgUrlGenerationRef = useRef(0);
+  // ─── DIAGNOSTIC: log bgUrl changes ──
+  const _prevBgUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (_prevBgUrlRef.current !== bgUrl) {
+      console.log(`[HERO_BGURL] t=${Math.round(performance.now() - _heroT0)}ms prev=${_prevBgUrlRef.current?.slice(0, 80) ?? "null"} next=${bgUrl?.slice(0, 80) ?? "null"}`);
+      _prevBgUrlRef.current = bgUrl;
+    }
+  }, [bgUrl]);
   useEffect(() => {
     setSharpImgError(false);
   }, [bgUrl]);
@@ -556,7 +646,12 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     const generation = ++bgUrlGenerationRef.current;
 
     async function resolveHeroBg() {
-      // ── FIX 5: Running game — resolve from libGame directly ──
+      const _imgPath = runningLibGame
+        ? (runningLibGame.backgroundPath ?? runningLibGame.landscapePath ?? runningLibGame.coverPath ?? null)
+        : (heroGame?.media?.backgroundPath ?? heroGame?.media?.landscapePath ?? heroGame?.media?.coverPath ?? null);
+      console.log(`[HERO_RESOLVE] t=${Math.round(performance.now() - _heroT0)}ms gen=${generation} branch=${runningLibGame ? "running" : heroManualGame ? "manual" : heroEpicGame ? "epic" : "snapshot"} heroAppId=${heroAppId ?? "null"} imgPath=${_imgPath ?? "null"}`);
+
+      // ── Running game — resolve from libGame directly ──
       if (runningLibGame) {
         const bgPath = runningLibGame.backgroundPath ?? runningLibGame.landscapePath ?? runningLibGame.coverPath ?? runningLibGame.imageUrl ?? null;
         const role = bgPath === runningLibGame.backgroundPath ? "background"
@@ -566,9 +661,18 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         console.log(`[RUNNING_HERO_MEDIA] role=${role} raw=${bgPath}`);
 
         if (!bgPath) {
-          if (!cancelled) {
-            setBgUrl(null);
-            clearAmbientSource("dashboard");
+          const cdnUrl = steamCdnHero(runningLibGame.appId);
+          if (cdnUrl) {
+            console.log(`[DASH][HERO] branch=running noMedia CDN fallback appId=${runningLibGame.appId}`);
+            if (!cancelled && generation === bgUrlGenerationRef.current) {
+              setBgUrl(cdnUrl);
+              setAmbientSource("dashboard", cdnUrl);
+            }
+          } else {
+            if (!cancelled) {
+              setBgUrl(null);
+              clearAmbientSource("dashboard");
+            }
           }
           return;
         }
@@ -587,6 +691,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
             const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
             url = await resolveProviderMediaPreviewUrl(bgPath);
           }
+          if (!url) url = steamCdnHero(runningLibGame.appId);
           console.log(`[RUNNING_HERO_MEDIA] resolvedUrl=${url} src=${runningLibGame.source} isNonSteam=${isNonSteamRunning}`);
           console.log(`[DASH][HERO] branch=running title="${runningLibGame.title}" appId=${runningLibGame.appId} src=${runningLibGame.source} bgPath=${bgPath} role=${role} resolved=${url ?? "NULL"}`);
           if (!cancelled && generation === bgUrlGenerationRef.current) {
@@ -594,9 +699,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
             setAmbientSource("dashboard", url);
           }
         } catch {
+          const cdnUrl = steamCdnHero(runningLibGame.appId);
           if (!cancelled && generation === bgUrlGenerationRef.current) {
-            setBgUrl(null);
-            clearAmbientSource("dashboard");
+            setBgUrl(cdnUrl);
+            if (cdnUrl) setAmbientSource("dashboard", cdnUrl);
+            else clearAmbientSource("dashboard");
           }
         }
         return;
@@ -617,16 +724,20 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         if (rawPath) {
           try {
             const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
-            const url = await resolveProviderMediaPreviewUrl(rawPath);
+            let url = await resolveProviderMediaPreviewUrl(rawPath);
+            if (!url) url = steamCdnHero(nonSnapshot.appId);
             console.log(`[DASH][HERO] branch=nonRunning title="${nonSnapshot.title}" appId=${nonSnapshot.appId} src=${nonSnapshot.source} rawPath=${rawPath} selectedRole=${selected?.role} resolved=${url ?? "NULL"}`);
             if (!cancelled && generation === bgUrlGenerationRef.current) {
               setBgUrl(url);
-              setAmbientSource("dashboard", url);
+              if (url) setAmbientSource("dashboard", url);
+              else clearAmbientSource("dashboard");
             }
           } catch {
+            const cdnUrl = steamCdnHero(nonSnapshot.appId);
             if (!cancelled && generation === bgUrlGenerationRef.current) {
-              setBgUrl(null);
-              clearAmbientSource("dashboard");
+              setBgUrl(cdnUrl);
+              if (cdnUrl) setAmbientSource("dashboard", cdnUrl);
+              else clearAmbientSource("dashboard");
             }
           }
           return;
@@ -639,20 +750,34 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           const imgPath = snapGame?.media?.backgroundPath ?? snapGame?.media?.landscapePath ?? snapGame?.media?.coverPath ?? null;
           if (imgPath) {
             try {
-              const url = await resolveGameMediaUrl(nonSnapshot.appId, imgPath);
+              let url = await resolveGameMediaUrl(nonSnapshot.appId, imgPath);
+              if (!url) url = steamCdnHero(nonSnapshot.appId);
               console.log(`[DASH][HERO] branch=nonRunning→snapshot title="${nonSnapshot.title}" appId=${nonSnapshot.appId} imgPath=${imgPath} resolved=${url ?? "NULL"}`);
               if (!cancelled && generation === bgUrlGenerationRef.current) {
                 setBgUrl(url);
-                setAmbientSource("dashboard", url);
+                if (url) setAmbientSource("dashboard", url);
+                else clearAmbientSource("dashboard");
               }
             } catch {
+              const cdnUrl = steamCdnHero(nonSnapshot.appId);
               if (!cancelled && generation === bgUrlGenerationRef.current) {
-                setBgUrl(null);
-                clearAmbientSource("dashboard");
+                setBgUrl(cdnUrl);
+                if (cdnUrl) setAmbientSource("dashboard", cdnUrl);
+                else clearAmbientSource("dashboard");
               }
             }
             return;
           }
+          // No snapshot media — try CDN fallback
+          const cdnUrl = steamCdnHero(nonSnapshot.appId);
+          if (cdnUrl) {
+            console.log(`[DASH][HERO] branch=nonRunning→cdn title="${nonSnapshot.title}" appId=${nonSnapshot.appId}`);
+            if (!cancelled && generation === bgUrlGenerationRef.current) {
+              setBgUrl(cdnUrl);
+              setAmbientSource("dashboard", cdnUrl);
+            }
+          }
+          return;
         }
         console.log(`[DASH][HERO] branch=nonRunning title="${nonSnapshot.title}" appId=${nonSnapshot.appId} src=${nonSnapshot.source} rawPath=NULL noSnapshotMedia either`);
       }
@@ -661,23 +786,36 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       if (heroAppId && heroGame) {
         const m = heroGame.media;
         const imgPath = m?.backgroundPath ?? m?.landscapePath ?? m?.coverPath ?? null;
-        if (!imgPath) {
-          console.log(`[DASH][HERO] branch=snapshot title="${heroGame.title}" appId=${heroAppId} src=${heroGame.source} imgPath=NULL (no media)`);
-          if (!cancelled) {
-            setBgUrl(null);
-            clearAmbientSource("dashboard");
-          }
-          return;
+
+        // If no media in snapshot, try common local paths first (CDN last resort)
+        const pathsToTry = imgPath
+          ? [imgPath]
+          : ["media/background.jpg", "media/landscape.jpg", "media/cover.jpg"];
+
+        for (const path of pathsToTry) {
+          try {
+            const url = await resolveGameMediaUrl(heroAppId, path);
+            if (url) {
+              console.log(`[DASH][HERO] branch=snapshot local title="${heroGame.title}" appId=${heroAppId} imgPath=${path} resolved=${url}`);
+              if (!cancelled && generation === bgUrlGenerationRef.current) {
+                setBgUrl(url);
+                setAmbientSource("dashboard", url);
+              }
+              return;
+            }
+          } catch { /* try next path */ }
         }
-        try {
-          const url = await resolveGameMediaUrl(heroAppId, imgPath);
-          console.log(`[DASH][HERO] branch=snapshot title="${heroGame.title}" appId=${heroAppId} imgPath=${imgPath} resolved=${url ?? "NULL"}`);
+
+        // All local paths failed — CDN as last resort
+        const cdnUrl = steamCdnHero(heroAppId);
+        if (cdnUrl) {
+          console.log(`[DASH][HERO] branch=snapshot CDN fallback title="${heroGame.title}" appId=${heroAppId}`);
           if (!cancelled && generation === bgUrlGenerationRef.current) {
-            setBgUrl(url);
-            setAmbientSource("dashboard", url);
+            setBgUrl(cdnUrl);
+            setAmbientSource("dashboard", cdnUrl);
           }
-        } catch {
-          if (!cancelled && generation === bgUrlGenerationRef.current) {
+        } else {
+          if (!cancelled) {
             setBgUrl(null);
             clearAmbientSource("dashboard");
           }
@@ -892,6 +1030,12 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   // MUST be declared BEFORE the early return to keep hook count stable across renders.
   const heroSectionRef = useCallback((_node: HTMLElement | null) => {}, []);
 
+  // ─── DIAGNOSTIC: render log (after all hooks, before early return) ──
+  const _renderCount = useRef(0);
+  _renderCount.current++;
+  const _diagTitle = heroGame?.title ?? heroManualGame?.title ?? heroEpicGame?.title ?? "null";
+  console.log(`[HERO] render#${_renderCount.current} t=${Math.round(performance.now() - _heroT0)}ms snapshot=${!!snapshot} snapshotGames=${snapshotGames.length} libraryGames=${libraryGames.length} manualGames=${manualGames.length} epicGames=${epicGames.length} heroGame=${_diagTitle} heroAppId=${heroAppId ?? "null"} bgUrl=${bgUrl?.slice(0, 80) ?? "null"}`);
+
   // ─── FIX 4: Never return EmptyHero when an active session exists ──────
   if (!libGame && !activeSession) {
     return <EmptyHero onNavigate={onNavigate} />;
@@ -903,10 +1047,12 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       {bgUrl ? (
         <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
           <AsyncImage
-            key={bgUrl}
             src={bgUrl}
             alt=""
+            loading="eager"
             className="h-full w-full scale-105 blur-2xl"
+            onLoad={() => console.log(`[HERO_BACKDROP] LOAD t=${Math.round(performance.now() - _heroT0)}ms url=${bgUrl?.slice(0, 80)}`)}
+            onError={() => console.log(`[HERO_BACKDROP] ERROR t=${Math.round(performance.now() - _heroT0)}ms url=${bgUrl?.slice(0, 80)}`)}
             fallback={
               <div className="h-full w-full bg-gradient-to-br from-(--color-accent)/20 via-purple-900/30 to-black" />
             }
@@ -920,13 +1066,16 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       {bgUrl && !sharpImgError && (
         <div className="absolute inset-0 z-[5] flex items-center justify-center overflow-hidden">
           <img
-            key={bgUrl}
             src={bgUrl}
             alt=""
             draggable={false}
             loading="eager"
             decoding="async"
-            onError={() => setSharpImgError(true)}
+            onLoad={() => console.log(`[HERO_IMG] LOAD t=${Math.round(performance.now() - _heroT0)}ms url=${bgUrl?.slice(0, 80)}`)}
+            onError={() => {
+              console.log(`[HERO_IMG] ERROR t=${Math.round(performance.now() - _heroT0)}ms url=${bgUrl?.slice(0, 80)}`);
+              setSharpImgError(true);
+            }}
             className={`${heroBgClass} block h-full w-auto max-w-none shrink-0 [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
           />
         </div>

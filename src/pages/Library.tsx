@@ -92,6 +92,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [filterPopupOpen, setFilterPopupOpen] = useState(false);
   const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const gridContainerRef = useRef<HTMLDivElement>(null);
   const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
   const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
   const [filter, setFilter] = useState<LibraryFilter>("all");
@@ -744,7 +745,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                   )}
                 </div>
 
-                {visibleGames.length === 0 ? (
+                {filteredGames.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
                     {filter === "lua" ? (
                       <>
@@ -775,6 +776,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                   <div className="flex-1">
                     {layout === "grid" ? (
                       <div
+                        ref={gridContainerRef}
                         className="grid lf-card-stagger"
                         style={{
                           gridTemplateColumns: `repeat(auto-fill, minmax(${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeCardSize : settings.libraryCardSize}px, 1fr))`,

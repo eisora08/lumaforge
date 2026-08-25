@@ -351,7 +351,7 @@ export default function AsyncImage({
         key={imgKey}
         src={displaySrc}
         alt={alt}
-        className={`h-full w-full object-cover transition-opacity duration-300 ${
+        className={`h-full w-full object-cover ${
           loaded ? "opacity-100" : "opacity-0"
         }`}
         loading={loading}
