@@ -52,8 +52,10 @@ import { isIntegrationEnabled, isIntegrationScanOnStartup } from "../services/in
 import { filterEnabledGames } from "../services/providerSurfaceFilter";
 import {
   getAllEpicGames,
+  getAllEpicGamesIncludingOwned,
   subscribeEpicGames,
   refreshEpicGames,
+  refreshOwnedGames,
   initOverrideSubscription,
 } from "../services/epicGameStore";
 import {
@@ -156,6 +158,16 @@ function getEpicLibraryGames(): LibraryGame[] {
   if (!EPIC_LIBRARY_ENABLED) return [];
   try {
     return getAllEpicGames();
+  } catch {
+    return [];
+  }
+}
+
+/** Sync read from the in-memory Epic store, including owned (not installed) games. */
+function getEpicLibraryGamesIncludingOwned(): LibraryGame[] {
+  if (!EPIC_LIBRARY_ENABLED) return [];
+  try {
+    return getAllEpicGamesIncludingOwned();
   } catch {
     return [];
   }
@@ -355,7 +367,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // Manual games with an appId that already exists in the main list are duplicates — skip them
     const existingAppIds = new Set(nextGames.map(g => g.appId).filter(Boolean));
     const freshManual = getManualLibraryGames().filter(m => !m.appId || !existingAppIds.has(m.appId));
-    const withManual = [...nextGames, ...freshManual, ...getEpicLibraryGames(), ...getDebridLibraryGames()];
+    const withManual = [...nextGames, ...freshManual, ...getEpicLibraryGamesIncludingOwned(), ...getDebridLibraryGames()];
     // Phase 2: Block empty replacement of valid data unless explicit
     if (withManual.length === 0 && current.length > 0 && !options?.allowReplace) {
       countLibraryEmptyBlocked();
@@ -966,6 +978,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // Trigger initial Epic scan (fire-and-forget) only when scanOnStartup is enabled
     if (isIntegrationScanOnStartup("epic")) {
       refreshEpicGames(settings.steamRoot || undefined).catch((err) => console.warn(err));
+      // Also fetch owned games from Epic API (Phase 2)
+      refreshOwnedGames().catch((err) => console.warn(err));
     }
 
     // Subscribe to override changes (media/metadata writes from GameEditDialog)
@@ -973,9 +987,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
     return subscribeEpicGames(() => {
       const current = gamesRef.current;
-      if (current.length === 0) return; // not loaded yet
-      // Strip Epic games â€” applyGamesSafely re-adds fresh ones from store.
-      // This avoids stale Epic objects surviving through mergeGames.
+      // Strip Epic games — applyGamesSafely re-adds fresh ones from store.
       const nonEpic = current.filter((g) => g.source !== "epic");
       if (DEBUG_EPIC_LIBRARY) {
         const prevEpicCount = current.filter((g) => g.source === "epic").length;
@@ -1010,9 +1022,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
     return subscribeDebridGames(() => {
       const current = gamesRef.current;
-      if (current.length === 0) return; // not loaded yet
       // Strip Debrid games — applyGamesSafely re-adds fresh ones from store.
-      // This avoids stale Debrid objects surviving through mergeGames.
       const nonDebrid = current.filter((g) => g.source !== "debrid");
       if (DEBUG_DEBRID_LIBRARY) {
         const prevDebridCount = current.filter((g) => g.source === "debrid").length;

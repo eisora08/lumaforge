@@ -2,6 +2,7 @@ import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 
 import ThirdPartyToolsSection from "../components/settings/ThirdPartyToolsSection";
+import { EpicAuthPanel } from "../features/epic/EpicAuthPanel";
 import { setAmbientEnabled, setAmbientIntensity, setAmbientMode, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
 import { setHeroTransition, subscribeHeroTransition, getHeroTransitionSnapshot, HERO_TRANSITION_OPTIONS } from "../services/heroTransitionStore";
 import {
@@ -1402,6 +1403,14 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         </button>
                       </div>
                     ))}
+                  </div>
+
+                  {/* Epic Games Auth Panel */}
+                  <div className="mt-4">
+                    <h4 className="mb-2 text-sm font-medium text-(--color-text)">
+                      {t("settings.epic_account", "Cuenta de Epic Games")}
+                    </h4>
+                    <EpicAuthPanel />
                   </div>
                 </SettingsSection>
               </>

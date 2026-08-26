@@ -38,6 +38,8 @@ pub mod provider_media;
 pub mod igdb;
 pub mod manual_games;
 pub mod epic;
+pub mod epic_auth;
+pub mod epic_catalog;
 pub mod store_catalog;
 pub mod backup;
 pub mod external_files;

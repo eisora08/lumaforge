@@ -11,6 +11,8 @@
  *   - Scanner failure: retain previous valid entries, surface warning
  *   - Successful empty scan: replace with empty, remove stale entries
  *   - No duplicate listeners, one notification per meaningful replacement
+ *
+ * Phase 2: Added online library sync (owned games from Epic API).
  */
 
 import type { LibraryGame } from "../types/libraryGame";
@@ -43,6 +45,14 @@ let _scanWarning: string | null = null;
 let _scanState: "idle" | "scanning" | "done" | "error" = "idle";
 const _listeners = new Set<() => void>();
 const _launchMetadataByProviderGameId = new Map<string, EpicLaunchMetadata>();
+
+// ── Owned games state (Phase 2) ──
+
+let _ownedGames: LibraryGame[] = [];
+let _ownedFingerprint = "";
+let _ownedScanState: "idle" | "scanning" | "done" | "error" = "idle";
+let _ownedScanWarning: string | null = null;
+let _syncedPlaytime = new Map<string, number>(); // appName → totalPlaytime
 
 // ── Notification ──
 
@@ -341,6 +351,186 @@ export function resetEpicGameCache(): void {
   }
 
   notifyListeners();
+}
+
+// ── Owned games (Phase 2: Online Library Sync) ──
+
+/**
+ * Fetch owned games from the Epic API and merge them with installed games.
+ *
+ * Owned games that are NOT installed appear as "owned, not installed" entries.
+ * Installed games are enriched with playtime data.
+ */
+export async function refreshOwnedGames(): Promise<{
+  count: number;
+  warning: string | null;
+}> {
+  if (!EPIC_LIBRARY_ENABLED) {
+    return { count: 0, warning: null };
+  }
+
+  try {
+    _ownedScanState = "scanning";
+    _ownedScanWarning = null;
+
+    const { epicSyncLibrary } = await import("./tauri");
+    const result = await epicSyncLibrary();
+
+    // Build playtime map
+    _syncedPlaytime = new Map();
+    for (const pt of result.playtime) {
+      if (pt.artifactId && pt.totalTime) {
+        _syncedPlaytime.set(pt.artifactId, pt.totalTime);
+      }
+    }
+
+    // Convert owned games to LibraryGame entries
+    const ownedMapped: LibraryGame[] = [];
+    const installedAppNames = new Set(
+      _epicGames.map((g) => g.providerGameId?.split(":").pop()).filter(Boolean),
+    );
+
+    for (const owned of result.ownedGames) {
+      // Skip if already installed (will be enriched separately)
+      if (installedAppNames.has(owned.appName)) continue;
+
+      // Build providerGameId
+      const providerGameId = owned.namespace && owned.catalogItemId
+        ? `${owned.namespace}:${owned.catalogItemId}`
+        : owned.appName;
+
+      // Skip if no valid ID
+      if (!providerGameId) continue;
+
+      // Get playtime
+      const playtime = _syncedPlaytime.get(owned.appName) || 0;
+
+      // Build minimal LibraryGame for uninstalled owned games
+      const game: LibraryGame = {
+        id: `epic:${providerGameId}`,
+        libraryId: `epic:${providerGameId}`,
+        title: owned.labelName || owned.appName,
+        source: "epic",
+        providerId: "epic",
+        providerGameId,
+        isInstalled: false,
+        localPlaytimeMinutes: Math.floor(playtime / 60),
+        localLastPlayedAt: 0,
+        // Steam-specific fields (not applicable)
+        steamInstalled: false,
+        steamPlaytimeMinutes: 0,
+        steamPlaytime2Weeks: 0,
+        steamLastPlayedAt: 0,
+        steamCloudStatus: "",
+        isPlayable: false,
+        isInstallable: true,
+        hasLua: false,
+        isLuaActive: false,
+        isLuaDisabled: false,
+        hasLuaSource: false,
+        sources: [],
+        luaScripts: [],
+        sizeOnDisk: 0,
+        // Override fields
+        coverPath: "",
+        landscapePath: "",
+        backgroundPath: "",
+        logoPath: "",
+        iconPath: "",
+        // Metadata fields
+        executablePath: "",
+        workingDirectory: "",
+        launchArguments: "",
+        installDir: "",
+        libraryPath: "",
+        repacker: "",
+        imageUrl: "",
+        // Achievement fields
+        achievementUnlocked: 0,
+        achievementTotal: 0,
+        achievementsSupported: false,
+        completionStatus: "not-played",
+        isFavorite: false,
+        isStandalone: false,
+        customTitle: "",
+        linkedSteamAppId: "",
+        linkedIgdbId: "",
+        hasUpdate: false,
+        debridStatus: "",
+      };
+
+      ownedMapped.push(game);
+    }
+
+    // Enrich installed games with playtime
+    for (const installed of _epicGames) {
+      const appName = installed.providerGameId?.split(":").pop();
+      if (appName) {
+        const playtime = _syncedPlaytime.get(appName) || 0;
+        if (playtime > 0 && (installed.localPlaytimeMinutes || 0) < Math.floor(playtime / 60)) {
+          installed.localPlaytimeMinutes = Math.floor(playtime / 60);
+        }
+      }
+    }
+
+    // Compute fingerprint
+    const newFingerprint = computeEpicFingerprint([..._epicGames, ...ownedMapped]);
+    const fingerprintChanged = newFingerprint !== _ownedFingerprint;
+
+    // Replace state
+    _ownedGames = ownedMapped;
+    _ownedFingerprint = newFingerprint;
+    _ownedScanState = "done";
+
+    if (DEBUG_EPIC_LIBRARY) {
+      console.log(
+        `[EPIC_STORE] owned sync: owned=${ownedMapped.length} installed=${_epicGames.length} fingerprintChanged=${fingerprintChanged}`,
+      );
+    }
+
+    // Notify on change
+    if (fingerprintChanged || ownedMapped.length === 0) {
+      notifyListeners();
+    }
+
+    return { count: ownedMapped.length, warning: null };
+  } catch (error) {
+    const warning = `Epic owned games sync failed: ${error instanceof Error ? error.message : String(error)}`;
+    _ownedScanWarning = warning;
+    _ownedScanState = "error";
+
+    if (DEBUG_EPIC_LIBRARY) {
+      console.warn(`[EPIC_STORE] owned sync error`, error);
+    }
+
+    notifyListeners();
+    return { count: _ownedGames.length, warning };
+  }
+}
+
+/** Return all Epic games (installed + owned). */
+export function getAllEpicGamesIncludingOwned(): LibraryGame[] {
+  return [..._epicGames, ..._ownedGames];
+}
+
+/** Return only owned (not installed) Epic games. */
+export function getOwnedEpicGames(): LibraryGame[] {
+  return _ownedGames;
+}
+
+/** Return owned games scan state. */
+export function getOwnedScanState(): "idle" | "scanning" | "done" | "error" {
+  return _ownedScanState;
+}
+
+/** Return owned games scan warning. */
+export function getOwnedScanWarning(): string | null {
+  return _ownedScanWarning;
+}
+
+/** Get playtime for a specific game (from synced data). */
+export function getEpicPlaytime(appName: string): number {
+  return _syncedPlaytime.get(appName) || 0;
 }
 
 // ── Override change handling ──

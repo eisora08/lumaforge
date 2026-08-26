@@ -57,6 +57,8 @@ librqbit = "8"
 goblin = "0.8"
 scraper = "0.22"
 chrono = "0.4"
+aes-gcm = "0.10"
+rand = "0.8"
 
 futures = "0.3"
 fs2 = "0.4"

@@ -3619,6 +3619,119 @@ export async function launchEpicGame(
 }
 
 // ---------------------------------------------------------------------------
+// Epic OAuth Auth (src-tauri/commands/epic_auth.rs)
+// ---------------------------------------------------------------------------
+
+export type EpicTokens = {
+  access_token: string;
+  refresh_token: string;
+  account_id: string;
+  token_type: string;
+  expires_in: number;
+  expires_at?: string;
+  client_id?: string;
+  display_name?: string;
+};
+
+export type EpicAccountInfo = {
+  id: string;
+  displayName?: string;
+  preferredLanguage?: string;
+  country?: string;
+};
+
+/** Get the URL to open in the browser for Epic Games login. */
+export async function epicGetAuthUrl(): Promise<string> {
+  return await invoke<string>("epic_get_auth_url");
+}
+
+/** Exchange an authorization code for access + refresh tokens. */
+export async function epicExchangeCode(code: string): Promise<EpicTokens> {
+  return await invoke<EpicTokens>("epic_exchange_code", { code });
+}
+
+/** Refresh stored tokens (called when access token expires). */
+export async function epicRefreshStoredTokens(): Promise<EpicTokens> {
+  return await invoke<EpicTokens>("epic_refresh_stored_tokens");
+}
+
+/** Check if the user is logged in (tokens exist and are valid). */
+export async function epicIsLoggedIn(): Promise<boolean> {
+  return await invoke<boolean>("epic_is_logged_in");
+}
+
+/** Get the current Epic account info (display name, etc.). */
+export async function epicGetAccountInfo(): Promise<EpicAccountInfo> {
+  return await invoke<EpicAccountInfo>("epic_get_account_info");
+}
+
+/** Log out — delete stored tokens. */
+export async function epicLogout(): Promise<void> {
+  return await invoke<void>("epic_logout");
+}
+
+/** Start the OAuth flow in a WebView window. Emits epic-auth-complete event. */
+export async function epicStartAuthFlow(): Promise<string> {
+  return await invoke<string>("epic_start_auth_flow");
+}
+
+// ---------------------------------------------------------------------------
+// Epic Library / Catalog (src-tauri/commands/epic_catalog.rs)
+// ---------------------------------------------------------------------------
+
+export type EpicOwnedGame = {
+  appName: string;
+  labelName?: string;
+  buildVersion?: string;
+  catalogItemId?: string;
+  namespace?: string;
+  assetId?: string;
+  sandboxType?: string;
+};
+
+export type EpicPlaytimeItem = {
+  accountId?: string;
+  artifactId?: string;
+  totalTime?: number;
+};
+
+export type EpicLibrarySyncResult = {
+  ownedGames: EpicOwnedGame[];
+  playtime: EpicPlaytimeItem[];
+};
+
+/** Fetch all owned games from the Epic library API (unfiltered). */
+export async function epicFetchOwnedGames(): Promise<EpicOwnedGame[]> {
+  return await invoke<EpicOwnedGame[]>("epic_fetch_owned_games");
+}
+
+/** Fetch owned games, filtered to eligible titles (no UE, no private). */
+export async function epicFetchFilteredOwnedGames(): Promise<EpicOwnedGame[]> {
+  return await invoke<EpicOwnedGame[]>("epic_fetch_filtered_owned_games");
+}
+
+/** Fetch catalog metadata for specific items. */
+export async function epicGetCatalogItems(
+  namespace: string,
+  catalogItemIds: string[],
+): Promise<Record<string, unknown>> {
+  return await invoke<Record<string, unknown>>("epic_get_catalog_items", {
+    namespace,
+    catalogItemIds,
+  });
+}
+
+/** Fetch playtime data for all games. */
+export async function epicFetchPlaytime(): Promise<EpicPlaytimeItem[]> {
+  return await invoke<EpicPlaytimeItem[]>("epic_fetch_playtime");
+}
+
+/** Fetch both owned games and playtime in one call. */
+export async function epicSyncLibrary(): Promise<EpicLibrarySyncResult> {
+  return await invoke<EpicLibrarySyncResult>("epic_sync_library");
+}
+
+// ---------------------------------------------------------------------------
 // Library game fixes (src-tauri/commands/game_fix.rs)
 // ---------------------------------------------------------------------------
 

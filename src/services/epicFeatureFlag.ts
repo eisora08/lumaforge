@@ -23,6 +23,13 @@ export const EPIC_LAUNCH_ENABLED = true;
  */
 export const EPIC_DIRECT_LAUNCH_ENABLED = false;
 
+/**
+ * Gate for Epic OAuth authentication and online library sync.
+ * When true: users can connect their Epic account and fetch owned games.
+ * When false: only local installed games are available.
+ */
+export const EPIC_AUTH_ENABLED = true;
+
 /** Diagnostics gate. Set to true for verbose console logging. */
 export const DEBUG_EPIC_LIBRARY = false;
 
