@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X, Check, RotateCcw, Pencil, ImagePlus, Trash2, Sparkles } from "lucide-react";
+import { X, Check, RotateCcw, Pencil, ImagePlus, Trash2 } from "lucide-react";
 import type { UserProfile } from "./userProfile";
 import { DEFAULT_USER_PROFILE, resolveProfileMediaUrl } from "./userProfile";
 import { getAvatarPreset, getBannerPreset } from "./profilePresets";
@@ -28,6 +28,8 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [bannerMenuOpen, setBannerMenuOpen] = useState(false);
   const [mediaPickerKind, setMediaPickerKind] = useState<ProfileMediaKind | null>(null);
+  const [avatarMenuPos, setAvatarMenuPos] = useState<{ top: number; left: number }>({ top: 80, left: 16 });
+  const [bannerMenuPos, setBannerMenuPos] = useState<{ top: number; left: number }>({ top: 80, left: 16 });
 
   // Animation state: mounted survives close until exit animation finishes
   const [mounted, setMounted] = useState(false);
@@ -69,6 +71,20 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
 
   const hasCustomAvatar = !!draft.avatarUrl;
   const hasCustomBanner = !!draft.bannerUrl;
+
+  const menuW = 224;
+  const menuH = 180;
+  const positionMenuBelow = (triggerRef: React.RefObject<HTMLButtonElement | null>, center = false) => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return { top: 80, left: 16 };
+    let top = rect.bottom + 8;
+    let left = center ? rect.left + rect.width / 2 - menuW / 2 : rect.left;
+    if (top + menuH > window.innerHeight) top = rect.top - menuH - 8;
+    if (top < 8) top = 8;
+    if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 8;
+    if (left < 8) left = 8;
+    return { top, left };
+  };
 
   // Close context menus on outside click
   useEffect(() => {
@@ -195,7 +211,11 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
             {/* Banner — clickable */}
             <button
               ref={bannerTriggerRef}
-              onClick={() => setBannerMenuOpen((p) => !p)}
+              onClick={() => {
+                const next = !bannerMenuOpen;
+                if (next) setBannerMenuPos(positionMenuBelow(bannerTriggerRef, true));
+                setBannerMenuOpen(next);
+              }}
               className="group relative block h-36 w-full rounded-t-2xl bg-cover bg-center text-left outline-none transition"
               style={{
                 background: bannerPreset?.gradient ?? "var(--color-accent)",
@@ -219,7 +239,11 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
             {/* Avatar — clickable */}
             <button
               ref={avatarTriggerRef}
-              onClick={() => setAvatarMenuOpen((p) => !p)}
+              onClick={() => {
+                const next = !avatarMenuOpen;
+                if (next) setAvatarMenuPos(positionMenuBelow(avatarTriggerRef));
+                setAvatarMenuOpen(next);
+              }}
               className="group absolute -bottom-12 left-6 outline-none"
               aria-label={t("profile.change_avatar")}
             >
@@ -363,10 +387,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
         <div
           ref={avatarMenuRef}
           className="fixed z-[70] w-56 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-2xl"
-          style={{
-            top: typeof window !== "undefined" ? `${Math.max(80, window.innerHeight / 2 - 80)}px` : "80px",
-            left: typeof window !== "undefined" ? `${Math.max(16, window.innerWidth / 2 - 232)}px` : "16px",
-          }}
+          style={{ top: `${avatarMenuPos.top}px`, left: `${avatarMenuPos.left}px` }}
         >
           <ContextMenuItem
             icon={ImagePlus}
@@ -375,12 +396,6 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               setAvatarMenuOpen(false);
               setMediaPickerKind("avatar");
             }}
-          />
-          <ContextMenuItem
-            icon={Sparkles}
-            label={t("profile.change_avatar_decoration")}
-            disabled
-            subtitle={t("profile.coming_soon")}
           />
           {hasCustomAvatar && (
             <div className="my-1 border-t border-(--color-border)" />
@@ -396,12 +411,6 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               }}
             />
           )}
-          <ContextMenuItem
-            icon={Sparkles}
-            label={t("profile.remove_avatar_decoration")}
-            disabled
-            subtitle={t("profile.coming_soon")}
-          />
         </div>
       )}
 
@@ -410,10 +419,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
         <div
           ref={bannerMenuRef}
           className="fixed z-[70] w-56 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-2xl"
-          style={{
-            top: typeof window !== "undefined" ? `${Math.max(80, window.innerHeight / 2 - 80)}px` : "80px",
-            left: typeof window !== "undefined" ? `${Math.max(16, window.innerWidth / 2 - 28)}px` : "16px",
-          }}
+          style={{ top: `${bannerMenuPos.top}px`, left: `${bannerMenuPos.left}px` }}
         >
           <ContextMenuItem
             icon={ImagePlus}
@@ -422,12 +428,6 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               setBannerMenuOpen(false);
               setMediaPickerKind("banner");
             }}
-          />
-          <ContextMenuItem
-            icon={Sparkles}
-            label={t("profile.change_profile_effect")}
-            disabled
-            subtitle={t("profile.coming_soon")}
           />
           {hasCustomBanner && (
             <div className="my-1 border-t border-(--color-border)" />
@@ -443,12 +443,6 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               }}
             />
           )}
-          <ContextMenuItem
-            icon={Sparkles}
-            label={t("profile.remove_profile_effect")}
-            disabled
-            subtitle={t("profile.coming_soon")}
-          />
         </div>
       )}
 

@@ -183,17 +183,6 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Add Manual Game — pinned below the scrollable list, never scrolls */}
-      {showLabels && mode !== "compact" && (
-        <div className="shrink-0 px-4 pt-2">
-          <SidebarLibraryList
-            onOpenGame={handleOpenGame}
-            activePage={activePage}
-            variant="add-button"
-          />
-        </div>
-      )}
-
       {/* Bottom block — shrink-0, pinned at bottom */}
       <div className={`shrink-0 ${
         showLabels ? "px-4 pt-1 pb-2" : "px-3 pt-1 pb-2"
@@ -238,18 +227,6 @@ export default function Sidebar({
                     </span>
                   )}
                 </div>
-
-                {/* Settings icon — visible on hover */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNavigate("settings");
-                  }}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted)/50 transition-all duration-200 hover:bg-white/10 hover:text-(--color-muted) hover:rotate-90"
-                  aria-label="Settings"
-                >
-                  <Settings className="h-4 w-4" />
-                </button>
               </>
             )}
           </div>
