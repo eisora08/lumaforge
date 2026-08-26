@@ -2260,3 +2260,74 @@ html[data-compact="true"] .lf-launch-bar {
     animation: none;
   }
 }
+
+/* =========================
+   MODE SWITCH SPLASH: ULTRA PREMIUM
+========================= */
+
+/* Wolf draw-on: stroke appears via dashoffset */
+@keyframes wolf-draw-on {
+  from { stroke-dashoffset: 3200; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* Wolf fill fades in after draw completes */
+@keyframes wolf-fill-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Wolf eye glow pulse */
+@keyframes wolf-eye-glow {
+  0%, 100% { filter: drop-shadow(0 0 6px #00b7ff); }
+  50%      { filter: drop-shadow(0 0 18px #00b7ff) drop-shadow(0 0 32px rgba(0,183,255,0.4)); }
+}
+
+/* Text stagger reveal: fade up */
+@keyframes mode-text-reveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Glow bar flash — removed (thunder clipPath replaces progress bar) */
+
+/* Scanline scroll downward */
+@keyframes mode-scanline-scroll {
+  from { background-position-y: 0; }
+  to   { background-position-y: 48px; }
+}
+
+/* Floating particle */
+@keyframes mode-particle-float {
+  0%   { opacity: 0; transform: translateY(0) scale(0.5); }
+  15%  { opacity: var(--p-opacity, 0.5); transform: translateY(-10px) scale(1); }
+  85%  { opacity: var(--p-opacity, 0.5); transform: translateY(-60px) scale(1); }
+  100% { opacity: 0; transform: translateY(-80px) scale(0.5); }
+}
+
+/* Backdrop blur ramp */
+@keyframes mode-blur-in {
+  from { backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+  to   { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+}
+
+@keyframes mode-blur-out {
+  from { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  to   { backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+}
+
+/* Reduced motion: kill mode switch animations */
+@media (prefers-reduced-motion: reduce) {
+  .wolf-draw-path,
+  .wolf-fill-layer,
+  .wolf-eyes-group,
+  .mode-text-reveal,
+  .mode-scanlines,
+  .mode-particle {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}
