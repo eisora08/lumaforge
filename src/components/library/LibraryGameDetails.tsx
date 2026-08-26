@@ -30,7 +30,6 @@ import {
   BookMarked,
   BookOpen,
   Calendar,
-  Cloud,
   CalendarClock,
   ClockFading,
   Database,
@@ -213,15 +212,6 @@ function formatPlaytime(minutes: number, t?: (key: string) => string): string {
   if (m === 0) return `${h}h`;
   if (h >= 10) return `${h}.${Math.round(m / 6)}h`;
   return `${h}h ${m}m`;
-}
-
-function formatCloudStatus(status: string, t?: (key: string) => string): string {
-  switch (status) {
-    case "synchronized": return t ? t("library_details.cloudStatus.upToDate") : "Up to date";
-    case "pending": return t ? t("library_details.cloudStatus.pending") : "Pending";
-    case "conflict": return t ? t("library_details.cloudStatus.conflict") : "Conflict";
-    default: return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
-  }
 }
 
 function stripHtml(html?: string | null): string {
@@ -744,12 +734,6 @@ export default function LibraryGameDetails({
   const appIdNum = game.appId ? Number(game.appId) : null;
   const { addActivity } = useGameActivity();
   const { recordLaunch: recordGameLaunch } = useGamePlayStats(game.id);
-
-  const cloudStatus = game.steamCloudStatus
-    ? formatCloudStatus(game.steamCloudStatus, t)
-    : categories.includes("Steam Cloud")
-      ? t("library_details.cloudStatus.supported")
-      : t("library_details.notTracked");
 
   // Subscribe to playtime store changes for re-render
   const [, setPlaytimeVersion] = useState(0);

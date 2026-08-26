@@ -996,7 +996,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       const entry = getManualGame(game.providerGameId);
 
       // Resolve all paths in parallel (4 roles, non-critical on failure)
-      const [resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
+      const [_resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
         resolveUrl(entry?.coverPath, "steam"),
         resolveUrl(entry?.landscapePath, "steam"),
         resolveUrl(entry?.backgroundPath, "steam"),
@@ -1031,7 +1031,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       const { readEpicOverrides } = await import("../services/epicOverrideStore");
       const overrides = readEpicOverrides(game.providerGameId);
 
-      const [resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
+      const [_resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
         resolveUrl(overrides?.coverPath, "epic"),
         resolveUrl(overrides?.landscapePath, "epic"),
         resolveUrl(overrides?.backgroundPath, "epic"),
