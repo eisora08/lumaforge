@@ -1887,7 +1887,7 @@ export default function GameEditDialog({
 
   async function loadRolePreviews() {
     setRolePreviews({});
-    // Manual WITHOUT appId → read from manual store (Manual+appId uses mediaAdapter below)
+    // Manual game WITHOUT appId → read from manual store
     if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
@@ -1941,6 +1941,7 @@ export default function GameEditDialog({
   }
 
   async function refreshRolePreview(role: MediaRole, overrideRelPath?: string | null) {
+    // Manual WITHOUT appId → read from manual store; Manual WITH appId → falls through to mediaAdapter
     if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
