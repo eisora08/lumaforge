@@ -5,7 +5,7 @@ import type { StartupSnapshot } from "../../services/startupSnapshotService";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
-import { resolveProviderMediaPreviewUrl, getCachedGameAppInfo } from "../../services/gameCacheService";
+import { resolveProviderMediaPreviewUrl, getCachedGameAppInfo, resolveRelativeMediaPath, localPathToUrl } from "../../services/gameCacheService";
 import {
   type DashboardDisplayGame,
   snapshotToDisplayGame,
@@ -83,10 +83,6 @@ function getContinueDisplayGames(
   for (const mg of nonSnapshotGames) {
     const sid = mg.libraryId || mg.id;
     if (seen.has(sid)) continue;
-    // Skip Debrid games whose appId was already processed by the snapshot loop
-    // (avoids duplicate cards: snapshot uses appId as key, non-snapshot uses libraryId)
-    const mgAppId = (mg as any).appId as string | undefined;
-    if (mgAppId && seen.has(mgAppId)) continue;
     seen.add(sid);
     const dg = manualToDisplayGame(mg as any, runningGameIds, mg.source ?? undefined);
     if (DEBUG_CONTINUE_PLAY) {
@@ -212,6 +208,14 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
               urls[game.stableId] = isNonSteam
                 ? await resolveProviderMediaPreviewUrl(mediaPath)
                 : await resolveGameMediaUrl(game.appId, mediaPath);
+            }
+          }
+          // Disk fallback: manual games with linkedSteamAppId may have media in
+          // games/steam/<appId>/media/ even though the LibraryGame has no role paths.
+          if (!urls[game.stableId] && game.appId) {
+            const diskPath = await resolveRelativeMediaPath(game.appId, "media/landscape.jpg", "steam");
+            if (diskPath) {
+              urls[game.stableId] = localPathToUrl(diskPath);
             }
           }
         } else {

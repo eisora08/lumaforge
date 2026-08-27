@@ -132,6 +132,10 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
     installDir: entry.installDir,
     libraryPath: entry.libraryPath,
 
+    coverPath: entry.coverPath,
+    landscapePath: entry.landscapePath,
+    backgroundPath: entry.backgroundPath,
+    logoPath: entry.logoPath,
     imageUrl,
     iconPath,
 

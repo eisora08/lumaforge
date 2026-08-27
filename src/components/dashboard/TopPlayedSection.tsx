@@ -36,7 +36,8 @@ function getTopPlayedGames(
 ): DashboardDisplayGame[] {
   const exclude = new Set(excludeAppIds ?? []);
   const result: DashboardDisplayGame[] = [];
-  const seen = new Set<string>();
+  const seenSnapshot = new Set<string>();
+  const seenNonSnap = new Set<string>();
 
   const libGameByAppId = new Map<string, LibraryGame>();
   for (const lg of libraryGames) {
@@ -45,8 +46,8 @@ function getTopPlayedGames(
 
   // Snapshot games
   for (const sg of snapshotGames) {
-    if (!sg.appId || exclude.has(sg.appId) || seen.has(sg.appId)) continue;
-    seen.add(sg.appId);
+    if (!sg.appId || exclude.has(sg.appId) || seenSnapshot.has(sg.appId)) continue;
+    seenSnapshot.add(sg.appId);
     const libGame = libGameByAppId.get(sg.appId);
     result.push(snapshotToDisplayGame(sg as any, new Set(), libGame));
   }
@@ -54,8 +55,8 @@ function getTopPlayedGames(
   // Non-snapshot games (manual + Epic + future)
   for (const mg of nonSnapshotGames) {
     const sid = mg.libraryId || mg.id;
-    if (seen.has(sid)) continue;
-    seen.add(sid);
+    if (seenNonSnap.has(sid)) continue;
+    seenNonSnap.add(sid);
     result.push(manualToDisplayGame(mg as any, new Set(), mg.source ?? undefined));
   }
 
