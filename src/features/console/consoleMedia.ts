@@ -35,11 +35,23 @@ export function getConsoleHeroBackground(game: LibraryGame | null): string | nul
 
 export function getConsoleCardSrc(
   game: LibraryGame | null,
-  variant: "landscape" | "poster" = "landscape",
+  variant: "landscape" | "poster" | "hero" = "landscape",
 ): string | null {
   if (!game) return null;
 
   const cm = (game as { _consoleMedia?: ConsoleMediaShape })._consoleMedia;
+
+  if (variant === "hero") {
+    if (cm?.backgroundSrc) return cm.backgroundSrc;
+    if (cm?.landscapeSrc) return cm.landscapeSrc;
+    const candidates = [
+      game.backgroundPath,
+      game.metadata?.library_hero_image,
+      game.metadata?.header_image,
+      game.imageUrl,
+    ];
+    return candidates.find(Boolean) ?? null;
+  }
 
   if (variant === "poster") {
     if (cm?.coverSrc) return cm.coverSrc;

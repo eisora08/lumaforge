@@ -2668,5 +2668,20 @@
     "entry_count": "{{count}} entrada(s)",
     "entry_count_one": "{{count}} entrada",
     "clear_history": "Limpiar historial"
+  },
+  "web_image_search": {
+    "placeholder": "Buscar imágenes...",
+    "search": "Buscar",
+    "no_results": "No se encontraron resultados",
+    "load_more": "Cargar más",
+    "hint": "Busca imágenes de juegos usando Google o DuckDuckGo"
+  },
+  "image_search": {
+    "inline_tab": "Buscar",
+    "api_tab": "API",
+    "browser_tab": "Navegador",
+    "downloading": "Descargando...",
+    "select_download": "Seleccionar y descargar",
+    "apply_url": "Aplicar URL"
   }
 }

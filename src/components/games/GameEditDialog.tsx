@@ -1305,6 +1305,17 @@ export default function GameEditDialog({
           [key]: newPath,
         };
       }
+      if (isEpicMode && epicOverrides) {
+        const eo = epicOverrides as Record<string, unknown>;
+        return {
+          coverPath: (eo.coverPath as string) ?? null,
+          landscapePath: (eo.landscapePath as string) ?? null,
+          backgroundPath: (eo.backgroundPath as string) ?? null,
+          logoPath: (eo.logoPath as string) ?? null,
+          iconPath: (eo.iconPath as string) ?? null,
+          [key]: newPath,
+        };
+      }
       const current = appInfo?.media ?? ({} as GameMediaPaths);
       return {
         coverPath: current.coverPath ?? null,
@@ -1315,7 +1326,7 @@ export default function GameEditDialog({
         [key]: newPath,
       };
     },
-    [appInfo, manualEntry, isManualMode, isCreateMode, manualGameId, createdManualId],
+    [appInfo, manualEntry, epicOverrides, isManualMode, isCreateMode, isEpicMode, manualGameId, createdManualId],
   );
 
   const commitMediaUpdate = useCallback(
@@ -1379,6 +1390,30 @@ export default function GameEditDialog({
     },
     [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId],
   );
+
+  // ── Re-read media after web image search download ──
+  const handleMediaUpdated = useCallback(async () => {
+    if (isEpicMode && epicProviderGameId) {
+      const overrides = readEpicOverrides(epicProviderGameId);
+      if (overrides) {
+        setEpicOverrides(overrides as unknown as Record<string, unknown>);
+      }
+    } else if (isManualMode && (manualGameId || createdManualId)) {
+      const targetId = manualGameId ?? createdManualId;
+      if (targetId) {
+        const fresh = getManualGame(targetId);
+        if (fresh) setManualEntry(fresh);
+      }
+    } else {
+      const effectiveAppId = appId || appIdDraft;
+      if (effectiveAppId) {
+        const info = await getGameAppInfo(effectiveAppId);
+        if (info) setAppInfo(info);
+      }
+    }
+    // Re-resolve all previews from fresh data
+    loadRolePreviews();
+  }, [appId, appIdDraft, isEpicMode, epicProviderGameId, isManualMode, manualGameId, createdManualId]);
 
   // ── File pick handler ──
 
@@ -1818,8 +1853,8 @@ export default function GameEditDialog({
 
   async function loadRolePreviews() {
     setRolePreviews({});
-    // Manual WITHOUT appId → read from manual store
-    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
+    // Manual game (with or without appId) → read from manual store
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
       if (!freshEntry) return;
@@ -1837,7 +1872,24 @@ export default function GameEditDialog({
       setRolePreviews(previews);
       return;
     }
-    // All games with appId (Steam, Manual+appId, Debrid+appId, Epic) → use mediaAdapter
+    // Epic game → read from epicOverrides
+    if (isEpicMode && epicOverrides) {
+      const eo = epicOverrides as Record<string, unknown>;
+      const previews: Record<string, RolePreviewEntry> = {};
+      for (const { role } of MEDIA_ROLES) {
+        const key = ROLE_TO_PATH_KEY[role];
+        const relPath = eo[key] as string | undefined;
+        if (relPath) {
+          const url = await resolveProviderMediaPreviewUrl(relPath);
+          previews[role] = { url, status: url ? "set" : "missing" };
+        } else {
+          previews[role] = { url: null, status: "unset" };
+        }
+      }
+      setRolePreviews(previews);
+      return;
+    }
+    // Steam, Debrid+appId → use mediaAdapter
     if (!mediaAdapter) return;
     const states = await mediaAdapter.getAllRoleStates();
     const previews: Record<string, RolePreviewEntry> = {};
@@ -1855,7 +1907,7 @@ export default function GameEditDialog({
   }
 
   async function refreshRolePreview(role: MediaRole, overrideRelPath?: string | null) {
-    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
       const key = ROLE_TO_PATH_KEY[role] as keyof ManualGameEntry;
@@ -1867,6 +1919,32 @@ export default function GameEditDialog({
         relPath = overrideRelPath;
       } else {
         relPath = freshEntry?.[key] as string | undefined;
+      }
+      if (relPath) {
+        const url = await resolveProviderMediaPreviewUrl(relPath);
+        setRolePreviews((prev) => ({
+          ...prev,
+          [role]: { url, status: url ? "set" : "missing" },
+        }));
+      } else {
+        setRolePreviews((prev) => ({
+          ...prev,
+          [role]: { url: null, status: "unset" },
+        }));
+      }
+      return;
+    }
+    // Epic game → read from epicOverrides
+    if (isEpicMode && epicOverrides) {
+      const eo = epicOverrides as Record<string, unknown>;
+      const key = ROLE_TO_PATH_KEY[role];
+      let relPath: string | undefined;
+      if (overrideRelPath === null) {
+        relPath = undefined;
+      } else if (overrideRelPath !== undefined) {
+        relPath = overrideRelPath;
+      } else {
+        relPath = eo[key] as string | undefined;
       }
       if (relPath) {
         const url = await resolveProviderMediaPreviewUrl(relPath);
@@ -1949,11 +2027,16 @@ export default function GameEditDialog({
 
   const currentPath = (role: MediaRole): string | null => {
     const key = ROLE_TO_PATH_KEY[role];
-    // Manual WITHOUT appId → read from manual store
-    if ((isManualMode || isCreateMode) && manualEntry && !appIdDraft) {
+    // Manual game (with or without appId) → read from manual store
+    if ((isManualMode || isCreateMode) && manualEntry) {
       return (manualEntry[key as keyof ManualGameEntry] as string) ?? null;
     }
-    // Steam, Manual+appId, Debrid+appId → read from appInfo (Steam appinfo)
+    // Epic game → read from epicOverrides
+    if (isEpicMode && epicOverrides) {
+      const eo = epicOverrides as Record<string, unknown>;
+      return (eo[key] as string) ?? null;
+    }
+    // Steam, Debrid+appId → read from appInfo (Steam appinfo)
     return appInfo?.media?.[key] ?? null;
   };
 
@@ -2069,6 +2152,7 @@ export default function GameEditDialog({
         icon: FolderOpen,
         onClick: () => {
           if (isManualMode && manualGameId) { openProviderMediaFolder("manual", manualGameId); }
+          else if (isEpicMode && epicProviderGameId) { openProviderMediaFolder("epic", epicProviderGameId); }
           else if (effectiveId) { openGameMediaFolder(effectiveId); }
           onClose();
         },
@@ -2770,7 +2854,7 @@ export default function GameEditDialog({
         <button
           type="button"
           onClick={handleOpenMediaFolder}
-          disabled={!appId && !manualGameId && !appIdDraft && !debridProviderGameId}
+          disabled={!appId && !manualGameId && !appIdDraft && !debridProviderGameId && !epicProviderGameId}
           className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-40"
         >
           <FolderOpen className="h-4 w-4" />
@@ -2924,6 +3008,7 @@ export default function GameEditDialog({
           libraryId={(!appId && !appIdDraft) ? (manualGameId ?? (isEpicMode ? `epic:${epicProviderGameId}` : undefined)) : undefined}
           gameTitle={appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
           role={imageSearchRole}
+          onMediaUpdated={handleMediaUpdated}
           settings={{
             googleSearchApiKey: settings?.googleSearchApiKey,
             googleSearchCx: settings?.googleSearchCx,

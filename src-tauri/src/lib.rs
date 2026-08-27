@@ -346,6 +346,7 @@ pub fn run() {
             commands::steam_grid_db::resolve_steamgriddb_artwork,
             commands::steam_grid_db::search_steamgriddb_games,
             commands::steam_grid_db::resolve_steamgriddb_artwork_by_game_id,
+            commands::web_image_search::search_web_images,
 
             commands::sync::compute_file_hash,
             commands::sync::read_sync_index,

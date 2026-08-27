@@ -1045,9 +1045,14 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         )}
         {editDialogOpen && (
           <GameEditDialog
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
+            manualGameId={editDialogGame?.source === "manual" ? editDialogGame?.providerGameId : undefined}
+            epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame?.providerGameId : undefined}
+            debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame?.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editDialogInitialTab}
+            game={editDialogGame ?? undefined}
             settings={{
               rawgApiKey: appSettings?.rawgApiKey ?? "",
               igdbClientId: appSettings?.igdbClientId ?? "",

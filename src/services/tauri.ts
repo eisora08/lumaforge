@@ -981,6 +981,28 @@ export async function resolveSteamGridDbArtworkByGameId(
   );
 }
 
+// --- Web Image Search ---
+
+export type WebImageResult = {
+  url: string;
+  thumb: string;
+  width: number;
+  height: number;
+};
+
+/** Search for images on Google or DuckDuckGo (no API key needed). */
+export async function searchWebImages(
+  query: string,
+  source: "google" | "duckduckgo" = "google",
+  page: number = 0
+): Promise<WebImageResult[]> {
+  return await invoke<WebImageResult[]>("search_web_images", {
+    query,
+    source,
+    page,
+  });
+}
+
 // --- Process management ---
 
 export type SpawnResult = {

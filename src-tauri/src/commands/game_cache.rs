@@ -971,11 +971,18 @@ async fn safe_single_download(
     dest_path: &Path,
     skip_classification: bool,
 ) -> Result<Option<String>, String> {
+    // Derive Referer from URL origin to avoid 403 from image CDNs
+    let referer = extract_url_origin(url);
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    if let Ok(val) = reqwest::header::HeaderValue::from_str(&referer) {
+        default_headers.insert(reqwest::header::REFERER, val);
+    }
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .connect_timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
         .user_agent("LumaForge/0.2.0")
+        .default_headers(default_headers)
         .build()
     {
         Ok(c) => c,
@@ -2005,4 +2012,19 @@ pub fn delete_game_media_file(
         println!("[MEDIA][FILE_DELETE_SKIP] appid={} role={} reason=not-found", app_id, role);
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: extract origin (scheme + host) from a URL for Referer header
+// ---------------------------------------------------------------------------
+
+fn extract_url_origin(url: &str) -> String {
+    if let Some(scheme_end) = url.find("://") {
+        let after_scheme = &url[scheme_end + 3..];
+        if let Some(host_end) = after_scheme.find('/') {
+            return format!("{}://{}", &url[..scheme_end], &after_scheme[..host_end]);
+        }
+        return format!("{}://{}", &url[..scheme_end], after_scheme);
+    }
+    String::new()
 }

@@ -11,8 +11,10 @@ import {
   ChevronDown,
   ExternalLink,
   Globe,
+  Download,
 } from "lucide-react";
 import { searchImages, ImageSearchProvider, ImageSearchResult } from "../../services/imageSearchService";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { showError, showSuccess } from "../toast/GameToast";
 import { notifyMediaUpdated } from "../../services/startupSnapshotService";
@@ -22,6 +24,7 @@ import type { GameMediaPaths } from "../../services/tauri";
 import { openExternalUrl } from "../../services/externalLinks";
 import { downloadProviderMediaFromUrl } from "../../services/tauri";
 import { updateManualGame } from "../../services/manualGameStore";
+import WebImageGrid from "./WebImageGrid";
 
 type MediaRole = "cover" | "landscape" | "background" | "logo" | "icon";
 
@@ -39,9 +42,10 @@ type Props = {
     googleSearchCx?: string;
     bingSearchApiKey?: string;
   };
+  onMediaUpdated?: () => void;
 };
 
-type SearchMode = "browser" | "api";
+type SearchMode = "browser" | "api" | "inline";
 
 const ROLE_SEARCH_QUERIES: Record<MediaRole, string> = {
   cover: "cover art",
@@ -71,7 +75,9 @@ export default function GameImageSearchDialog({
   gameTitle,
   role,
   settings,
+  onMediaUpdated,
 }: Props) {
+  const { t } = useTranslation();
   const hasGoogleApi = !!(settings?.googleSearchApiKey && settings?.googleSearchCx);
   const hasBingApi = !!settings?.bingSearchApiKey;
   const hasAnyApi = hasGoogleApi || hasBingApi;
@@ -119,7 +125,7 @@ export default function GameImageSearchDialog({
       setMode("api");
       setApiProvider(hasGoogleApi ? "google" : "bing");
     } else {
-      setMode("browser");
+      setMode("inline");
     }
   }, [open, gameTitle, appId, role, hasAnyApi, hasGoogleApi]);
 
@@ -205,6 +211,7 @@ export default function GameImageSearchDialog({
           const mediaKey = `${role}Path` as keyof import("../../services/tauri").GameMediaPaths;
           writeEpicOverrides(providerGameId, { [mediaKey]: relativePath });
           showSuccess(`${role} downloaded`);
+          onMediaUpdated?.();
           onClose();
         } else {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result epic=${providerGameId}`);
@@ -219,6 +226,7 @@ export default function GameImageSearchDialog({
           const patch = { [mediaKey]: relativePath };
           updateManualGame(libraryId, patch);
           showSuccess(`${role} downloaded`);
+          onMediaUpdated?.();
           onClose();
         } else {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result manual=${libraryId}`);
@@ -228,8 +236,10 @@ export default function GameImageSearchDialog({
         // ── Steam game — existing flow ──
         const result = await invoke<string | null>("safe_download_image", {
           url,
-          appId: Number(appId),
+          appId: appId,
           mediaType: role,
+          target: "",
+          forceRefresh: true,
         });
         if (result) {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${result}`);
@@ -251,6 +261,7 @@ export default function GameImageSearchDialog({
           }
           notifyMediaUpdated(appId, { source: `image-search-${source}` });
           showSuccess(`${role} downloaded`);
+          onMediaUpdated?.();
           onClose();
         } else {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result`);
@@ -275,6 +286,12 @@ export default function GameImageSearchDialog({
   const handlePasteApply = useCallback(() => {
     applyUrl(pasteUrl.trim(), "paste");
   }, [pasteUrl, applyUrl]);
+
+  // ── Inline search select ──
+
+  const handleInlineSelect = useCallback((url: string) => {
+    setSelectedUrl(url);
+  }, []);
 
   // ── Browser open ──
 
@@ -334,9 +351,21 @@ export default function GameImageSearchDialog({
           </button>
         </div>
 
-        {/* ── Mode toggle (only when API keys available) ── */}
-        {hasAnyApi && (
-          <div className="flex shrink-0 border-b border-(--color-border)">
+        {/* ── Mode toggle ── */}
+        <div className="flex shrink-0 border-b border-(--color-border)">
+          <button
+            type="button"
+            onClick={() => setMode("inline")}
+            className={`flex-1 cursor-pointer py-2.5 text-xs font-medium transition ${
+              mode === "inline"
+                ? "border-b-2 border-(--color-accent) text-(--color-text)"
+                : "text-(--color-muted) hover:text-(--color-text)"
+            }`}
+          >
+            <Download className="mr-1.5 inline h-3.5 w-3.5" />
+            {t("image_search.inline_tab", "Search")}
+          </button>
+          {hasAnyApi && (
             <button
               type="button"
               onClick={() => setMode("api")}
@@ -347,22 +376,22 @@ export default function GameImageSearchDialog({
               }`}
             >
               <SearchIcon className="mr-1.5 inline h-3.5 w-3.5" />
-              Search Results
+              {t("image_search.api_tab", "API")}
             </button>
-            <button
-              type="button"
-              onClick={() => setMode("browser")}
-              className={`flex-1 cursor-pointer py-2.5 text-xs font-medium transition ${
-                mode === "browser"
-                  ? "border-b-2 border-(--color-accent) text-(--color-text)"
-                  : "text-(--color-muted) hover:text-(--color-text)"
-              }`}
-            >
-              <Globe className="mr-1.5 inline h-3.5 w-3.5" />
-              Open in Browser
-            </button>
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={() => setMode("browser")}
+            className={`flex-1 cursor-pointer py-2.5 text-xs font-medium transition ${
+              mode === "browser"
+                ? "border-b-2 border-(--color-accent) text-(--color-text)"
+                : "text-(--color-muted) hover:text-(--color-text)"
+            }`}
+          >
+            <Globe className="mr-1.5 inline h-3.5 w-3.5" />
+            {t("image_search.browser_tab", "Browser")}
+          </button>
+        </div>
 
         {/* ── Query row (always visible) ── */}
         <div className="shrink-0 space-y-3 px-5 pt-4 pb-2">
@@ -529,6 +558,14 @@ export default function GameImageSearchDialog({
                 </>
               )}
             </div>
+          ) : mode === "inline" ? (
+            /* ══════ INLINE MODE: Google/DDG scraping (no API key needed) ══════ */
+            <div className="space-y-3">
+              <WebImageGrid
+                query={query}
+                onSelect={handleInlineSelect}
+              />
+            </div>
           ) : (
             /* ══════ BROWSER MODE: open in browser + paste URL ══════ */
             <div className="space-y-4">
@@ -611,7 +648,7 @@ export default function GameImageSearchDialog({
             Cancel
           </button>
 
-          {mode === "api" ? (
+          {mode === "inline" || mode === "api" ? (
             <button
               type="button"
               onClick={handleSelect}
@@ -619,7 +656,7 @@ export default function GameImageSearchDialog({
               className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {applying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {applying ? "Downloading..." : "Select & Download"}
+              {applying ? t("image_search.downloading", "Downloading...") : t("image_search.select_download", "Select & Download")}
             </button>
           ) : (
             <button
@@ -629,7 +666,7 @@ export default function GameImageSearchDialog({
               className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {applying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {applying ? "Downloading..." : "Apply URL"}
+              {applying ? t("image_search.downloading", "Downloading...") : t("image_search.apply_url", "Apply URL")}
             </button>
           )}
         </div>

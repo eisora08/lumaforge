@@ -162,7 +162,7 @@ export default function ConsoleSwitchSpotlightLayout({
     return focusedGame?.metadata?.developer ?? null;
   }, [focusedGame]);
 
-  const spotlightVariant = scs.cardStyle === "poster" ? "poster" : ("landscape" as const);
+  const spotlightVariant = scs.cardStyle === "poster" ? "poster" : scs.cardStyle === "hero" ? "hero" : ("landscape" as const);
 
   /* Carousel stage bottom edge = dock bottom + dock height + card-dock gap
    * This ensures the dock stays close to but never overlaps the cards. */
@@ -463,7 +463,7 @@ export default function ConsoleSwitchSpotlightLayout({
                     
                     <div
                       className={`relative overflow-hidden ${
-                        spotlightVariant === "poster" ? "aspect-[2/3]" : "aspect-[16/10]"
+                        spotlightVariant === "poster" ? "aspect-[2/3]" : spotlightVariant === "hero" ? "aspect-[16/9]" : "aspect-[16/10]"
                       }`}
                       style={{ borderRadius: scs.cornerRadius }}
                     >

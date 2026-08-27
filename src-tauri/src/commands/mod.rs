@@ -58,3 +58,4 @@ pub mod file_utils;
 pub mod installed_programs;
 pub mod crack_achievements;
 pub mod launcher_achievements;
+pub mod web_image_search;

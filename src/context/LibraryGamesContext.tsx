@@ -469,7 +469,25 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         ) {
           stable.push(existing);
         } else {
-          stable.push(game);
+          // Preserve media fields from existing object when replacing.
+          // Mappers (debridGameLibraryMapper, epicGameLibraryMapper) may not set
+          // media fields, but the previous object had them from snapshot bridge,
+          // auto-discovery, or user overrides. Carrying them forward prevents
+          // images from flickering/disappearing on re-render.
+          const hasMedia = existing.coverPath || existing.landscapePath || existing.backgroundPath || existing.logoPath || existing.iconPath || existing.imageUrl;
+          if (hasMedia && !game.coverPath && !game.landscapePath && !game.backgroundPath && !game.logoPath && !game.iconPath && !game.imageUrl) {
+            stable.push({
+              ...game,
+              coverPath: existing.coverPath,
+              landscapePath: existing.landscapePath,
+              backgroundPath: existing.backgroundPath,
+              logoPath: existing.logoPath,
+              iconPath: existing.iconPath,
+              imageUrl: existing.imageUrl,
+            });
+          } else {
+            stable.push(game);
+          }
           changedCount++;
         }
       } else {

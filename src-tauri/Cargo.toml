@@ -63,6 +63,7 @@ rand = "0.8"
 futures = "0.3"
 fs2 = "0.4"
 anyhow = "1"
+regex = "1"
 
 windows = { version = "0.57", features = [
     "Win32_System_Com",

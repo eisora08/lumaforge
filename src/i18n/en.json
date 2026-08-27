@@ -2668,5 +2668,20 @@
     "entry_count": "{{count}} entry(ies)",
     "entry_count_one": "{{count}} entry",
     "clear_history": "Clear history"
+  },
+  "web_image_search": {
+    "placeholder": "Search images...",
+    "search": "Search",
+    "no_results": "No results found",
+    "load_more": "Load more",
+    "hint": "Search for game images using Google or DuckDuckGo"
+  },
+  "image_search": {
+    "inline_tab": "Search",
+    "api_tab": "API",
+    "browser_tab": "Browser",
+    "downloading": "Downloading...",
+    "select_download": "Select & Download",
+    "apply_url": "Apply URL"
   }
 }
