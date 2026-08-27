@@ -1887,8 +1887,8 @@ export default function GameEditDialog({
 
   async function loadRolePreviews() {
     setRolePreviews({});
-    // Manual game (with or without appId) → read from manual store
-    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
+    // Manual WITHOUT appId → read from manual store (Manual+appId uses mediaAdapter below)
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
       if (!freshEntry) return;
@@ -1941,7 +1941,7 @@ export default function GameEditDialog({
   }
 
   async function refreshRolePreview(role: MediaRole, overrideRelPath?: string | null) {
-    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
       const key = ROLE_TO_PATH_KEY[role] as keyof ManualGameEntry;
