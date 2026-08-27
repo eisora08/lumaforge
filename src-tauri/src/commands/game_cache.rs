@@ -564,6 +564,22 @@ pub fn update_game_appinfo_media(
     let resolve_media_path = |path: &str| -> String {
         let p = std::path::Path::new(path);
         if p.is_relative() {
+            // Try game dir first (handles "media/role.ext" paths)
+            if let Ok(dir) = get_game_dir(&app_handle, &app_id) {
+                let candidate = dir.join(path);
+                if candidate.exists() {
+                    return candidate.to_string_lossy().to_string();
+                }
+            }
+            // Fallback: try app_data_dir (handles "games/{provider}/{id}/media/role.ext" paths
+            // returned by provider_media.rs relative_media_path)
+            if let Ok(app_dir) = app_handle.path().app_data_dir() {
+                let candidate = app_dir.join(path);
+                if candidate.exists() {
+                    return candidate.to_string_lossy().to_string();
+                }
+            }
+            // Return best-effort for error messages
             if let Ok(dir) = get_game_dir(&app_handle, &app_id) {
                 dir.join(path).to_string_lossy().to_string()
             } else {

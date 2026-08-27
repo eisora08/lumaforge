@@ -1170,9 +1170,24 @@ export default function GameEditDialog({
       };
       await persistGameAppInfo(appId!, updatedEntry);
       clearSessionAppInfoCache(appId!);
+      // Merge custom metadata edits into game.metadata so the detail page shows them instantly
+      const metaPatch: Record<string, unknown> = {};
+      if (nameDraft) metaPatch.name = nameDraft;
+      if (descriptionDraft) { metaPatch.short_description = descriptionDraft; metaPatch.about_the_game = descriptionDraft; }
+      if (genresDraft) metaPatch.genres = genresDraft.split(",").map((s) => s.trim()).filter(Boolean);
+      if (releaseDateDraft) metaPatch.release_date = releaseDateDraft;
+      if (developersDraft) metaPatch.developer = developersDraft;
+      if (publishersDraft) metaPatch.publishers = publishersDraft.split(",").map((s) => s.trim()).filter(Boolean);
+      if (categoriesDraft) metaPatch.categories = categoriesDraft.split(",").map((s) => s.trim()).filter(Boolean);
+      if (featuresDraft) metaPatch.categories = featuresDraft.split(",").map((s) => s.trim()).filter(Boolean);
+      if (seriesDraft) metaPatch.series = seriesDraft;
+      if (ageRatingDraft) metaPatch.age_rating = ageRatingDraft;
+      if (regionDraft) metaPatch.region = regionDraft;
+      if (sortingNameDraft) metaPatch.sort_name = sortingNameDraft;
       updateGame(appId!, {
         title: nameDraft || undefined,
         completionStatus: completionStatusDraft || undefined,
+        ...(Object.keys(metaPatch).length > 0 ? { metadata: { ...(game?.metadata ?? {}), ...metaPatch, resolved: true } } : {}),
       } as Partial<LibraryGame>);
       notifyMediaUpdated(appId!);
       onMediaChanged?.();
@@ -1183,7 +1198,7 @@ export default function GameEditDialog({
       showError(t("game_edit.save_failed", "Failed to save game details"));
     }
     setSaving(false);
-  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged]);
+  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, game, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged]);
 
   // ── Track edits ──
   useEffect(() => {

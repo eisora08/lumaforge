@@ -628,13 +628,15 @@ export default function LibraryGameDetails({
   // Resolve the logo URL synchronously during render when possible (absolute/local/http
   // paths) so the first render after canonicalLoaded already shows the logo — no title flash.
   // Only relative paths (games/, media/, img/) need the async resolution below.
-  const resolvedLogoSync = useMemo(() => {
+  // NOT memoized: must re-run on every render so localPathToUrl picks up the latest ?v=N
+  // cache-busting suffix after media invalidation.
+  const resolvedLogoSync = (() => {
     if (!_validatedLogoSrc) return undefined;
     if (_validatedLogoSrc.startsWith("games/") || _validatedLogoSrc.startsWith("media/") || _validatedLogoSrc.startsWith("img/")) {
       return undefined;
     }
     return isLocalPath(_validatedLogoSrc) ? (localPathToUrl(_validatedLogoSrc) ?? undefined) : _validatedLogoSrc;
-  }, [_validatedLogoSrc]);
+  })();
   useEffect(() => {
     if (!_validatedLogoSrc || resolvedLogoSync) { setResolvedRelativeLogoUrl(undefined); return; }
     const resolveLogo = async () => {
@@ -713,9 +715,9 @@ export default function LibraryGameDetails({
     console.log(`[GAME_ACTION_RENDER] appid=${game.appId} location=gamedetails uninstallPending=${hasPendingUninstall} baseAction=${action} effectiveAction=${effectiveAction} renderedPrimary=${hasPendingUninstall ? "Uninstalling" : effectiveAction === "play" ? "Play" : effectiveAction === "install" ? "Install" : effectiveAction}`);
   }
 
-  const rawShort = game.metadata?.short_description || (localDetailsData as any)?.shortDescription;
-  const rawAbout = game.metadata?.about_the_game || (localDetailsData as any)?.description;
-  const rawDetailed = game.metadata?.detailed_description || (localDetailsData as any)?.description;
+  const rawShort = game.metadata?.short_description || (canonicalAppInfo?.userData?.description as string | undefined) || (localDetailsData as any)?.shortDescription;
+  const rawAbout = game.metadata?.about_the_game || (canonicalAppInfo?.userData?.description as string | undefined) || (localDetailsData as any)?.description;
+  const rawDetailed = game.metadata?.detailed_description || (canonicalAppInfo?.userData?.description as string | undefined) || (localDetailsData as any)?.description;
 
   if ((window as any).__DEBUG_META_TRACE) {
     const _id = game.appId || game.id;
@@ -734,12 +736,12 @@ export default function LibraryGameDetails({
     : longDescText;
 
   const genres = useMemo(
-    () => uniqueLabels(game.metadata?.genres || (localDetailsData as any)?.genres || []),
-    [game.id, game.metadata?.genres, (localDetailsData as any)?.genres]
+    () => uniqueLabels(game.metadata?.genres || (canonicalAppInfo?.userData?.genres ? (canonicalAppInfo.userData.genres as string).split(",").map((s: string) => s.trim()) : undefined) || (localDetailsData as any)?.genres || []),
+    [game.id, game.metadata?.genres, canonicalAppInfo?.userData?.genres, (localDetailsData as any)?.genres]
   );
   const categories = useMemo(
-    () => uniqueLabels(game.metadata?.categories || (localDetailsData as any)?.categories || []),
-    [game.id, game.metadata?.categories, (localDetailsData as any)?.categories]
+    () => uniqueLabels(game.metadata?.categories || (canonicalAppInfo?.userData?.categories ? (canonicalAppInfo.userData.categories as string).split(",").map((s: string) => s.trim()) : undefined) || (localDetailsData as any)?.categories || []),
+    [game.id, game.metadata?.categories, canonicalAppInfo?.userData?.categories, (localDetailsData as any)?.categories]
   );
 
   const appIdNum = game.appId ? Number(game.appId) : null;
@@ -1550,25 +1552,21 @@ export default function LibraryGameDetails({
                 />
               ) : rawLogoUrl ? (
                 <div className="mb-2" aria-hidden="true" style={{ width: logoWidth, height: logoHeightFallback }} />
-              ) : (
-                <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
-                  {detailTitle}
-                </h1>
-              )}
+              ) : null}
             </div>
           </div>
         )}
 
         {/* Floating developer + source badge — raised above action row */}
-        {canonicalLoaded && (game.metadata?.developer || (localDetailsData as any)?.developer || (() => {
+        {canonicalLoaded && (game.metadata?.developer || (canonicalAppInfo?.userData?.developers as string | undefined) || (localDetailsData as any)?.developer || (() => {
           const b = game.hasLua ? "LUA" : game.source === "epic" ? "EPIC" : game.source === "debrid" ? "DEBRID" : game.source === "manual" ? "MANUAL" : game.source === "steam" ? "STEAM" : null;
           return b;
         })()) && (
             <div className="absolute bottom-20 right-0 z-30 pointer-events-none px-5 text-right lg:px-8">
               <div className="flex items-center gap-2">
-                {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
+                {((localDetailsData as any)?.developer || game.metadata?.developer || (canonicalAppInfo?.userData?.developers as string | undefined)) && (
                   <span className="text-sm text-white/60 drop-shadow-sm">
-                    {(localDetailsData as any)?.developer || game.metadata?.developer}
+                    {(localDetailsData as any)?.developer || game.metadata?.developer || (canonicalAppInfo?.userData?.developers as string | undefined)}
                   </span>
                 )}
                 {(() => {
@@ -2695,7 +2693,7 @@ export default function LibraryGameDetails({
                 </h3>
                 <p className="mt-1 text-sm text-(--color-text)">
                   {canonicalLoaded
-                    ? (game.metadata?.release_date || (localDetailsData as any)?.releaseDate || t("library_details.unknown"))
+                    ? (game.metadata?.release_date || (canonicalAppInfo?.userData?.releaseDate as string | undefined) || (localDetailsData as any)?.releaseDate || t("library_details.unknown"))
                     : t("library_details.loading")}
                 </p>
               </div>

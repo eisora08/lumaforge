@@ -15,10 +15,9 @@ import {
 } from "lucide-react";
 import { searchImages, ImageSearchProvider, ImageSearchResult } from "../../services/imageSearchService";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
 import { showError, showSuccess } from "../toast/GameToast";
 import { notifyMediaUpdated } from "../../services/startupSnapshotService";
-import { invalidateResolvedMediaCache } from "../../services/gameCacheService";
+import { invalidateResolvedMediaCache, clearSessionAppInfoCache } from "../../services/gameCacheService";
 import { getGameAppInfo, updateGameAppinfoMedia } from "../../services/tauri";
 import type { GameMediaPaths } from "../../services/tauri";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -213,6 +212,7 @@ export default function GameImageSearchDialog({
           const mediaKey = `${role}Path` as keyof import("../../services/tauri").GameMediaPaths;
           writeEpicOverrides(providerGameId, { [mediaKey]: relativePath });
           invalidateResolvedMediaCache(providerGameId);
+          clearSessionAppInfoCache(providerGameId);
           notifyMediaUpdated(providerGameId, { source: `image-search-${source}` });
           showSuccess(`${role} downloaded`);
           onMediaUpdated?.();
@@ -231,6 +231,7 @@ export default function GameImageSearchDialog({
           const patch = { [mediaKey]: relativePath };
           updateManualGame(libraryId, patch);
           invalidateResolvedMediaCache(libraryId);
+          clearSessionAppInfoCache(libraryId);
           notifyMediaUpdated(libraryId, { source: `image-search-${source}` });
           showSuccess(`${role} downloaded`);
           onMediaUpdated?.();
@@ -241,17 +242,12 @@ export default function GameImageSearchDialog({
           showError(`Failed to download ${role}`);
         }
       } else if (appId) {
-        // ── Steam game — existing flow ──
-        const result = await invoke<string | null>("safe_download_image", {
-          url,
-          appId: appId,
-          mediaType: role,
-          target: "",
-          forceRefresh: true,
-        });
-        if (result) {
-          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${result}`);
+        // ── Steam game — use provider media with force=true for reliable replacement ──
+        const relativePath = await downloadProviderMediaFromUrl("steam", appId, role, url, true);
+        if (relativePath) {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath}`);
           invalidateResolvedMediaCache(appId);
+          clearSessionAppInfoCache(appId);
           try {
             const currentInfo = await getGameAppInfo(appId);
             const mediaKey = `${role}Path` as keyof GameMediaPaths;
@@ -261,7 +257,7 @@ export default function GameImageSearchDialog({
               backgroundPath: currentInfo?.media?.backgroundPath ?? null,
               logoPath: currentInfo?.media?.logoPath ?? null,
               iconPath: currentInfo?.media?.iconPath ?? null,
-              [mediaKey]: result,
+              [mediaKey]: relativePath,
             };
             await updateGameAppinfoMedia(appId, currentInfo?.name ?? null, mergedMedia, currentInfo?.remote ?? null, currentInfo?.mediaSources ?? null);
           } catch (e) {
