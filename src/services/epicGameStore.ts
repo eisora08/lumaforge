@@ -488,6 +488,35 @@ export async function refreshOwnedGames(): Promise<{
       );
     }
 
+    // Fire-and-forget: fetch artwork for owned games missing media
+    (async () => {
+      try {
+        const { epicFetchAndSaveMetadata } = await import("./tauri");
+        for (const game of ownedMapped) {
+          // Skip if already has cover artwork
+          if (game.coverPath) continue;
+          const parts = game.providerGameId?.split(":");
+          if (!parts || parts.length < 2) continue;
+          const [ns, catId] = parts;
+          if (!ns || !catId || !game.providerGameId) continue;
+          try {
+            const saved = await epicFetchAndSaveMetadata(game.providerGameId, ns, catId);
+            // Update the game's artwork paths in-place
+            if (saved.cover) game.coverPath = saved.cover;
+            if (saved.landscape) game.landscapePath = saved.landscape;
+            if (saved.logo) game.logoPath = saved.logo;
+            if (saved.icon) game.iconPath = saved.icon;
+          } catch {
+            // Artwork fetch failed for this game — continue with others
+          }
+        }
+        // Re-notify after artwork updates
+        notifyListeners();
+      } catch (err) {
+        console.warn("[EPIC_STORE] metadata fetch batch failed:", err);
+      }
+    })();
+
     // Notify on change
     if (fingerprintChanged || ownedMapped.length === 0) {
       notifyListeners();

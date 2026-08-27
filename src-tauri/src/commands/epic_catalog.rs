@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 
 use super::epic_auth::{
     self, EpicCatalogItem, EpicOwnedGame, EpicPlaytimeItem, LibraryItemsResponse,
@@ -218,4 +219,93 @@ pub async fn epic_sync_library() -> Result<EpicLibrarySyncResult, String> {
         owned_games: owned,
         playtime,
     })
+}
+
+/// Fetch catalog metadata for a game and save artwork images to disk.
+///
+/// Maps Epic `keyImages` to LumaForge media roles:
+/// - `DieselGameBoxTall` → cover
+/// - `DieselStoreFrontWide` / `OfferImageWide` → landscape
+/// - `DieselGameBoxLogo` → logo
+/// - `Thumbnail` → icon (fallback)
+///
+/// Returns a map of role → relative media path for successfully saved images.
+#[tauri::command]
+pub async fn epic_fetch_and_save_metadata(
+    app_handle: AppHandle,
+    provider_game_id: String,
+    namespace: String,
+    catalog_item_id: String,
+) -> Result<HashMap<String, String>, String> {
+    // Fetch catalog items from Epic API
+    let items = epic_get_catalog_items(namespace.clone(), vec![catalog_item_id.clone()]).await?;
+
+    let item = items
+        .get(&catalog_item_id)
+        .ok_or_else(|| format!("Catalog item not found for {catalog_item_id}"))?;
+
+    let key_images = item
+        .key_images
+        .as_ref()
+        .ok_or_else(|| format!("No keyImages for {catalog_item_id}"))?;
+
+    if key_images.is_empty() {
+        return Err(format!("Empty keyImages for {catalog_item_id}"));
+    }
+
+    // Map keyImage types to media roles (priority order — first match wins)
+    let role_mapping: Vec<(&str, &str)> = vec![
+        ("DieselGameBoxTall", "cover"),
+        ("OfferImageTall", "cover"),
+        ("DieselStoreFrontWide", "landscape"),
+        ("OfferImageWide", "landscape"),
+        ("DieselGameBoxLogo", "logo"),
+        ("Thumbnail", "icon"),
+    ];
+
+    let mut saved: HashMap<String, String> = HashMap::new();
+
+    for (image_type, role) in &role_mapping {
+        // Skip if we already saved this role
+        if saved.contains_key(*role) {
+            continue;
+        }
+
+        // Find the first image matching this type
+        let image_url = key_images
+            .iter()
+            .find(|img| img.r#type.as_deref() == Some(image_type))
+            .and_then(|img| img.url.as_deref());
+
+        let url = match image_url {
+            Some(u) if !u.is_empty() => u,
+            _ => continue,
+        };
+
+        // Download and save using provider_media
+        match super::provider_media::download_provider_media_from_url(
+            app_handle.clone(),
+            "epic".to_string(),
+            provider_game_id.clone(),
+            role.to_string(),
+            url.to_string(),
+        )
+        .await
+        {
+            Ok(rel_path) => {
+                saved.insert(role.to_string(), rel_path);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[EPIC_METADATA] Failed to download {role} for {provider_game_id}: {e}"
+                );
+            }
+        }
+    }
+
+    if saved.is_empty() {
+        return Err(format!("No artwork found for {provider_game_id}"));
+    }
+
+    Ok(saved)
 }

@@ -395,6 +395,22 @@ export default function LibraryPage({ onNavigate }: Props) {
       return;
     }
 
+    // Epic: open Epic Games Launcher install flow
+    if (game.source === "epic" && game.isInstallable) {
+      const { openExternalUrl } = await import("../services/externalLinks");
+      const parts = game.providerGameId?.split(":");
+      if (parts && parts.length >= 3) {
+        const [ns, catId, appName] = parts;
+        await openExternalUrl(`com.epicgames.launcher://apps/${ns}%3A${catId}%3A${appName}?action=install`);
+      } else if (parts && parts.length === 2) {
+        const [ns, catId] = parts;
+        await openExternalUrl(`com.epicgames.launcher://apps/${ns}%3A${catId}?action=install`);
+      } else {
+        showWarning(t("library_page.epic_no_identity", "Cannot determine Epic game identity."), { title: t("library_page.not_available", "Not available") });
+      }
+      return;
+    }
+
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));

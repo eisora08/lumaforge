@@ -79,6 +79,13 @@ export function EpicAuthPanel() {
             });
           }
         }
+        // Trigger library import after successful login (fire-and-forget)
+        try {
+          const { refreshOwnedGames } = await import("../../services/epicGameStore");
+          refreshOwnedGames().catch((err: unknown) => console.warn("[EPIC_AUTH] refreshOwnedGames failed:", err));
+        } catch (err) {
+          console.warn("[EPIC_AUTH] Failed to import refreshOwnedGames:", err);
+        }
       } else {
         setError(event.payload.error || "Authentication failed");
       }

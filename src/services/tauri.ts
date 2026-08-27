@@ -3731,6 +3731,19 @@ export async function epicSyncLibrary(): Promise<EpicLibrarySyncResult> {
   return await invoke<EpicLibrarySyncResult>("epic_sync_library");
 }
 
+/** Fetch catalog metadata for a game and save artwork images to disk. */
+export async function epicFetchAndSaveMetadata(
+  providerGameId: string,
+  namespace: string,
+  catalogItemId: string,
+): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("epic_fetch_and_save_metadata", {
+    providerGameId,
+    namespace,
+    catalogItemId,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Library game fixes (src-tauri/commands/game_fix.rs)
 // ---------------------------------------------------------------------------

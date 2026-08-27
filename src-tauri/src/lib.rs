@@ -560,6 +560,7 @@ pub fn run() {
             commands::epic_catalog::epic_get_catalog_items,
             commands::epic_catalog::epic_fetch_playtime,
             commands::epic_catalog::epic_sync_library,
+            commands::epic_catalog::epic_fetch_and_save_metadata,
             commands::store_catalog::get_catalog_meta,
             commands::store_catalog::import_steam_catalog,
             commands::store_catalog::query_catalog_by_genre,

@@ -142,6 +142,21 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
   }
 
   async function handleInstall(game: LibraryGame) {
+    // Epic: open Epic Games Launcher install flow
+    if (game.source === "epic" && game.isInstallable) {
+      const { openExternalUrl } = await import("../services/externalLinks");
+      const parts = game.providerGameId?.split(":");
+      if (parts && parts.length >= 3) {
+        const [ns, catId, appName] = parts;
+        await openExternalUrl(`com.epicgames.launcher://apps/${ns}%3A${catId}%3A${appName}?action=install`);
+      } else if (parts && parts.length === 2) {
+        const [ns, catId] = parts;
+        await openExternalUrl(`com.epicgames.launcher://apps/${ns}%3A${catId}?action=install`);
+      } else {
+        showWarning("Cannot determine Epic game identity.", { title: "Not available" });
+      }
+      return;
+    }
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
