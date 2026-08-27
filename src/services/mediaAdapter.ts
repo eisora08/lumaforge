@@ -398,6 +398,7 @@ export class ManualMediaAdapter implements GameMediaAdapter {
         this.providerGameId,
         role,
         url,
+        true,
       );
       return relativePath;
     } catch (err) {
@@ -527,6 +528,7 @@ export class GenericMediaAdapter implements GameMediaAdapter {
         this.providerGameId,
         role,
         url,
+        true,
       );
       return relativePath;
     } catch (err) {

@@ -222,6 +222,7 @@ pub async fn download_provider_media_from_url(
     provider_game_id: String,
     role: String,
     url: String,
+    force: bool,
 ) -> Result<String, String> {
     validate_role(&role)?;
     if !VALID_PROVIDERS.contains(&provider.as_str()) {
@@ -235,13 +236,32 @@ pub async fn download_provider_media_from_url(
 
     let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
 
-    // Disk-existence check: skip download if file already exists on disk.
-    // Checks all common extensions since we don't know the content-type yet.
-    for candidate_ext in &["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
-        let candidate_filename = format!("{}.{}", role, candidate_ext);
-        if media_dir.join(&candidate_filename).exists() {
-            let rel = relative_media_path(&provider, &provider_game_id, &role, candidate_ext)?;
-            return Ok(rel);
+    if force {
+        // Force mode: delete existing files for this role before downloading
+        if let Ok(entries) = fs::read_dir(&media_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem == role {
+                        if fs::remove_file(&path).is_ok() {
+                            println!(
+                                "[PROVIDER_MEDIA][FORCE_DELETE] provider={} game={} role={} path={:?}",
+                                provider, provider_game_id, role, path
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Disk-existence check: skip download if file already exists on disk.
+        // Checks all common extensions since we don't know the content-type yet.
+        for candidate_ext in &["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
+            let candidate_filename = format!("{}.{}", role, candidate_ext);
+            if media_dir.join(&candidate_filename).exists() {
+                let rel = relative_media_path(&provider, &provider_game_id, &role, candidate_ext)?;
+                return Ok(rel);
+            }
         }
     }
 

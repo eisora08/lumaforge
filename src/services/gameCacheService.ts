@@ -788,6 +788,11 @@ const resolvedMediaSessionCache = new Map<string, CacheEntry<GameMediaPaths | nu
 // Prevents repeated convertFileSrc calls on the same path during a session
 const resolvedSrcCache = new Map<string, string>();
 
+// Bumped on each invalidateResolvedMediaCache call so localPathToUrl generates
+// a new ?v=N suffix → browser fetches fresh file instead of serving stale cache.
+let _mediaCacheVersion = 0;
+export function getMediaCacheVersion(): number { return _mediaCacheVersion; }
+
 const MEDIA_PATH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 function getCachedResolvedMedia(appId: string): GameMediaPaths | null | undefined {
@@ -1278,6 +1283,7 @@ export function clearResolvedMediaSessionCache(): void {
 
 // Invalidate cache for a specific appId (e.g. after a media download updates appinfo)
 export function invalidateResolvedMediaCache(appId: string): void {
+  ++_mediaCacheVersion;
   clearCachedGameMediaPaths(appId);
   // resolvedSrcCache keys are raw filesystem paths (not appIds), so we must
   // clear the entire cache. convertFileSrc() is cheap so this is safe.
@@ -2265,7 +2271,7 @@ export function localPathToUrl(path: string): string | null {
   const cached = resolvedSrcCache.get(path);
   if (cached !== undefined) return cached;
   try {
-    const url = convertFileSrc(path, "asset");
+    const url = convertFileSrc(path, "asset") + (_mediaCacheVersion > 0 ? `?v=${_mediaCacheVersion}` : "");
     resolvedSrcCache.set(path, url);
     return url;
   } catch {

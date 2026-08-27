@@ -318,6 +318,7 @@ pub async fn epic_fetch_and_save_metadata(
             provider_game_id.clone(),
             role.to_string(),
             url.to_string(),
+            false,
         )
         .await
         {

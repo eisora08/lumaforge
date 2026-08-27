@@ -60,6 +60,7 @@ export type GameEditDialogProps = {
   onClose: () => void;
   initialTab?: TabId;
   game?: LibraryGame | null;
+  onMediaChanged?: () => void;
   settings?: {
     rawgApiKey?: string;
     igdbClientId?: string;
@@ -152,6 +153,7 @@ export default function GameEditDialog({
   onClose,
   initialTab = "details",
   game,
+  onMediaChanged,
   settings,
 }: GameEditDialogProps) {
   const { t } = useTranslation();
@@ -989,6 +991,7 @@ export default function GameEditDialog({
             clearSessionAppInfoCache(appIdDraft);
             notifyMediaUpdated(appIdDraft);
             updateGame(appIdDraft, { title: nameDraft || undefined } as Partial<LibraryGame>);
+            onMediaChanged?.();
             setAppInfo(updatedEntry);
           }
         } else {
@@ -1078,6 +1081,7 @@ export default function GameEditDialog({
 
         setHasEdits(false);
         showSuccess(t("game_edit.epic_saved", "Epic game details saved"));
+        onMediaChanged?.();
         setSaving(false);
         return;
       }
@@ -1121,6 +1125,7 @@ export default function GameEditDialog({
           clearSessionAppInfoCache(appIdDraft);
           notifyMediaUpdated(appIdDraft);
           updateGame(appIdDraft, { title: nameDraft || undefined } as Partial<LibraryGame>);
+          onMediaChanged?.();
           setAppInfo(updatedEntry);
         }
 
@@ -1170,6 +1175,7 @@ export default function GameEditDialog({
         completionStatus: completionStatusDraft || undefined,
       } as Partial<LibraryGame>);
       notifyMediaUpdated(appId!);
+      onMediaChanged?.();
       setAppInfo(updatedEntry);
       setHasEdits(false);
       showSuccess(t("game_edit.save_success", "Game details saved"));
@@ -1177,7 +1183,7 @@ export default function GameEditDialog({
       showError(t("game_edit.save_failed", "Failed to save game details"));
     }
     setSaving(false);
-  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame]);
+  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged]);
 
   // ── Track edits ──
   useEffect(() => {
@@ -1355,6 +1361,7 @@ export default function GameEditDialog({
           notifyMediaUpdated(effectiveAppId);
           setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
           updateGame(effectiveAppId, {} as Partial<LibraryGame>);
+          onMediaChanged?.();
         }
         return;
       }
@@ -1387,8 +1394,9 @@ export default function GameEditDialog({
       notifyMediaUpdated(effectiveAppId);
       setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
       updateGame(effectiveAppId, {} as Partial<LibraryGame>);
+      onMediaChanged?.();
     },
-    [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId],
+    [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId, onMediaChanged],
   );
 
   // ── Re-read media after web image search download ──
@@ -1413,7 +1421,18 @@ export default function GameEditDialog({
     }
     // Re-resolve all previews from fresh data
     loadRolePreviews();
-  }, [appId, appIdDraft, isEpicMode, epicProviderGameId, isManualMode, manualGameId, createdManualId]);
+    // Notify parent (e.g. LibraryGameDetails) so it can re-resolve hero artwork
+    onMediaChanged?.();
+  }, [appId, appIdDraft, isEpicMode, epicProviderGameId, isManualMode, manualGameId, createdManualId, onMediaChanged]);
+
+  // ── Notify library grid after web search download completes ──
+  const handleDownloadComplete = useCallback(() => {
+    const effectiveAppId = appId || appIdDraft;
+    if (effectiveAppId) {
+      updateGame(effectiveAppId, {} as Partial<LibraryGame>);
+    }
+    onMediaChanged?.();
+  }, [appId, appIdDraft, updateGame, onMediaChanged]);
 
   // ── File pick handler ──
 
@@ -3009,6 +3028,7 @@ export default function GameEditDialog({
           gameTitle={appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
           role={imageSearchRole}
           onMediaUpdated={handleMediaUpdated}
+          onDownloadComplete={handleDownloadComplete}
           settings={{
             googleSearchApiKey: settings?.googleSearchApiKey,
             googleSearchCx: settings?.googleSearchCx,

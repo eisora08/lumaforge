@@ -1324,6 +1324,11 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     canonicalAppInfo,
   );
 
+  // ── Re-resolve artwork when media is changed from the edit dialog ──
+  const handleMediaChanged = useCallback(() => {
+    setResetGeneration((g) => g + 1);
+  }, []);
+
   // Disabled by default. Set window.__DEBUG_NAME_TRACE = true in dev console to enable.
   if ((window as any).__DEBUG_NAME_TRACE) {
     console.log(`[NAME][DISPLAY] appid=${displayGame.appId} title=${detailTitle}`);
@@ -1349,6 +1354,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         onOpenSteamDb={handleOpenSteamDb}
         onBack={handleBack}
         onRefreshArtwork={handleRefreshArtwork}
+        onMediaChanged={handleMediaChanged}
         onOpenTools={() => setToolsModalOpen(true)}
         onDeleteScript={handleDeleteScript}
         onNavigate={onNavigate}

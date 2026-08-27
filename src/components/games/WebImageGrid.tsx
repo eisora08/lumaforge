@@ -76,7 +76,7 @@ export default function WebImageGrid({ query, onSelect }: Props) {
   };
 
   return (
-    <div className="flex min-h-[350px] flex-col gap-3">
+    <div className="flex flex-col gap-3">
       {/* Search bar */}
       <div className="flex gap-2">
         <select
@@ -116,7 +116,7 @@ export default function WebImageGrid({ query, onSelect }: Props) {
 
       {/* Results grid */}
       {results.length > 0 && (
-        <div className="grid max-h-[400px] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4 md:grid-cols-5">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
           {results.map((img, idx) => (
             <button
               key={`${img.url}-${idx}`}
@@ -124,7 +124,7 @@ export default function WebImageGrid({ query, onSelect }: Props) {
               className={`group relative cursor-pointer overflow-hidden rounded-lg border-2 ${
                 selectedIdx === idx
                   ? "border-(--color-accent) ring-2 ring-(--color-accent)/30"
-                  : "border-transparent hover:ring-1 hover:ring-inset hover:ring-[var(--surface-active-border)]"
+                  : "border-transparent hover:ring-1 hover:ring-[var(--surface-active-border)]"
               }`}
             >
               <div className="aspect-square bg-[var(--surface-1)]">

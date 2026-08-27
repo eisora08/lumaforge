@@ -2140,12 +2140,14 @@ export async function downloadProviderMediaFromUrl(
   providerGameId: string,
   role: string,
   url: string,
+  force: boolean = false,
 ): Promise<string> {
   return await invoke<string>("download_provider_media_from_url", {
     provider,
     providerGameId,
     role,
     url,
+    force,
   });
 }
 

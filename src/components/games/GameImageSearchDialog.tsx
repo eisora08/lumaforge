@@ -43,6 +43,7 @@ type Props = {
     bingSearchApiKey?: string;
   };
   onMediaUpdated?: () => void;
+  onDownloadComplete?: () => void;
 };
 
 type SearchMode = "browser" | "api" | "inline";
@@ -76,6 +77,7 @@ export default function GameImageSearchDialog({
   role,
   settings,
   onMediaUpdated,
+  onDownloadComplete,
 }: Props) {
   const { t } = useTranslation();
   const hasGoogleApi = !!(settings?.googleSearchApiKey && settings?.googleSearchCx);
@@ -203,15 +205,18 @@ export default function GameImageSearchDialog({
       if (isEpic && libraryId) {
         // ── Epic game — use provider media adapter ──
         const providerGameId = libraryId.replace(/^epic:/, "");
-        const relativePath = await downloadProviderMediaFromUrl("epic", providerGameId, role, url);
+        const relativePath = await downloadProviderMediaFromUrl("epic", providerGameId, role, url, true);
         if (relativePath) {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath} epic=${providerGameId}`);
           // Update epic overrides store with the new media path
           const { writeEpicOverrides } = await import("../../services/epicOverrideStore");
           const mediaKey = `${role}Path` as keyof import("../../services/tauri").GameMediaPaths;
           writeEpicOverrides(providerGameId, { [mediaKey]: relativePath });
+          invalidateResolvedMediaCache(providerGameId);
+          notifyMediaUpdated(providerGameId, { source: `image-search-${source}` });
           showSuccess(`${role} downloaded`);
           onMediaUpdated?.();
+          onDownloadComplete?.();
           onClose();
         } else {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result epic=${providerGameId}`);
@@ -219,14 +224,17 @@ export default function GameImageSearchDialog({
         }
       } else if (isManual && libraryId) {
         // ── Manual game — use provider media adapter ──
-        const relativePath = await downloadProviderMediaFromUrl("manual", libraryId, role, url);
+        const relativePath = await downloadProviderMediaFromUrl("manual", libraryId, role, url, true);
         if (relativePath) {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath} manual=${libraryId}`);
           const mediaKey = `${role}Path` as keyof GameMediaPaths;
           const patch = { [mediaKey]: relativePath };
           updateManualGame(libraryId, patch);
+          invalidateResolvedMediaCache(libraryId);
+          notifyMediaUpdated(libraryId, { source: `image-search-${source}` });
           showSuccess(`${role} downloaded`);
           onMediaUpdated?.();
+          onDownloadComplete?.();
           onClose();
         } else {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result manual=${libraryId}`);
@@ -262,6 +270,7 @@ export default function GameImageSearchDialog({
           notifyMediaUpdated(appId, { source: `image-search-${source}` });
           showSuccess(`${role} downloaded`);
           onMediaUpdated?.();
+          onDownloadComplete?.();
           onClose();
         } else {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result`);
@@ -276,7 +285,7 @@ export default function GameImageSearchDialog({
     } finally {
       setApplying(false);
     }
-  }, [appId, libraryId, role, onClose]);
+  }, [appId, libraryId, role, onClose, onMediaUpdated, onDownloadComplete]);
 
   const handleSelect = useCallback(() => {
     if (!selectedUrl) return;
@@ -393,37 +402,39 @@ export default function GameImageSearchDialog({
           </button>
         </div>
 
-        {/* ── Query row (always visible) ── */}
-        <div className="shrink-0 space-y-3 px-5 pt-4 pb-2">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-muted)/50" />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Search for images..."
-                className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 pl-8 pr-3 py-2 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted)/40 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
-              />
+        {/* ── Query row (hidden in inline mode — WebImageGrid has its own search bar) ── */}
+        {mode !== "inline" && (
+          <div className="shrink-0 space-y-3 px-5 pt-4 pb-2">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-muted)/50" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Search for images..."
+                  className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 pl-8 pr-3 py-2 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted)/40 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                />
+              </div>
+              {mode === "api" && (
+                <button
+                  type="button"
+                  onClick={handleSearch}
+                  disabled={loading || !query.trim()}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading ? (
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <SearchIcon className="h-3.5 w-3.5" />
+                  )}
+                  Search
+                </button>
+              )}
             </div>
-            {mode === "api" && (
-              <button
-                type="button"
-                onClick={handleSearch}
-                disabled={loading || !query.trim()}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? (
-                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <SearchIcon className="h-3.5 w-3.5" />
-                )}
-                Search
-              </button>
-            )}
           </div>
-        </div>
+        )}
 
         {/* ── BODY ── */}
         <div className="flex-1 overflow-y-auto px-5 pb-2">

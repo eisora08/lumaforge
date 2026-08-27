@@ -10,7 +10,9 @@ const SHOW_ACH_DEBUG_BUTTONS = false;
 // The snapshot stores relative paths (media/background.jpg) while canonicalAppInfo resolves
 // to absolute paths — both point to the same file. Keeping the same string avoids the
 // <img key={imageUrl}> remount (and its opacity-0 gap) when only the path format changed.
+// When cache-busting ?v=N is present, use strict equality so replaced files trigger re-fetch.
 function sameHeroFile(a: string, b: string): boolean {
+  if (a.includes("?v=") || b.includes("?v=")) return a === b;
   const base = (s: string) => {
     const clean = s.split(/[?#]/)[0] ?? s;
     const parts = clean.split(/[\\/]/);
@@ -132,6 +134,7 @@ type LibraryGameDetailsProps = {
   onOpenSourceSelector?: (game: LibraryGame) => void;
   onBack: () => void;
   onRefreshArtwork?: () => void;
+  onMediaChanged?: () => void;
   onOpenTools?: (game: LibraryGame) => void;
   onNavigate?: (page: AppPage) => void;
   launchInfo?: GameLaunchInfo;
@@ -256,6 +259,7 @@ export default function LibraryGameDetails({
   onOpenSteamDb,
   onBack,
   onRefreshArtwork,
+  onMediaChanged,
   onOpenTools,
   onNavigate,
   launchInfo,
@@ -592,6 +596,7 @@ export default function LibraryGameDetails({
       || artwork?.sgdbLogoUrl
       || game.metadata?.logo_image
       || game.metadata?.library_logo_image
+      || game.logoPath
       || fallbackLogoLocal
       || fallbackLogoSrc;
     if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
@@ -599,6 +604,7 @@ export default function LibraryGameDetails({
       else if (artwork?.sgdbLogoUrl) console.log("[LibraryDetails] selected logo source: sgdbLogoUrl");
       else if (game.metadata?.logo_image) console.log("[LibraryDetails] selected logo source: logo_image");
       else if (game.metadata?.library_logo_image) console.log("[LibraryDetails] selected logo source: library_logo_image");
+      else if (game.logoPath) console.log("[LibraryDetails] selected logo source: game.logoPath");
       else if (fallbackLogoSrc) console.log("[LibraryDetails] selected logo source: fallbackBundle");
       else console.log("[LibraryDetails] selected logo source: none");
     }
@@ -2843,6 +2849,7 @@ export default function LibraryGameDetails({
           onClose={() => setEditDialogOpen(false)}
           initialTab={editDialogTab}
           game={game}
+          onMediaChanged={onMediaChanged}
           settings={{
             rawgApiKey: settings.rawgApiKey,
             igdbClientId: settings.igdbClientId,
