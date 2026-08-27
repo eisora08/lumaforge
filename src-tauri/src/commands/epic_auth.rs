@@ -137,10 +137,12 @@ pub struct EpicCustomAttribute {
 
 /// Release info in a catalog item.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct EpicReleaseInfo {
+    #[serde(rename = "appId")]
     pub app_id: Option<String>,
     pub platform: Option<Vec<String>>,
+    #[serde(rename = "dateAdded")]
+    pub date_added: Option<String>,
 }
 
 /// Main game reference for DLC detection.

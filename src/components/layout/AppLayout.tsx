@@ -67,24 +67,44 @@ export default function AppLayout({
   children,
   isConsoleMode,
 }: AppLayoutProps) {
-  if (isConsoleMode) {
-    return (
-      <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg) text-(--color-text)">
-        <div className="lf-backdrop" />
-        <AmbientBackground />
-        <div className="relative z-10 h-full w-full">
-          <LibraryGamesProvider>
+  // LibraryGamesProvider is a single shared instance — never unmounts on mode switch.
+  return (
+    <LibraryGamesProvider>
+      {isConsoleMode ? (
+        <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg) text-(--color-text)">
+          <div className="lf-backdrop" />
+          <AmbientBackground />
+          <div className="relative z-10 h-full w-full">
             <GameActivityProvider>
               <RouteErrorBoundary>
                 {children}
               </RouteErrorBoundary>
             </GameActivityProvider>
-          </LibraryGamesProvider>
+          </div>
         </div>
-      </div>
-    );
-  }
-  countRender("AppLayout");
+      ) : (
+        <AppLayoutDesktop
+          activePage={activePage}
+          onNavigate={onNavigate}
+        >
+          {children}
+        </AppLayoutDesktop>
+      )}
+    </LibraryGamesProvider>
+  );
+}
+
+/** Desktop mode layout — extracted so hooks are not called conditionally. */
+function AppLayoutDesktop({
+  activePage,
+  onNavigate,
+  children,
+}: {
+  activePage: AppPage;
+  onNavigate: (page: AppPage, fromHistory?: boolean) => void;
+  children: React.ReactNode;
+}) {
+  countRender("AppLayoutDesktop");
   const [manualMode, setManualMode] = useState<"auto" | "expanded" | "collapsed">("auto");
   const [autoMode, setAutoMode] = useState<SidebarMode>("expanded");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -131,7 +151,6 @@ export default function AppLayout({
       <div className="lf-backdrop" />
       <AmbientBackground />
 
-      <LibraryGamesProvider>
         <GameActivityProvider>
         <StoreTabProvider>
         <SearchProvider>
@@ -163,7 +182,6 @@ export default function AppLayout({
         </SearchProvider>
         </StoreTabProvider>
         </GameActivityProvider>
-      </LibraryGamesProvider>
     </div>
   );
 }

@@ -209,6 +209,22 @@ pub struct EpicLibrarySyncResult {
     pub playtime: Vec<EpicPlaytimeItem>,
 }
 
+/// Result from fetching and saving Epic game metadata.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpicMetadataResult {
+    /// Artwork paths: role → relative media path
+    pub artwork: HashMap<String, String>,
+    /// Human-readable game title from catalog
+    pub title: Option<String>,
+    /// Short description
+    pub description: Option<String>,
+    /// Developer name
+    pub developer: Option<String>,
+    /// Release date string
+    pub release_date: Option<String>,
+}
+
 /// Fetch both owned games and playtime in one call.
 #[tauri::command]
 pub async fn epic_sync_library() -> Result<EpicLibrarySyncResult, String> {
@@ -225,24 +241,34 @@ pub async fn epic_sync_library() -> Result<EpicLibrarySyncResult, String> {
 ///
 /// Maps Epic `keyImages` to LumaForge media roles:
 /// - `DieselGameBoxTall` → cover
-/// - `DieselStoreFrontWide` / `OfferImageWide` → landscape
+/// - `DieselStoreFrontWide` / `OfferImageWide` → landscape + background
 /// - `DieselGameBoxLogo` → logo
 /// - `Thumbnail` → icon (fallback)
 ///
-/// Returns a map of role → relative media path for successfully saved images.
+/// Also extracts text metadata (title, description, developer, categories).
 #[tauri::command]
 pub async fn epic_fetch_and_save_metadata(
     app_handle: AppHandle,
     provider_game_id: String,
     namespace: String,
     catalog_item_id: String,
-) -> Result<HashMap<String, String>, String> {
+) -> Result<EpicMetadataResult, String> {
     // Fetch catalog items from Epic API
     let items = epic_get_catalog_items(namespace.clone(), vec![catalog_item_id.clone()]).await?;
 
     let item = items
         .get(&catalog_item_id)
         .ok_or_else(|| format!("Catalog item not found for {catalog_item_id}"))?;
+
+    // Extract text metadata from catalog item
+    let title = item.title.clone();
+    let description = item.description.clone();
+    let developer = item.developer.clone();
+    let release_date = item
+        .release_info
+        .as_ref()
+        .and_then(|ri| ri.first())
+        .and_then(|r| r.date_added.clone());
 
     let key_images = item
         .key_images
@@ -254,11 +280,14 @@ pub async fn epic_fetch_and_save_metadata(
     }
 
     // Map keyImage types to media roles (priority order — first match wins)
+    // landscape is also used as background fallback
     let role_mapping: Vec<(&str, &str)> = vec![
         ("DieselGameBoxTall", "cover"),
         ("OfferImageTall", "cover"),
         ("DieselStoreFrontWide", "landscape"),
+        ("DieselStoreFrontWide", "background"),
         ("OfferImageWide", "landscape"),
+        ("OfferImageWide", "background"),
         ("DieselGameBoxLogo", "logo"),
         ("Thumbnail", "icon"),
     ];
@@ -303,9 +332,11 @@ pub async fn epic_fetch_and_save_metadata(
         }
     }
 
-    if saved.is_empty() {
-        return Err(format!("No artwork found for {provider_game_id}"));
-    }
-
-    Ok(saved)
+    Ok(EpicMetadataResult {
+        artwork: saved,
+        title,
+        description,
+        developer,
+        release_date,
+    })
 }

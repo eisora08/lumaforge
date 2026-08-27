@@ -23,13 +23,15 @@ import { EPIC_LAUNCH_ENABLED, EPIC_DIRECT_LAUNCH_ENABLED, EPIC_LIBRARY_ENABLED, 
 
 /**
  * Build a stable providerGameId from an Epic manifest.
- * Strategy: `{namespace}:{catalogItemId}` → `{namespace}:{appName}` → `{appName}`
+ * Strategy: `{namespace}:{catalogItemId}:{appName}` → `{namespace}:{catalogItemId}` → `{namespace}:{appName}` → `{appName}`
  */
 function buildProviderGameId(game: EpicInstalledGame): string {
   const ns = game.namespace || "";
   const catalogId = game.catalogItemId || "";
   const appName = game.appName || "";
 
+  // Preferred: triple-identity (required for Epic protocol URIs)
+  if (ns && catalogId && appName) return `${ns}:${catalogId}:${appName}`;
   if (ns && catalogId) return `${ns}:${catalogId}`;
   if (ns && appName) return `${ns}:${appName}`;
   return appName || `unknown-${game.installSize ?? 0}`;

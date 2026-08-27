@@ -3731,17 +3731,32 @@ export async function epicSyncLibrary(): Promise<EpicLibrarySyncResult> {
   return await invoke<EpicLibrarySyncResult>("epic_sync_library");
 }
 
+/** Metadata result from Epic Catalog API (artwork + text metadata). */
+export type EpicMetadataResult = {
+  artwork: Record<string, string>;
+  title?: string;
+  description?: string;
+  developer?: string;
+  releaseDate?: string;
+};
+
 /** Fetch catalog metadata for a game and save artwork images to disk. */
 export async function epicFetchAndSaveMetadata(
   providerGameId: string,
   namespace: string,
   catalogItemId: string,
-): Promise<Record<string, string>> {
-  return await invoke<Record<string, string>>("epic_fetch_and_save_metadata", {
+): Promise<EpicMetadataResult> {
+  return await invoke<EpicMetadataResult>("epic_fetch_and_save_metadata", {
     providerGameId,
     namespace,
     catalogItemId,
   });
+}
+
+export async function epicOpenInstall(
+  appName: string,
+): Promise<void> {
+  return await invoke<void>("epic_open_install", { appName });
 }
 
 // ---------------------------------------------------------------------------

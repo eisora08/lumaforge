@@ -230,21 +230,28 @@ fn compute_epic_provider_game_id(manifest: &RawEpicManifest) -> Option<String> {
     let catalog_item_id = manifest.catalog_item_id.as_deref();
     let app_name = manifest.app_name.as_deref();
 
-    // Priority 1: namespace + catalogItemId
+    // Priority 1: namespace + catalogItemId + appName (triple-identity for protocol URIs)
+    if let (Some(ns), Some(cid), Some(an)) = (namespace, catalog_item_id, app_name) {
+        if !ns.is_empty() && !cid.is_empty() && !an.is_empty() {
+            return Some(format!("{}:{}:{}", ns, cid, an));
+        }
+    }
+
+    // Priority 2: namespace + catalogItemId
     if let (Some(ns), Some(cid)) = (namespace, catalog_item_id) {
         if !ns.is_empty() && !cid.is_empty() {
             return Some(format!("{}:{}", ns, cid));
         }
     }
 
-    // Priority 2: namespace + appName
+    // Priority 3: namespace + appName
     if let (Some(ns), Some(an)) = (namespace, app_name) {
         if !ns.is_empty() && !an.is_empty() {
             return Some(format!("{}:{}", ns, an));
         }
     }
 
-    // Priority 3: appName only
+    // Priority 4: appName only
     if let Some(an) = app_name {
         if !an.is_empty() {
             return Some(an.to_string());
@@ -1085,6 +1092,31 @@ pub fn launch_epic_game(
                     protocol_err
                 ))
             }
+        }
+    }
+}
+
+/// Open Epic Games Launcher install dialog for a game via protocol URI.
+/// Uses only appName (ArtifactId) — the triple-identity format triggers the old launcher
+/// behavior that shows the install dialog. This matches Playnite's approach.
+#[tauri::command]
+pub async fn epic_open_install(
+    app_name: String,
+) -> Result<(), String> {
+    let encoded = urlencoding::encode(app_name.trim());
+    let protocol_url = format!(
+        "com.epicgames.launcher://apps/{}?action=install",
+        encoded
+    );
+    eprintln!("[EPIC_INSTALL] Attempting protocol URI: {}", protocol_url);
+    match open::that_detached(&protocol_url) {
+        Ok(_) => {
+            eprintln!("[EPIC_INSTALL] Protocol URI sent successfully");
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("[EPIC_INSTALL] open::that_detached failed: {err}");
+            Err(format!("Could not open Epic Games Launcher install dialog: {err}"))
         }
     }
 }

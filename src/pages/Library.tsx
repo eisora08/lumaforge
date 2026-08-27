@@ -395,17 +395,21 @@ export default function LibraryPage({ onNavigate }: Props) {
       return;
     }
 
-    // Epic: open Epic Games Launcher install flow
+    // Epic: open Epic Games Launcher install dialog
     if (game.source === "epic" && game.isInstallable) {
-      const { openExternalUrl } = await import("../services/externalLinks");
+      const { epicOpenInstall } = await import("../services/tauri");
       const parts = game.providerGameId?.split(":");
-      if (parts && parts.length >= 3) {
-        const [ns, catId, appName] = parts;
-        await openExternalUrl(`com.epicgames.launcher://apps/${ns}%3A${catId}%3A${appName}?action=install`);
-      } else if (parts && parts.length === 2) {
-        const [ns, catId] = parts;
-        await openExternalUrl(`com.epicgames.launcher://apps/${ns}%3A${catId}?action=install`);
+      const appName = parts && parts.length >= 3 ? parts[parts.length - 1] : parts?.[0];
+      console.log("[EPIC_INSTALL] providerGameId:", game.providerGameId, "appName:", appName);
+      if (appName) {
+        try {
+          await epicOpenInstall(appName);
+        } catch (err) {
+          console.error("[EPIC_INSTALL] epicOpenInstall failed:", err);
+          showError(String(err), { title: t("library_page.toast.error", "Error") });
+        }
       } else {
+        console.warn("[EPIC_INSTALL] no appName found in providerGameId:", game.providerGameId);
         showWarning(t("library_page.epic_no_identity", "Cannot determine Epic game identity."), { title: t("library_page.not_available", "Not available") });
       }
       return;

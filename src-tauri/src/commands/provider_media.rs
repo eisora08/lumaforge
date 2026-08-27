@@ -122,6 +122,8 @@ fn infer_extension(source_path: &str, role: &str) -> String {
 fn extension_from_content_type(ct: &str, role: &str) -> String {
     if ct.contains("png") {
         "png".to_string()
+    } else if ct.contains("jpeg") || ct.contains("jpg") {
+        "jpg".to_string()
     } else if ct.contains("gif") {
         "gif".to_string()
     } else if ct.contains("webp") {
@@ -232,6 +234,16 @@ pub async fn download_provider_media_from_url(
     }
 
     let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
+
+    // Disk-existence check: skip download if file already exists on disk.
+    // Checks all common extensions since we don't know the content-type yet.
+    for candidate_ext in &["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
+        let candidate_filename = format!("{}.{}", role, candidate_ext);
+        if media_dir.join(&candidate_filename).exists() {
+            let rel = relative_media_path(&provider, &provider_game_id, &role, candidate_ext)?;
+            return Ok(rel);
+        }
+    }
 
     // Download with timeout and size limits
     let client = reqwest::Client::builder()

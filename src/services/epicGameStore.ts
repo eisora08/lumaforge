@@ -54,6 +54,11 @@ let _ownedScanState: "idle" | "scanning" | "done" | "error" = "idle";
 let _ownedScanWarning: string | null = null;
 let _syncedPlaytime = new Map<string, number>(); // appName → totalPlaytime
 
+// ── Session-level metadata cache ──
+// Tracks which games have already had metadata fetched this session.
+// Prevents redundant API calls + downloads on re-import, mode switch, etc.
+const _metadataFetchedThisSession = new Set<string>();
+
 // ── Notification ──
 
 function notifyListeners(): void {
@@ -153,6 +158,11 @@ export async function refreshEpicGames(
 ): Promise<{ count: number; warning: string | null }> {
   if (!EPIC_LIBRARY_ENABLED) {
     return { count: 0, warning: null };
+  }
+
+  // Re-entry guard: skip if already scanning
+  if (_scanState === "scanning") {
+    return { count: _epicGames.length, warning: null };
   }
 
   _scanState = "scanning";
@@ -369,6 +379,11 @@ export async function refreshOwnedGames(): Promise<{
     return { count: 0, warning: null };
   }
 
+  // Re-entry guard: skip if already scanning
+  if (_ownedScanState === "scanning") {
+    return { count: _ownedGames.length, warning: null };
+  }
+
   try {
     _ownedScanState = "scanning";
     _ownedScanWarning = null;
@@ -394,10 +409,12 @@ export async function refreshOwnedGames(): Promise<{
       // Skip if already installed (will be enriched separately)
       if (installedAppNames.has(owned.appName)) continue;
 
-      // Build providerGameId
-      const providerGameId = owned.namespace && owned.catalogItemId
-        ? `${owned.namespace}:${owned.catalogItemId}`
-        : owned.appName;
+      // Build providerGameId (triple-identity for protocol URIs)
+      const providerGameId = owned.namespace && owned.catalogItemId && owned.appName
+        ? `${owned.namespace}:${owned.catalogItemId}:${owned.appName}`
+        : owned.namespace && owned.catalogItemId
+          ? `${owned.namespace}:${owned.catalogItemId}`
+          : owned.appName;
 
       // Skip if no valid ID
       if (!providerGameId) continue;
@@ -488,30 +505,92 @@ export async function refreshOwnedGames(): Promise<{
       );
     }
 
-    // Fire-and-forget: fetch artwork for owned games missing media
+    // Fire-and-forget: fetch artwork + metadata for owned games missing media
     (async () => {
       try {
         const { epicFetchAndSaveMetadata } = await import("./tauri");
+        let changed = false;
         for (const game of ownedMapped) {
           // Skip if already has cover artwork
           if (game.coverPath) continue;
+          // Skip if already fetched this session (prevents re-download on mode switch / re-import)
+          if (game.providerGameId && _metadataFetchedThisSession.has(game.providerGameId)) continue;
           const parts = game.providerGameId?.split(":");
           if (!parts || parts.length < 2) continue;
           const [ns, catId] = parts;
           if (!ns || !catId || !game.providerGameId) continue;
           try {
-            const saved = await epicFetchAndSaveMetadata(game.providerGameId, ns, catId);
-            // Update the game's artwork paths in-place
-            if (saved.cover) game.coverPath = saved.cover;
-            if (saved.landscape) game.landscapePath = saved.landscape;
-            if (saved.logo) game.logoPath = saved.logo;
-            if (saved.icon) game.iconPath = saved.icon;
+            const result = await epicFetchAndSaveMetadata(game.providerGameId, ns, catId);
+            _metadataFetchedThisSession.add(game.providerGameId);
+            // Apply artwork paths
+            const a = result.artwork;
+            if (a.cover) { game.coverPath = a.cover; changed = true; }
+            if (a.landscape) { game.landscapePath = a.landscape; changed = true; }
+            if (a.background) { game.backgroundPath = a.background; changed = true; }
+            if (a.logo) { game.logoPath = a.logo; changed = true; }
+            if (a.icon) { game.iconPath = a.icon; changed = true; }
+            // Apply title if current looks like a UUID/hash
+            if (result.title && /^[0-9a-f]{32}$/i.test(game.title)) {
+              game.title = result.title;
+              changed = true;
+            }
+            // Apply text metadata
+            if (result.description || result.developer) {
+              (game as Record<string, unknown>).metadata = {
+                ...((game.metadata as Record<string, unknown>) || {}),
+                resolved: true,
+                name: result.title || game.title,
+                short_description: result.description || undefined,
+                about_the_game: result.description || undefined,
+                developer: result.developer || undefined,
+                genres: [],
+                categories: [],
+                release_date: result.releaseDate || undefined,
+              };
+              changed = true;
+            }
           } catch {
             // Artwork fetch failed for this game — continue with others
           }
         }
-        // Re-notify after artwork updates
-        notifyListeners();
+
+        // Also fetch metadata for installed Epic games that lack metadata
+        for (const game of _epicGames) {
+          if (game.metadata) continue; // already has metadata
+          if (game.providerGameId && _metadataFetchedThisSession.has(game.providerGameId)) continue;
+          const parts = game.providerGameId?.split(":");
+          if (!parts || parts.length < 2) continue;
+          const [ns, catId] = parts;
+          if (!ns || !catId || !game.providerGameId) continue;
+          try {
+            const result = await epicFetchAndSaveMetadata(game.providerGameId, ns, catId);
+            _metadataFetchedThisSession.add(game.providerGameId);
+            const a = result.artwork;
+            if (a.cover) { game.coverPath = a.cover; changed = true; }
+            if (a.landscape) { game.landscapePath = a.landscape; changed = true; }
+            if (a.background) { game.backgroundPath = a.background; changed = true; }
+            if (a.logo) { game.logoPath = a.logo; changed = true; }
+            if (a.icon) { game.iconPath = a.icon; changed = true; }
+            if (result.description || result.developer) {
+              (game as Record<string, unknown>).metadata = {
+                resolved: true,
+                name: result.title || game.title,
+                short_description: result.description || undefined,
+                about_the_game: result.description || undefined,
+                developer: result.developer || undefined,
+                genres: [],
+                categories: [],
+                release_date: result.releaseDate || undefined,
+              };
+              changed = true;
+            }
+          } catch {
+            // continue
+          }
+        }
+
+        // Only re-notify if something actually changed
+        if (changed) notifyListeners();
       } catch (err) {
         console.warn("[EPIC_STORE] metadata fetch batch failed:", err);
       }
