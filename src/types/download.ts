@@ -23,7 +23,7 @@ export type DownloadJob = {
   downloadUrl?: string;
 
   /** Broad category for display/grouping */
-  type?: "steam-install" | "lua-package" | "zip" | "manifest" | "media" | "debrid-install" | "other";
+  type?: "steam-install" | "epic-install" | "lua-package" | "zip" | "manifest" | "media" | "debrid-install" | "other";
   /** Indeterminate when reliable percentage is unavailable */
   progressMode?: "determinate" | "indeterminate";
   speedBytesPerSec?: number;

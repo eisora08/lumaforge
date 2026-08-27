@@ -9,6 +9,7 @@ import {
   scanInstalledLuaScripts,
 } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
+import { epicInstallTrackerService } from "../services/epicInstallTrackerService";
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
@@ -28,6 +29,7 @@ import type { ResolvedGameMediaBundle } from "../types/gameMedia";
 import { enqueueMediaDownload, cancelMediaJobsForApp, subscribeToMediaQueue } from "../services/mediaDownloadQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
+import InstallConfirmModal from "../components/install/InstallConfirmModal";
 import ToolsModal from "../components/tools/ToolsModal";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession, computeGameKey } from "../context/GameSessionContext";
@@ -119,6 +121,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [showStopModal, setShowStopModal] = useState(false);
   const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
   const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
+  const [installConfirmGame, setInstallConfirmGame] = useState<LibraryGame | null>(null);
   const { confirm } = useConfirm();
 
   // Playtime tracking: when session transitions from running to idle/cleared
@@ -1221,26 +1224,45 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       return;
     }
 
+    // Epic: show confirmation modal
+    if (game.source === "epic" && game.isInstallable) {
+      setInstallConfirmGame(game);
+      return;
+    }
+
+    // Steam: show confirmation modal
+    if (game.appId) {
+      setInstallConfirmGame(game);
+      return;
+    } else {
+      showWarning(t("library_page.not_available_no_appid"), { title: t("library_page.not_available") });
+    }
+  }
+
+  async function handleConfirmInstall() {
+    const game = installConfirmGame;
+    if (!game) return;
+    setInstallConfirmGame(null);
+
     // Epic: open Epic Games Launcher install dialog
     if (game.source === "epic" && game.isInstallable) {
       const { epicOpenInstall } = await import("../services/tauri");
       const parts = game.providerGameId?.split(":");
       const appName = parts && parts.length >= 3 ? parts[parts.length - 1] : parts?.[0];
-      console.log("[EPIC_INSTALL] providerGameId:", game.providerGameId, "appName:", appName);
       if (appName) {
         try {
           await epicOpenInstall(appName);
+          epicInstallTrackerService.startTracking(appName, game.title, game.imageUrl);
         } catch (err) {
-          console.error("[EPIC_INSTALL] epicOpenInstall failed:", err);
           showError(String(err), { title: t("library_page.toast.error", "Error") });
         }
       } else {
-        console.warn("[EPIC_INSTALL] no appName found in providerGameId:", game.providerGameId);
         showWarning(t("library_page.epic_no_identity", "Cannot determine Epic game identity."), { title: t("library_page.not_available") });
       }
       return;
     }
 
+    // Steam: direct install
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
@@ -1248,8 +1270,6 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       } catch (err) {
         showError(String(err), { title: t("sidebar.error") });
       }
-    } else {
-      showWarning(t("library_page.not_available_no_appid"), { title: t("library_page.not_available") });
     }
   }
 
@@ -1382,6 +1402,14 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         onMarkStopped={handleMarkAsStopped}
         onFindProcess={handleFindProcess}
       />
+      {installConfirmGame && (
+        <InstallConfirmModal
+          game={installConfirmGame}
+          open={true}
+          onClose={() => setInstallConfirmGame(null)}
+          onConfirm={handleConfirmInstall}
+        />
+      )}
     </div>
   );
 }

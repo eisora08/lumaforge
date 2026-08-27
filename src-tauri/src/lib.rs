@@ -547,6 +547,7 @@ pub fn run() {
             commands::manual_games::write_manual_games,
             commands::manual_games::backup_manual_games,
             commands::epic::scan_epic_installed_games,
+            commands::epic::check_epic_game_installed,
             commands::epic::launch_epic_game,
             commands::epic::epic_open_install,
             commands::epic_auth::epic_get_auth_url,

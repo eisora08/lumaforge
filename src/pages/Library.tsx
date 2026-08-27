@@ -23,6 +23,7 @@ import GameHoverPreview from "../components/games/GameHoverPreview";
 import GameEditDialog from "../components/games/GameEditDialog";
 import GameScannerModal from "../components/games/GameScannerModal";
 import type { ScannedProgram } from "../components/games/GameScannerModal";
+import InstallConfirmModal from "../components/install/InstallConfirmModal";
 import LibraryFilterPanel from "../components/library/LibraryFilterPanel";
 import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFilterPanel";
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
@@ -34,6 +35,7 @@ import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useGameSession } from "../context/GameSessionContext";
 import { useDownloadQueueContext } from "../context/DownloadQueueContext";
 import { installTrackerService } from "../services/installTrackingService";
+import { epicInstallTrackerService } from "../services/epicInstallTrackerService";
 import {
   installSteamApp,
   deleteLuaScript,
@@ -95,6 +97,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
   const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
+  const [installConfirmGame, setInstallConfirmGame] = useState<LibraryGame | null>(null);
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
@@ -395,26 +398,45 @@ export default function LibraryPage({ onNavigate }: Props) {
       return;
     }
 
+    // Epic: show confirmation modal
+    if (game.source === "epic" && game.isInstallable) {
+      setInstallConfirmGame(game);
+      return;
+    }
+
+    // Steam: show confirmation modal
+    if (game.appId) {
+      setInstallConfirmGame(game);
+      return;
+    } else {
+      showWarning(t("library_page.no_appid_steam", "This game cannot be installed through Steam because it has no AppID."), { title: t("library_page.not_available", "Not available") });
+    }
+  }
+
+  async function handleConfirmInstall() {
+    const game = installConfirmGame;
+    if (!game) return;
+    setInstallConfirmGame(null);
+
     // Epic: open Epic Games Launcher install dialog
     if (game.source === "epic" && game.isInstallable) {
       const { epicOpenInstall } = await import("../services/tauri");
       const parts = game.providerGameId?.split(":");
       const appName = parts && parts.length >= 3 ? parts[parts.length - 1] : parts?.[0];
-      console.log("[EPIC_INSTALL] providerGameId:", game.providerGameId, "appName:", appName);
       if (appName) {
         try {
           await epicOpenInstall(appName);
+          epicInstallTrackerService.startTracking(appName, game.title, game.imageUrl);
         } catch (err) {
-          console.error("[EPIC_INSTALL] epicOpenInstall failed:", err);
           showError(String(err), { title: t("library_page.toast.error", "Error") });
         }
       } else {
-        console.warn("[EPIC_INSTALL] no appName found in providerGameId:", game.providerGameId);
         showWarning(t("library_page.epic_no_identity", "Cannot determine Epic game identity."), { title: t("library_page.not_available", "Not available") });
       }
       return;
     }
 
+    // Steam: direct install
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
@@ -422,8 +444,6 @@ export default function LibraryPage({ onNavigate }: Props) {
       } catch (err) {
         showError(String(err), { title: t("library_page.toast.error", "Error") });
       }
-    } else {
-      showWarning(t("library_page.no_appid_steam", "This game cannot be installed through Steam because it has no AppID."), { title: t("library_page.not_available", "Not available") });
     }
   }
 
@@ -967,6 +987,14 @@ export default function LibraryPage({ onNavigate }: Props) {
         <GameHoverPreview
           game={hoveredGame}
           position={gamePosition}
+        />
+      )}
+      {installConfirmGame && (
+        <InstallConfirmModal
+          game={installConfirmGame}
+          open={true}
+          onClose={() => setInstallConfirmGame(null)}
+          onConfirm={handleConfirmInstall}
         />
       )}
     </div>

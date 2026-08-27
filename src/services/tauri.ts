@@ -3759,6 +3759,18 @@ export async function epicOpenInstall(
   return await invoke<void>("epic_open_install", { appName });
 }
 
+export type EpicInstallCheckResult = {
+  isInstalled: boolean;
+  installLocation?: string;
+  displayName?: string;
+};
+
+export async function checkEpicGameInstalled(
+  appName: string,
+): Promise<EpicInstallCheckResult> {
+  return await invoke<EpicInstallCheckResult>("check_epic_game_installed", { appName });
+}
+
 // ---------------------------------------------------------------------------
 // Library game fixes (src-tauri/commands/game_fix.rs)
 // ---------------------------------------------------------------------------

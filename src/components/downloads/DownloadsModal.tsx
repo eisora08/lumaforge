@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import {
   Clock,
   Download,
@@ -26,12 +27,8 @@ type Props = {
 
 type ModalSection = "overview" | "history";
 
-const NAV_ITEMS: { key: ModalSection; label: string; icon: typeof Download }[] = [
-  { key: "overview", label: "Overview", icon: Download },
-  { key: "history", label: "Historial", icon: Clock },
-];
-
 export default function DownloadsModal({ open, onClose, onNavigate }: Props) {
+  const { t } = useTranslation();
   const {
     jobs,
     cancelJob,
@@ -157,11 +154,11 @@ export default function DownloadsModal({ open, onClose, onNavigate }: Props) {
               <Download className="h-4.5 w-4.5 text-(--color-accent)" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-(--color-text)">Descargas</h2>
+              <h2 className="text-lg font-bold text-(--color-text)">{t("downloads_modal.title")}</h2>
               <p className="text-xs text-(--color-muted)">
                 {activeCount > 0
-                  ? `${activeCount} descarga${activeCount === 1 ? "" : "s"} activa${activeCount === 1 ? "" : "s"}`
-                  : "Sin descargas activas"}
+                  ? t("downloads_modal.active_count", { count: activeCount })
+                  : t("downloads_modal.no_active")}
               </p>
             </div>
           </div>
@@ -180,7 +177,10 @@ export default function DownloadsModal({ open, onClose, onNavigate }: Props) {
           {/* ── Sidebar nav ── */}
           <nav className="w-[220px] shrink-0 border-r border-(--surface-active-border) p-3">
             <div className="space-y-1">
-              {NAV_ITEMS.map((item) => {
+              {([
+                { key: "overview" as ModalSection, label: t("downloads_modal.nav_overview"), icon: Download },
+                { key: "history" as ModalSection, label: t("downloads_modal.nav_history"), icon: Clock },
+              ]).map((item) => {
                 const Icon = item.icon;
                 const isActive = section === item.key;
                 const count = item.key === "overview" ? activeCount : completedJobs.length;
@@ -267,15 +267,16 @@ function OverviewContent({
   onRemove,
   onOpenDetails,
 }: OverviewContentProps) {
+  const { t } = useTranslation();
   if (activeJobs.length === 0 && interruptedDebrid.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-12 text-center">
         <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-white/5">
           <Upload className="h-7 w-7 text-(--color-muted)" />
         </div>
-        <p className="text-base font-semibold text-(--color-text)">No hay descargas activas</p>
+        <p className="text-base font-semibold text-(--color-text)">{t("downloads_modal.empty_overview_title")}</p>
         <p className="mt-2 max-w-sm text-sm text-(--color-muted)">
-          Instala un juego o paquete desde la Tienda para ver su progreso aqui.
+          {t("downloads_modal.empty_overview_desc")}
         </p>
       </div>
     );
@@ -297,7 +298,7 @@ function OverviewContent({
         {interruptedDebrid.length > 0 && (
           <>
             <p className="pt-2 text-[11px] font-medium uppercase tracking-wider text-(--color-muted)/60">
-              Interrumpidas
+              {t("downloads_modal.interrupted")}
             </p>
             {interruptedDebrid.map((job) => (
               <DownloadJobCard
@@ -340,15 +341,16 @@ function HistoryContent({
   onClearCompleted,
   onCleanTemp,
 }: HistoryContentProps) {
+  const { t } = useTranslation();
   if (completedJobs.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-12 text-center">
         <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-white/5">
           <History className="h-7 w-7 text-(--color-muted)" />
         </div>
-        <p className="text-base font-semibold text-(--color-text)">Sin historial</p>
+        <p className="text-base font-semibold text-(--color-text)">{t("downloads_modal.empty_history_title")}</p>
         <p className="mt-2 max-w-sm text-sm text-(--color-muted)">
-          Las descargas completadas y fallidas apareceran aqui.
+          {t("downloads_modal.empty_history_desc")}
         </p>
       </div>
     );
@@ -359,7 +361,7 @@ function HistoryContent({
       {/* ── Fixed header with clear button ── */}
       <div className="flex shrink-0 items-center justify-between border-b border-(--surface-active-border)/50 px-6 py-3">
         <p className="text-xs font-medium text-(--color-muted)">
-          {completedJobs.length} {completedJobs.length === 1 ? "entrada" : "entradas"}
+          {t("downloads_modal.entry_count", { count: completedJobs.length })}
         </p>
         <button
           type="button"
@@ -367,7 +369,7 @@ function HistoryContent({
           className="inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
         >
           <Trash2 className="h-3 w-3" />
-          Limpiar historial
+          {t("downloads_modal.clear_history")}
         </button>
       </div>
 

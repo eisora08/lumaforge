@@ -180,9 +180,10 @@ export function getConsoleGameActionModel(game: LibraryGame): ConsoleGameActionM
   } else if (baseAction === "install") {
     // Installable game: ALWAYS show Install as primary (provider status is secondary only)
     action = "install";
-    // enabled = true only when Library/GameDetails install action is available (numeric Steam appId)
+    // enabled = true when Library/GameDetails install action is available (numeric Steam appId) or Epic
     const hasNumericAppId = !!game.appId && /^\d+$/.test(game.appId);
-    if (hasNumericAppId) {
+    const canEpicInstall = game.source === "epic" && game.isInstallable;
+    if (hasNumericAppId || canEpicInstall) {
       enabled = true;
     } else {
       enabled = false;
@@ -459,26 +460,25 @@ export async function handleConsolePrimaryAction(
   options: ConsoleGameActionOptions,
 ): Promise<ConsoleActionResult> {
   const appId = game.appId;
-  if (!appId) {
-    return { action: "unavailable", success: false, error: "no-appId" };
-  }
+  // Use an alternative key for games without numeric Steam appId (Epic, Debrid)
+  const flightKey = appId || game.providerGameId || game.id;
 
   // In-flight guard
-  if (_inFlight.has(appId)) {
-    const currentAction = _inFlight.get(appId)!;
+  if (_inFlight.has(flightKey)) {
+    const currentAction = _inFlight.get(flightKey)!;
     if (DEBUG_CONSOLE_ACTIONS) {
       console.log(
-        `[CONSOLE_ACTION][IN_FLIGHT] appid=${appId} current=${currentAction} attempted=${action}`,
+        `[CONSOLE_ACTION][IN_FLIGHT] key=${flightKey} current=${currentAction} attempted=${action}`,
       );
     }
     showWarning(`Action already in progress`, {
-      id: `console-inflight-${appId}`,
+      id: `console-inflight-${flightKey}`,
       duration: 2000,
     });
     return { action, success: false, error: "in-flight" };
   }
 
-  _inFlight.set(appId, action);
+  _inFlight.set(flightKey, action);
 
   try {
     switch (action) {
@@ -529,6 +529,38 @@ export async function handleConsolePrimaryAction(
           }
         }
 
+        // Epic: open Epic Games Launcher install dialog
+        if (game.source === "epic" && game.isInstallable) {
+          const { epicOpenInstall } = await import("../../services/tauri");
+          const { epicInstallTrackerService } = await import("../../services/epicInstallTrackerService");
+          const parts = game.providerGameId?.split(":");
+          const appName = parts && parts.length >= 3 ? parts[parts.length - 1] : parts?.[0];
+          if (appName) {
+            try {
+              await epicOpenInstall(appName);
+              epicInstallTrackerService.startTracking(appName, game.title, game.imageUrl);
+              showSuccess("Opening Epic Games Launcher to install the game…", {
+                id: `console-epic-install-${flightKey}`,
+                duration: 3000,
+              });
+              return { action, success: true };
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              showError(`Failed to start Epic install: ${msg}`, {
+                id: `console-epic-install-error-${flightKey}`,
+                duration: 3000,
+              });
+              return { action, success: false, error: msg };
+            }
+          } else {
+            showWarning("Cannot determine Epic game identity.", {
+              id: `console-epic-no-identity-${flightKey}`,
+              duration: 3000,
+            });
+            return { action, success: false, error: "no-epic-identity" };
+          }
+        }
+
         // Reuse Library/GameDetails install flow (installSteamApp + installTrackerService)
         if (!appId || !appId.match(/^\d+$/)) {
           showWarning("This game cannot be installed through Steam because it has no AppID.", {
@@ -562,6 +594,9 @@ export async function handleConsolePrimaryAction(
       }
 
       case "update": {
+        if (!appId) {
+          return { action, success: false, error: "no-appId" };
+        }
         const source = await resolveCachedSource(appId);
         if (source) {
           const pkg: PackageGame = {
@@ -648,6 +683,6 @@ export async function handleConsolePrimaryAction(
       }
     }
   } finally {
-    _inFlight.delete(appId);
+    _inFlight.delete(flightKey);
   }
 }

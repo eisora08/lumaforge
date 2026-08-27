@@ -332,10 +332,17 @@ function GameLauncherTileInner({
   const action = getLauncherGamePrimaryAction(game);
   const hasLua = game.luaScripts.length > 0;
   useInstallTracker(game.appId);
-  const { getJobByAppId } = useDownloadQueueContext();
-  const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
+  const { getJobByAppId, removeJob } = useDownloadQueueContext();
+  const epicAppName = game.source === "epic" && game.providerGameId
+    ? game.providerGameId.split(":").pop()
+    : undefined;
+  const installJob = game.appId
+    ? getJobByAppId(game.appId)
+    : epicAppName
+      ? getJobByAppId(epicAppName)
+      : undefined;
   const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
-  const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
+  const hasActiveInstall = (installJob?.type === "steam-install" || installJob?.type === "epic-install") && activeInstallStatuses.includes(installJob.status);
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
@@ -703,11 +710,25 @@ function GameLauncherTileInner({
                 onClick={() => { setMenuOpen(false); onInstall(game); }}
               />
             ) : (
-              <MenuItem
-                label={installJob?.status === "waiting" || installJob?.status === "queued" ? t("context_menu.waiting_steam", "Waiting for Steam…") : t("context_menu.installing", "Installing…")}
-                icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                disabled
-              />
+              <>
+                <MenuItem
+                  label={
+                    installJob?.status === "waiting" || installJob?.status === "queued"
+                      ? (installJob?.type === "epic-install" ? t("context_menu.waiting_epic", "Waiting for Epic…") : t("context_menu.waiting_steam", "Waiting for Steam…"))
+                      : t("context_menu.installing", "Installing…")
+                  }
+                  icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  disabled
+                />
+                <MenuItem
+                  label={t("context_menu.cancel_install", "Cancel")}
+                  icon={<X className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    if (installJob) removeJob(installJob.id);
+                  }}
+                />
+              </>
             )}
             {luaUpdateStatus === "update-available" && game.steamInstalled && (
               <MenuItem

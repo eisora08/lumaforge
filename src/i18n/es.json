@@ -945,12 +945,14 @@
     "stopping": "Deteniendo...",
     "installProgress": {
       "waitingForSteam": "Esperando a Steam…",
+      "waitingForEpic": "Esperando al Epic Games Launcher…",
       "downloading": "Descargando {{pct}}%",
       "installing": "Instalando…",
       "checking": "Verificando…",
       "paused": "Pausado"
     },
     "installTakingLonger": "La instalación está tardando más de lo esperado?",
+    "cancelInstall": "Cancelar",
     "retry": "Reintentar",
     "dismiss": "Descartar",
     "uninstalling": "Desinstalando…",
@@ -1271,6 +1273,8 @@
     "select_exe": "Seleccionar Ejecutable",
     "install": "Instalar",
     "waiting_steam": "Esperando a Steam…",
+    "waiting_epic": "Esperando a Epic…",
+    "cancel_install": "Cancelar",
     "update_package": "Actualizar Paquete",
     "add_favorites": "Agregar a favoritos",
     "remove_favorites": "Quitar de favoritos",
@@ -2635,5 +2639,34 @@
       "description": "Arrastra un .zip, .lua o .manifest. LumaForge enviar\u00e1 cada archivo a su carpeta correcta.",
       "browse": "Buscar archivos"
     }
+  },
+  "install_confirm": {
+    "title": "Instalar Juego",
+    "steam_subtitle": "Juego de Steam",
+    "epic_subtitle": "Juego de Epic",
+    "steam_desc": "{{title}} se abrirá en Steam para manejar la instalación fuera de LumaForge.",
+    "steam_after": "Después de que la instalación termine, LumaForge la detectará automáticamente y actualizará tu biblioteca.",
+    "epic_desc": "Epic Games Launcher se abrirá para manejar la instalación de {{title}}.",
+    "epic_after": "Después de que la instalación termine, LumaForge la detectará automáticamente y actualizará tu biblioteca.",
+    "cancel": "Cancelar",
+    "install": "Instalar",
+    "hint_select": "Seleccionar",
+    "hint_back": "Atrás"
+  },
+  "downloads_modal": {
+    "title": "Descargas",
+    "nav_overview": "Resumen",
+    "nav_history": "Historial",
+    "active_count": "{{count}} descarga(s) activa(s)",
+    "active_count_one": "{{count}} descarga activa",
+    "no_active": "Sin descargas activas",
+    "empty_overview_title": "No hay descargas activas",
+    "empty_overview_desc": "Instala un juego o paquete desde la Tienda para ver su progreso aquí.",
+    "interrupted": "Interrumpidas",
+    "empty_history_title": "Sin historial",
+    "empty_history_desc": "Las descargas completadas y fallidas aparecerán aquí.",
+    "entry_count": "{{count}} entrada(s)",
+    "entry_count_one": "{{count}} entrada",
+    "clear_history": "Limpiar historial"
   }
 }

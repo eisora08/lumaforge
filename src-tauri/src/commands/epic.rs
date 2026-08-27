@@ -966,6 +966,66 @@ pub fn scan_epic_installed_games(
     Ok(result)
 }
 
+/// Check if a specific Epic game is installed by looking for its AppName in manifests.
+#[tauri::command]
+pub fn check_epic_game_installed(
+    app_name: String,
+) -> Result<EpicInstallCheckResult, String> {
+    let manifest_dir = resolve_manifest_directory(None);
+    if !manifest_dir.is_dir() {
+        return Ok(EpicInstallCheckResult {
+            is_installed: false,
+            install_location: None,
+            display_name: None,
+        });
+    }
+
+    let entries = fs::read_dir(&manifest_dir).map_err(|e| {
+        format!(
+            "Could not read Epic manifests directory {}: {e}",
+            manifest_dir.display()
+        )
+    })?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("item") {
+            continue;
+        }
+        if let Some(manifest) = parse_manifest_file(&path) {
+            if manifest
+                .app_name
+                .as_deref()
+                .map(|n| n.eq_ignore_ascii_case(&app_name))
+                .unwrap_or(false)
+            {
+                let is_installed = manifest.install_location.is_some()
+                    && manifest.b_is_incomplete_install != Some(true);
+                return Ok(EpicInstallCheckResult {
+                    is_installed,
+                    install_location: manifest.install_location,
+                    display_name: manifest.display_name,
+                });
+            }
+        }
+    }
+
+    Ok(EpicInstallCheckResult {
+        is_installed: false,
+        install_location: None,
+        display_name: None,
+    })
+}
+
+/// Result of checking if a specific Epic game is installed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpicInstallCheckResult {
+    pub is_installed: bool,
+    pub install_location: Option<String>,
+    pub display_name: Option<String>,
+}
+
 // ─── Launch result ──────────────────────────────────────────────────────────
 
 /// Result of an Epic game launch attempt.

@@ -1,4 +1,4 @@
-﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import i18n from "i18next";
 import type { LibraryGame } from "../types/libraryGame";
 import type { AppSettings } from "../types/settings";
@@ -33,6 +33,7 @@ import {
   refreshSingleGameSteamStatus,
 } from "../services/providerStatusReconciliation";
 import { installTrackerService } from "../services/installTrackingService";
+import { epicInstallTrackerService } from "../services/epicInstallTrackerService";
 import { setInstalledAppIds } from "../services/providerStatusStore";
 import {
   reportLibraryProgress,
@@ -1526,6 +1527,19 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       console.log(`[INSTALL_REAL] appid=${appId} phase=play-action action=play`);
     });
   }, [updateGame]);
+
+  // Subscribe to Epic install completion events - re-scan Epic manifests to update isPlayable/isInstallable
+  useEffect(() => {
+    return epicInstallTrackerService.onInstalled(async (appName) => {
+      console.log("[EPIC_INSTALL_DETECTED] appName=" + appName + " phase=detected");
+      try {
+        await refreshEpicGames(settingsRef.current.steamRoot || undefined);
+        console.log("[EPIC_INSTALL_DETECTED] appName=" + appName + " phase=refresh-ok");
+      } catch (err) {
+        console.warn("[EPIC_INSTALL_DETECTED] appName=" + appName + " phase=refresh-error", err);
+      }
+    });
+  }, []);
 
   // â”€â”€ Uninstall detection: periodic check for removed Steam appmanifests â”€â”€
   useEffect(() => {

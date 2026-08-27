@@ -19,7 +19,7 @@ type InstallListener = (state: InstallState) => void;
 type InstalledHandler = (appId: string) => void;
 
 const POLL_INTERVAL_MS = 3000;
-const TIMEOUT_MS = 5 * 60 * 1000;
+const TIMEOUT_MS = 2 * 60 * 1000;
 const ELAPSED_UPDATE_INTERVAL_MS = 1000;
 
 class InstallTrackerService {

@@ -945,12 +945,14 @@
     "stopping": "Stopping...",
     "installProgress": {
       "waitingForSteam": "Waiting for Steam…",
+      "waitingForEpic": "Waiting for Epic Games Launcher…",
       "downloading": "Downloading {{pct}}%",
       "installing": "Installing…",
       "checking": "Checking…",
       "paused": "Paused"
     },
     "installTakingLonger": "Install taking longer than expected?",
+    "cancelInstall": "Cancel",
     "retry": "Retry",
     "dismiss": "Dismiss",
     "uninstalling": "Uninstalling…",
@@ -1271,6 +1273,8 @@
     "select_exe": "Select Executable",
     "install": "Install",
     "waiting_steam": "Waiting for Steam…",
+    "waiting_epic": "Waiting for Epic…",
+    "cancel_install": "Cancel",
     "update_package": "Update Package",
     "add_favorites": "Add to favorites",
     "remove_favorites": "Remove from favorites",
@@ -2635,5 +2639,34 @@
       "description": "Arrastra un .zip, .lua o .manifest. LumaForge enviar\u00e1 cada archivo a su carpeta correcta.",
       "browse": "Buscar archivos"
     }
+  },
+  "install_confirm": {
+    "title": "Install Game",
+    "steam_subtitle": "Steam Game",
+    "epic_subtitle": "Epic Game",
+    "steam_desc": "{{title}} will open in Steam to handle the installation outside LumaForge.",
+    "steam_after": "After installation completes, LumaForge will detect it automatically and update your library.",
+    "epic_desc": "Epic Games Launcher will open to handle the installation of {{title}}.",
+    "epic_after": "After installation completes, LumaForge will detect it automatically and update your library.",
+    "cancel": "Cancel",
+    "install": "Install",
+    "hint_select": "Select",
+    "hint_back": "Back"
+  },
+  "downloads_modal": {
+    "title": "Downloads",
+    "nav_overview": "Overview",
+    "nav_history": "History",
+    "active_count": "{{count}} download(s) active",
+    "active_count_one": "{{count}} download active",
+    "no_active": "No active downloads",
+    "empty_overview_title": "No active downloads",
+    "empty_overview_desc": "Install a game or package from the Store to see its progress here.",
+    "interrupted": "Interrupted",
+    "empty_history_title": "No history",
+    "empty_history_desc": "Completed and failed downloads will appear here.",
+    "entry_count": "{{count}} entry(ies)",
+    "entry_count_one": "{{count}} entry",
+    "clear_history": "Clear history"
   }
 }

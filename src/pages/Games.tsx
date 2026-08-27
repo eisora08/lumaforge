@@ -9,6 +9,7 @@ import {
 
 import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
+import InstallConfirmModal from "../components/install/InstallConfirmModal";
 import { GridSkeleton } from "../components/common/Skeleton";
 
 import { useLibraryGames } from "../context/LibraryGamesContext";
@@ -16,6 +17,7 @@ import { useSettings } from "../context/SettingsContext";
 import { useGameSession } from "../context/GameSessionContext";
 import { installSteamApp, deleteLuaScript, scanInstalledLuaScripts } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
+import { epicInstallTrackerService } from "../services/epicInstallTrackerService";
 
 import type { LibraryGame } from "../types/libraryGame";
 
@@ -36,6 +38,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
 
   const [filter, setFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
+  const [installConfirmGame, setInstallConfirmGame] = useState<LibraryGame | null>(null);
   const queuedMediaRef = useRef<Set<string>>(new Set());
   const { confirm } = useConfirm();
 
@@ -142,25 +145,44 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
   }
 
   async function handleInstall(game: LibraryGame) {
+    // Epic: show confirmation modal
+    if (game.source === "epic" && game.isInstallable) {
+      setInstallConfirmGame(game);
+      return;
+    }
+    // Steam: show confirmation modal
+    if (game.appId) {
+      setInstallConfirmGame(game);
+      return;
+    } else {
+      showWarning("This game cannot be installed through Steam because it has no AppID.", { title: "Not available" });
+    }
+  }
+
+  async function handleConfirmInstall() {
+    const game = installConfirmGame;
+    if (!game) return;
+    setInstallConfirmGame(null);
+
     // Epic: open Epic Games Launcher install dialog
     if (game.source === "epic" && game.isInstallable) {
       const { epicOpenInstall } = await import("../services/tauri");
       const parts = game.providerGameId?.split(":");
       const appName = parts && parts.length >= 3 ? parts[parts.length - 1] : parts?.[0];
-      console.log("[EPIC_INSTALL] providerGameId:", game.providerGameId, "appName:", appName);
       if (appName) {
         try {
           await epicOpenInstall(appName);
+          epicInstallTrackerService.startTracking(appName, game.title, game.imageUrl);
         } catch (err) {
-          console.error("[EPIC_INSTALL] epicOpenInstall failed:", err);
           showError(String(err), { title: "Error" });
         }
       } else {
-        console.warn("[EPIC_INSTALL] no appName found in providerGameId:", game.providerGameId);
         showWarning("Cannot determine Epic game identity.", { title: "Not available" });
       }
       return;
     }
+
+    // Steam: direct install
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
@@ -168,8 +190,6 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
       } catch (err) {
         showError(String(err), { title: "Error" });
       }
-    } else {
-      showWarning("This game cannot be installed through Steam because it has no AppID.", { title: "Not available" });
     }
   }
 
@@ -312,6 +332,14 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
           </div>
         )}
       </div>
+      {installConfirmGame && (
+        <InstallConfirmModal
+          game={installConfirmGame}
+          open={true}
+          onClose={() => setInstallConfirmGame(null)}
+          onConfirm={handleConfirmInstall}
+        />
+      )}
     </div>
   );
 }

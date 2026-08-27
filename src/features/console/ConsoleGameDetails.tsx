@@ -460,7 +460,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     }
     installModalClosedAtRef.current = Date.now();
     setInstallModalOpen(false);
-    if (!game || !game.appId) return;
+    if (!game) return;
+    if (!game.appId && game.source !== "epic") return;
     handleConsolePrimaryAction(game, "install", {
       settings: appSettings,
       addJob,

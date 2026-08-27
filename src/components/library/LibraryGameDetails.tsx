@@ -672,11 +672,18 @@ export default function LibraryGameDetails({
   const logoMaxHeight = "clamp(80px, 18vh, 240px)";
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
-  const { installState, dismiss } = useInstallTracker(game.appId);
-  const { getJobByAppId } = useDownloadQueueContext();
-  const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
+  useInstallTracker(game.appId);
+  const { getJobByAppId, removeJob } = useDownloadQueueContext();
+  const epicAppName = game.source === "epic" && game.providerGameId
+    ? game.providerGameId.split(":").pop()
+    : undefined;
+  const installJob = game.appId
+    ? getJobByAppId(game.appId)
+    : epicAppName
+      ? getJobByAppId(epicAppName)
+      : undefined;
   const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
-  const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
+  const hasActiveInstall = (installJob?.type === "steam-install" || installJob?.type === "epic-install") && activeInstallStatuses.includes(installJob.status);
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
@@ -695,9 +702,7 @@ export default function LibraryGameDetails({
     ? "uninstalling"
     : hasActiveInstall
       ? "installing"
-      : installState.status === "timeout"
-        ? "timeout"
-        : action;
+      : action;
   if (DEBUG_LAUNCH_BUTTON_RENDER) {
     console.log(`[GAME_ACTION_RENDER] appid=${game.appId} location=gamedetails uninstallPending=${hasPendingUninstall} baseAction=${action} effectiveAction=${effectiveAction} renderedPrimary=${hasPendingUninstall ? "Uninstalling" : effectiveAction === "play" ? "Play" : effectiveAction === "install" ? "Install" : effectiveAction}`);
   }
@@ -1594,7 +1599,7 @@ export default function LibraryGameDetails({
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
             <div className="shrink-0">
-              {effectiveAction === "play" && !hasActiveInstall && installState.status !== "timeout" && (
+              {effectiveAction === "play" && !hasActiveInstall && (
                 <>
                   {(!launchInfo || launchInfo.state === "idle" || launchInfo.state === "error") && (
                     <button
@@ -1691,63 +1696,34 @@ export default function LibraryGameDetails({
                 </>
               )}
               {hasActiveInstall ? (
-                <div className="flex flex-col gap-2 rounded-xl bg-amber-500/10 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="inline-flex items-center gap-2 text-sm font-medium text-amber-400">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {installJob.message || (
-                        installJob.status === "waiting" || installJob.status === "queued"
-                          ? t("library_details.installProgress.waitingForSteam")
-                          : installJob.status === "downloading"
-                            ? t("library_details.installProgress.downloading", { pct: installJob.progress })
-                            : installJob.status === "extracting" || installJob.status === "installing"
-                              ? t("library_details.installProgress.installing")
-                              : installJob.status === "checking"
-                                ? t("library_details.installProgress.checking")
-                                : installJob.status === "paused"
-                                  ? t("library_details.installProgress.paused")
-                                  : t("library_details.installProgress.installing")
-                      )}
-                    </div>
-                    <span className="text-[11px] text-amber-400/50">
-                      {/* elapsed time not available from DownloadJob — tracker hook still provides it */}
-                      {installState.elapsedMs > 0 ? `${Math.floor(installState.elapsedMs / 1000)}s` : ""}
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                    {installJob.progressMode === "determinate" && installJob.progress > 0 ? (
-                      <div
-                        className="h-full rounded-full bg-amber-400 transition-all duration-500 ease-out"
-                        style={{ width: `${Math.min(100, installJob.progress)}%` }}
-                      />
-                    ) : (
-                      <div className="h-full w-1/3 animate-pulse rounded-full bg-amber-400/50" />
-                    )}
-                  </div>
-                  {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
-                    <div className="text-[11px] text-amber-400/40">
-                      {formatBytes(installJob.bytesRead, t)} / {formatBytes(installJob.totalBytes, t)}
-                    </div>
-                  )}
-                </div>
-              ) : installState.status === "timeout" ? (
-                <div className="inline-flex items-center gap-2">
-                  <span className="text-sm text-amber-400/70">{t("library_details.installTakingLonger")}</span>
+                <div className="inline-flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => onInstall(game)}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+                    disabled
+                    className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-amber-500/20 px-4 py-2 text-sm font-bold text-amber-400 transition"
                   >
-                    <Download className="h-4 w-4" />
-                    {t("library_details.retry")}
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {installJob.status === "waiting" || installJob.status === "queued"
+                      ? (installJob.type === "epic-install"
+                          ? t("library_details.installProgress.waitingForEpic", "Waiting for Epic Games Launcher…")
+                          : t("library_details.installProgress.waitingForSteam"))
+                      : installJob.status === "downloading"
+                        ? t("library_details.installProgress.downloading", { pct: installJob.progress })
+                        : installJob.status === "extracting" || installJob.status === "installing"
+                          ? t("library_details.installProgress.installing")
+                          : installJob.status === "checking"
+                            ? t("library_details.installProgress.checking")
+                            : installJob.status === "paused"
+                              ? t("library_details.installProgress.paused")
+                              : t("library_details.installProgress.installing")}
                   </button>
                   <button
                     type="button"
-                    onClick={dismiss}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/5"
+                    onClick={() => { if (installJob) removeJob(installJob.id); }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/5"
                   >
                     <X className="h-4 w-4" />
-                    {t("library_details.dismiss")}
+                    {t("library_details.cancelInstall", "Cancel")}
                   </button>
                 </div>
               ) : hasPendingUninstall ? (

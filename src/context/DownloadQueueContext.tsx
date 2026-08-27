@@ -8,6 +8,7 @@ import {
 
 import { DownloadJob, DownloadStatus } from "../types/download";
 import { useSteamInstallSync } from "../hooks/useSteamInstallSync";
+import { useEpicInstallSync } from "../hooks/useEpicInstallSync";
 import { useDebridInstallSync, type DebridInstallHandle } from "../hooks/useDebridInstallSync";
 import { cancelDebridDownload, pauseDebridDownload } from "../services/tauri";
 import type { DebridInstallMethod, RepackInstallOptions } from "../services/debridInstallChoice";
@@ -161,6 +162,15 @@ export function DownloadQueueProvider({
     removeJob: (jobId) => syncRef.current.removeJob(jobId),
   });
 
+  // Bridge Epic install tracker into the download queue
+  const epicSyncRef = useRef({ addEpicInstallJob, updateJob, removeJob });
+  epicSyncRef.current = { addEpicInstallJob, updateJob, removeJob };
+  useEpicInstallSync({
+    addEpicInstallJob: (appName, title, artworkUrl) => epicSyncRef.current.addEpicInstallJob(appName, title, artworkUrl),
+    updateJob: (jobId, update) => epicSyncRef.current.updateJob(jobId, update as any),
+    removeJob: (jobId) => epicSyncRef.current.removeJob(jobId),
+  });
+
   // Bridge Debrid install into the download queue
   const debridInstallRef = useRef<DebridInstallHandle>({ startInstall: async () => {} });
   const debridHandle = useDebridInstallSync(updateJob);
@@ -228,6 +238,43 @@ export function DownloadQueueProvider({
     };
 
     // Replace any existing terminal job for same appId
+    const filtered = jobs.filter((j) => j.id !== jobId);
+    const nextJobs = [job, ...filtered];
+    commitJobs(nextJobs);
+
+    return jobId;
+  }
+
+  function addEpicInstallJob(appName: string, title: string, artworkUrl?: string): string {
+    const jobId = `epic-install-${appName}`;
+    const existing = jobs.find((j) => j.id === jobId);
+    if (existing && activeStatuses.includes(existing.status)) {
+      return jobId;
+    }
+
+    const now = new Date().toISOString();
+
+    const job: DownloadJob = {
+      id: jobId,
+      appId: appName,
+      gameTitle: title,
+      providerId: "epic",
+      providerName: "Epic Games",
+      fileType: "manifest",
+      type: "epic-install",
+      progressMode: "indeterminate",
+      message: "Waiting for Epic Games Launcher\u2026",
+      artworkUrl,
+
+      status: "waiting",
+      progress: 0,
+      bytesRead: 0,
+      totalBytes: 0,
+
+      createdAt: now,
+      updatedAt: now,
+    };
+
     const filtered = jobs.filter((j) => j.id !== jobId);
     const nextJobs = [job, ...filtered];
     commitJobs(nextJobs);
@@ -407,6 +454,7 @@ export function DownloadQueueProvider({
       jobs,
       addJob,
       addSteamInstallJob,
+      addEpicInstallJob,
       addDebridInstallJob,
       updateJob,
       cancelJob,
