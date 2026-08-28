@@ -1435,6 +1435,10 @@ export default function LibraryGameDetails({
               {(() => {
                 const coverRaw = game.coverPath || canonicalAppInfo?.media?.coverPath;
                 if (!coverRaw) return <div className="h-7 w-7 shrink-0 rounded-md bg-white/5 ring-1 ring-white/10" />;
+                // Skip unresolved relative paths — they can't render as asset:// URLs
+                if (coverRaw.startsWith("media/") || coverRaw.startsWith("img/") || coverRaw.startsWith("games/")) {
+                  return <div className="h-7 w-7 shrink-0 rounded-md bg-white/5 ring-1 ring-white/10" />;
+                }
                 const coverUrl = coverRaw.startsWith("http") || coverRaw.startsWith("asset://") || coverRaw.startsWith("data:") || coverRaw.startsWith("file://")
                   ? coverRaw
                   : isLocalPath(coverRaw) ? localPathToUrl(coverRaw) : coverRaw;
@@ -2578,7 +2582,7 @@ export default function LibraryGameDetails({
                           }}
                           className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
                         >
-                          {achievementsLoading ? t("library_details.loading") : t("library_details.refreshAchievements")}
+                          {achievementsLoading ? t("library_details.loading") : t("library_details.refresh_achievements")}
                         </button>
                         {achSource === "steam-official" && (
                           <button
@@ -2672,13 +2676,13 @@ export default function LibraryGameDetails({
                         }}
                         className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
                       >
-                        {achievementsLoading ? t("library_details.loading") : t("library_details.refreshAchievements")}
+                        {achievementsLoading ? t("library_details.loading") : t("library_details.refresh_achievements")}
                       </button>
                     </div>
                   ) : (
                     <div className="mt-3">
                       <p className="text-xs text-(--color-muted)">
-                        {t("library_details.achievementsNotSupported")}
+                        {t("library_details.achievements_not_supported")}
                       </p>
                     </div>
                   )}

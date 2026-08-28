@@ -1375,7 +1375,13 @@ export default function GameEditDialog({
           invalidateResolvedMediaCache(effectiveAppId);
           notifyMediaUpdated(effectiveAppId);
           setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
-          updateGame(effectiveAppId, {} as Partial<LibraryGame>);
+          updateGame(effectiveAppId, {
+            coverPath: updatedMedia.coverPath ?? undefined,
+            landscapePath: updatedMedia.landscapePath ?? undefined,
+            backgroundPath: updatedMedia.backgroundPath ?? undefined,
+            logoPath: updatedMedia.logoPath ?? undefined,
+            iconPath: updatedMedia.iconPath ?? undefined,
+          });
           onMediaChanged?.();
         }
         return;
@@ -1392,7 +1398,27 @@ export default function GameEditDialog({
           iconPath: updatedMedia.iconPath ?? undefined,
         });
         if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][EPIC_OVERRIDES_WRITTEN] providerGameId=${epicProviderGameId} roles=${Object.keys(updatedMedia).filter(k => updatedMedia[k as keyof GameMediaPaths]).join(",")}`);
-        return;
+        // Refresh UI — same as Manual/Steam branches
+        const epicGameId = `epic:${epicProviderGameId}`;
+        const mediaPatch = {
+          coverPath: updatedMedia.coverPath ?? undefined,
+          landscapePath: updatedMedia.landscapePath ?? undefined,
+          backgroundPath: updatedMedia.backgroundPath ?? undefined,
+          logoPath: updatedMedia.logoPath ?? undefined,
+          iconPath: updatedMedia.iconPath ?? undefined,
+        };
+        if (effectiveAppId) {
+          invalidateResolvedMediaCache(effectiveAppId);
+          notifyMediaUpdated(effectiveAppId);
+        }
+        setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
+        // Update by Epic id (appId is undefined for Epic games)
+        updateGame(epicGameId, mediaPatch);
+        // Also try Steam appId in case the game has one
+        if (effectiveAppId && effectiveAppId !== epicGameId) {
+          updateGame(effectiveAppId, mediaPatch);
+        }
+        onMediaChanged?.();
       }
 
       // ── Steam / Debrid+appId / Manual+appId — persist to appinfo ──
@@ -1408,7 +1434,13 @@ export default function GameEditDialog({
       invalidateResolvedMediaCache(effectiveAppId);
       notifyMediaUpdated(effectiveAppId);
       setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
-      updateGame(effectiveAppId, {} as Partial<LibraryGame>);
+      updateGame(effectiveAppId, {
+        coverPath: updatedMedia.coverPath ?? undefined,
+        landscapePath: updatedMedia.landscapePath ?? undefined,
+        backgroundPath: updatedMedia.backgroundPath ?? undefined,
+        logoPath: updatedMedia.logoPath ?? undefined,
+        iconPath: updatedMedia.iconPath ?? undefined,
+      });
       onMediaChanged?.();
     },
     [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId, onMediaChanged],

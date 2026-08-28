@@ -36,6 +36,8 @@ type HeroGameResult = {
   manualGame?: LibraryGame;
   /** When set, the hero is an Epic LibraryGame */
   epicGame?: LibraryGame;
+  /** When set, the hero is a Debrid LibraryGame */
+  debridGame?: LibraryGame;
 };
 
 function formatElapsed(startedAt: number): string {
@@ -130,7 +132,7 @@ function resolveRunningLibraryGame(
 
 // ─── Non-running hero selection (kept for favorites, continue playing, etc.) ─
 
-type HeroCandidate = { type: "snapshot" | "manual" | "epic"; game: SnapshotGame | LibraryGame; sourceIndex: number };
+type HeroCandidate = { type: "snapshot" | "manual" | "epic" | "debrid"; game: SnapshotGame | LibraryGame; sourceIndex: number };
 
 function buildManualPlaytime(manualGames: LibraryGame[]) {
   const map = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
@@ -148,6 +150,16 @@ function buildEpicPlaytime(epicGames: LibraryGame[]) {
     const ptKey = resolvePlaytimeKey(eg);
     const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
     if (entry) map.set(eg.id, { lastPlayedAt: entry.lastPlayedAt ?? 0, totalSeconds: entry.totalPlaytimeSeconds });
+  }
+  return map;
+}
+
+function buildDebridPlaytime(debridGames: LibraryGame[]) {
+  const map = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
+  for (const dg of debridGames) {
+    const ptKey = resolvePlaytimeKey(dg);
+    const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+    if (entry) map.set(dg.id, { lastPlayedAt: entry.lastPlayedAt ?? 0, totalSeconds: entry.totalPlaytimeSeconds });
   }
   return map;
 }
@@ -171,11 +183,13 @@ function buildHeroCandidates(
   favoriteIds: Set<string>,
   manualGames: LibraryGame[],
   epicGames: LibraryGame[],
+  debridGames: LibraryGame[],
   heroSources: string[],
   sectionLimits: Record<string, number> = {},
 ): HeroCandidate[] {
   const manualPlaytime = buildManualPlaytime(manualGames);
   const epicPlaytime = buildEpicPlaytime(epicGames);
+  const debridPlaytime = buildDebridPlaytime(debridGames);
   const candidates: HeroCandidate[] = [];
 
   for (let si = 0; si < heroSources.length; si++) {
@@ -204,10 +218,20 @@ function buildHeroCandidates(
           const lp = (ep?.lastPlayedAt ?? 0) * 1000;
           if (lp > 0) all.push({ type: "epic", game: eg, sourceIndex: si });
         }
+        for (const dg of debridGames) {
+          if (!dg.title) continue;
+          const dp = debridPlaytime.get(dg.id);
+          const lp = (dp?.lastPlayedAt ?? 0) * 1000;
+          if (lp > 0) all.push({ type: "debrid", game: dg, sourceIndex: si });
+        }
         all.sort((a, b) => {
-          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : (a.type === "epic" ? ((epicPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
-          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
-          return bLp - aLp;
+          const getLp = (c: HeroCandidate) => {
+            if (c.type === "snapshot") return getEffectiveLastPlayedMs(c.game as SnapshotGame);
+            if (c.type === "epic") return (epicPlaytime.get((c.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000;
+            if (c.type === "debrid") return (debridPlaytime.get((c.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000;
+            return (manualPlaytime.get((c.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000;
+          };
+          return getLp(b) - getLp(a);
         });
         candidates.push(...all.slice(0, sourceLimit));
         break;
@@ -229,6 +253,12 @@ function buildHeroCandidates(
           const favKey = eg.libraryId || eg.id;
           if (favoriteIds.has(favKey) && hasManualValidMedia(eg)) {
             favs.push({ type: "epic", game: eg, sourceIndex: si });
+          }
+        }
+        for (const dg of debridGames) {
+          const favKey = dg.libraryId || dg.id;
+          if (favoriteIds.has(favKey) && hasManualValidMedia(dg)) {
+            favs.push({ type: "debrid", game: dg, sourceIndex: si });
           }
         }
         candidates.push(...favs.slice(0, sourceLimit));
@@ -254,10 +284,20 @@ function buildHeroCandidates(
           const lp = (ep?.lastPlayedAt ?? 0) * 1000;
           if (lp > 0) all.push({ type: "epic", game: eg, sourceIndex: si });
         }
+        for (const dg of debridGames) {
+          if (!dg.title) continue;
+          const dp = debridPlaytime.get(dg.id);
+          const lp = (dp?.lastPlayedAt ?? 0) * 1000;
+          if (lp > 0) all.push({ type: "debrid", game: dg, sourceIndex: si });
+        }
         all.sort((a, b) => {
-          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : (a.type === "epic" ? ((epicPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
-          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
-          return bLp - aLp;
+          const getLp = (c: HeroCandidate) => {
+            if (c.type === "snapshot") return getEffectiveLastPlayedMs(c.game as SnapshotGame);
+            if (c.type === "epic") return (epicPlaytime.get((c.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000;
+            if (c.type === "debrid") return (debridPlaytime.get((c.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000;
+            return (manualPlaytime.get((c.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000;
+          };
+          return getLp(b) - getLp(a);
         });
         candidates.push(...all.slice(0, sourceLimit));
         break;
@@ -277,10 +317,18 @@ function buildHeroCandidates(
           if (!eg.title) continue;
           all.push({ type: "epic", game: eg, sourceIndex: si });
         }
+        for (const dg of debridGames) {
+          if (!dg.title) continue;
+          all.push({ type: "debrid", game: dg, sourceIndex: si });
+        }
         all.sort((a, b) => {
-          const aSec = a.type === "snapshot" ? getPlaytimeSecondsForAppId((a.game as SnapshotGame).appId) : (a.type === "epic" ? (epicPlaytime.get((a.game as LibraryGame).id)?.totalSeconds ?? 0) : (manualPlaytime.get((a.game as LibraryGame).id)?.totalSeconds ?? 0));
-          const bSec = b.type === "snapshot" ? getPlaytimeSecondsForAppId((b.game as SnapshotGame).appId) : (b.type === "epic" ? (epicPlaytime.get((b.game as LibraryGame).id)?.totalSeconds ?? 0) : (manualPlaytime.get((b.game as LibraryGame).id)?.totalSeconds ?? 0));
-          return bSec - aSec;
+          const getSec = (c: HeroCandidate) => {
+            if (c.type === "snapshot") return getPlaytimeSecondsForAppId((c.game as SnapshotGame).appId);
+            if (c.type === "epic") return epicPlaytime.get((c.game as LibraryGame).id)?.totalSeconds ?? 0;
+            if (c.type === "debrid") return debridPlaytime.get((c.game as LibraryGame).id)?.totalSeconds ?? 0;
+            return manualPlaytime.get((c.game as LibraryGame).id)?.totalSeconds ?? 0;
+          };
+          return getSec(b) - getSec(a);
         });
         candidates.push(...all.slice(0, sourceLimit));
         break;
@@ -327,6 +375,11 @@ function buildHeroCandidates(
             manuals.push({ type: "epic", game: eg, sourceIndex: si });
           }
         }
+        for (const dg of debridGames) {
+          if (dg.title && hasManualValidMedia(dg)) {
+            manuals.push({ type: "debrid", game: dg, sourceIndex: si });
+          }
+        }
         candidates.push(...manuals.slice(0, sourceLimit));
         break;
       }
@@ -352,6 +405,7 @@ function pickNonRunningHero(
   _favoriteIds: Set<string>,
   manualGames: LibraryGame[],
   epicGames: LibraryGame[],
+  debridGames: LibraryGame[],
   _heroSources: string[],
   heroAutoRotate: boolean,
   rotateIndex: number,
@@ -374,6 +428,7 @@ function pickNonRunningHero(
     const c = heroCandidates[idx];
     if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
     if (c.type === "epic") return { game: null, sessionKey: null, epicGame: c.game as LibraryGame };
+    if (c.type === "debrid") return { game: null, sessionKey: null, debridGame: c.game as LibraryGame };
     return { game: null, sessionKey: null, manualGame: c.game as LibraryGame };
   }
 
@@ -382,6 +437,7 @@ function pickNonRunningHero(
     const c = representative[0];
     if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
     if (c.type === "epic") return { game: null, sessionKey: null, epicGame: c.game as LibraryGame };
+    if (c.type === "debrid") return { game: null, sessionKey: null, debridGame: c.game as LibraryGame };
     return { game: null, sessionKey: null, manualGame: c.game as LibraryGame };
   }
 
@@ -395,6 +451,10 @@ function pickNonRunningHero(
 
   if (epicGames.length > 0 && epicGames[0].title) {
     return { game: null, sessionKey: null, epicGame: epicGames[0] };
+  }
+
+  if (debridGames.length > 0 && debridGames[0].title) {
+    return { game: null, sessionKey: null, debridGame: debridGames[0] };
   }
 
   const titledGame = snapshotGames.find((game) => game.title);
@@ -484,6 +544,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     [libraryGames],
   );
 
+  const debridGames = useMemo(
+    () => libraryGames.filter((g) => g.source === "debrid" && g.title),
+    [libraryGames],
+  );
+
   // Hero sources from settings
   const heroSources = settings.dashboardHeroSources ?? ["continuePlaying", "favorites"];
   const heroAutoRotate = settings.dashboardHeroAutoRotate ?? false;
@@ -501,8 +566,8 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   // Build candidates from selected hero sources (for non-running rotate + single-pick)
   const heroCandidates = useMemo(() => {
-    return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, heroSources, sectionLimits);
-  }, [snapshotGames, favoriteIds, manualGames, epicGames, heroSources, sectionLimits]);
+    return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, debridGames, heroSources, sectionLimits);
+  }, [snapshotGames, favoriteIds, manualGames, epicGames, debridGames, heroSources, sectionLimits]);
 
   // ─── DIAGNOSTIC: log candidates by source ──
   useEffect(() => {
@@ -539,9 +604,9 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   }, [heroAutoRotate, heroRotateSeconds, heroCandidates.length]);
 
   // Non-running hero selection (favorites, continue playing, etc.)
-  const { game: heroGame, manualGame: heroManualGame, epicGame: heroEpicGame } = useMemo<HeroGameResult>(() => {
-    return pickNonRunningHero(snapshotGames, favoriteIds, manualGames, epicGames, heroSources, heroAutoRotate, rotateIndex, heroCandidates);
-  }, [snapshotGames, favoriteIds, manualGames, epicGames, heroSources, heroCandidates, heroAutoRotate, rotateIndex]);
+  const { game: heroGame, manualGame: heroManualGame, epicGame: heroEpicGame, debridGame: heroDebridGame } = useMemo<HeroGameResult>(() => {
+    return pickNonRunningHero(snapshotGames, favoriteIds, manualGames, epicGames, debridGames, heroSources, heroAutoRotate, rotateIndex, heroCandidates);
+  }, [snapshotGames, favoriteIds, manualGames, epicGames, debridGames, heroSources, heroCandidates, heroAutoRotate, rotateIndex]);
 
   // ─── FIX 3: Unified sessionKey — running session always wins ────────────
   const sessionKey = activeSession?.sessionMapKey ?? null;
@@ -559,10 +624,10 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   // ─── DIAGNOSTIC: log hero pick ──
   useEffect(() => {
-    const chosen = heroGame?.title ?? heroManualGame?.title ?? heroEpicGame?.title ?? "null";
-    const chosenType = heroGame ? "snapshot" : heroManualGame ? "manual" : heroEpicGame ? "epic" : "none";
+    const chosen = heroGame?.title ?? heroManualGame?.title ?? heroEpicGame?.title ?? heroDebridGame?.title ?? "null";
+    const chosenType = heroGame ? "snapshot" : heroManualGame ? "manual" : heroEpicGame ? "epic" : heroDebridGame ? "debrid" : "none";
     console.log(`[HERO_PICK] t=${Math.round(performance.now() - _heroT0)}ms chosen="${chosen}" type=${chosenType} appId=${heroAppId ?? "null"} source=${heroGame?.source ?? "none"}`);
-  }, [heroGame, heroManualGame, heroEpicGame, heroAppId]);
+  }, [heroGame, heroManualGame, heroEpicGame, heroDebridGame, heroAppId]);
 
   const { getJobByAppId } = useDownloadQueueContext();
   const heroInstallJob = heroAppId ? getJobByAppId(heroAppId) : undefined;
@@ -586,12 +651,13 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (runningLibGame) return runningLibGame;
     if (heroManualGame) return heroManualGame;
     if (heroEpicGame) return heroEpicGame;
+    if (heroDebridGame) return heroDebridGame;
     if (heroGame?.appId) {
       return libraryGames.find((g) => g.appId === heroGame.appId)
         ?? libraryGames.find((g) => g.id === heroGame.appId || g.libraryId === heroGame.appId);
     }
     return undefined;
-  }, [runningLibGame, heroManualGame, heroEpicGame, heroGame, libraryGames]);
+  }, [runningLibGame, heroManualGame, heroEpicGame, heroDebridGame, heroGame, libraryGames]);
 
   // ─── FIX 6: [RUNNING_HERO_SELECT] diagnostic log ──────────────────────
   useEffect(() => {
@@ -652,7 +718,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       const _imgPath = runningLibGame
         ? (runningLibGame.backgroundPath ?? runningLibGame.landscapePath ?? runningLibGame.coverPath ?? null)
         : (heroGame?.media?.backgroundPath ?? heroGame?.media?.landscapePath ?? heroGame?.media?.coverPath ?? null);
-      console.log(`[HERO_RESOLVE] t=${Math.round(performance.now() - _heroT0)}ms gen=${generation} branch=${runningLibGame ? "running" : heroManualGame ? "manual" : heroEpicGame ? "epic" : "snapshot"} heroAppId=${heroAppId ?? "null"} imgPath=${_imgPath ?? "null"}`);
+      console.log(`[HERO_RESOLVE] t=${Math.round(performance.now() - _heroT0)}ms gen=${generation} branch=${runningLibGame ? "running" : heroManualGame ? "manual" : heroEpicGame ? "epic" : heroDebridGame ? "debrid" : "snapshot"} heroAppId=${heroAppId ?? "null"} imgPath=${_imgPath ?? "null"}`);
 
       // ── Running game — resolve from libGame directly ──
       if (runningLibGame) {
@@ -682,20 +748,19 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
         try {
           let url: string | null = null;
-          const isNonSteamRunning = runningLibGame.source && runningLibGame.source !== "steam" && runningLibGame.source !== "lua";
-          if (isNonSteamRunning) {
-            // Manual/debrid/Epic — media lives at appData/media/ (flat), NOT under games/steam/<appId>/
+          if (runningLibGame.appId) {
+            // Steam/Debrid with appId — media lives under games/steam/<appId>/media/
+            url = await resolveGameMediaUrl(runningLibGame.appId, bgPath);
+          } else if (runningLibGame.source && runningLibGame.source !== "steam" && runningLibGame.source !== "lua") {
+            // Manual without appId — media lives at appData/media/ (flat)
             const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
             url = await resolveProviderMediaPreviewUrl(bgPath);
-          } else if (runningLibGame.appId) {
-            // Steam game — resolve via appId
-            url = await resolveGameMediaUrl(runningLibGame.appId, bgPath);
           } else {
             const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
             url = await resolveProviderMediaPreviewUrl(bgPath);
           }
           if (!url) url = steamCdnHero(runningLibGame.appId);
-          console.log(`[RUNNING_HERO_MEDIA] resolvedUrl=${url} src=${runningLibGame.source} isNonSteam=${isNonSteamRunning}`);
+          console.log(`[RUNNING_HERO_MEDIA] resolvedUrl=${url} src=${runningLibGame.source} hasAppId=${!!runningLibGame.appId}`);
           console.log(`[DASH][HERO] branch=running title="${runningLibGame.title}" appId=${runningLibGame.appId} src=${runningLibGame.source} bgPath=${bgPath} role=${role} resolved=${url ?? "NULL"}`);
           if (!cancelled && generation === bgUrlGenerationRef.current) {
             setBgUrl(url);
@@ -713,7 +778,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       }
 
       // Non-running: Manual/Epic game — resolve relative provider media path
-      const nonSnapshot = heroManualGame ?? heroEpicGame;
+      const nonSnapshot = heroManualGame ?? heroEpicGame ?? heroDebridGame;
       if (nonSnapshot) {
         const candidates = [
           { role: "backgroundPath", value: nonSnapshot.backgroundPath },
@@ -726,8 +791,15 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
         if (rawPath) {
           try {
-            const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
-            let url = await resolveProviderMediaPreviewUrl(rawPath);
+            let url: string | null = null;
+            if (nonSnapshot.appId) {
+              // Debrid/Epic with appId: media lives under games/steam/<appId>/media/
+              url = await resolveGameMediaUrl(nonSnapshot.appId, rawPath);
+            } else {
+              // Manual without appId: media lives at appData/media/ (flat)
+              const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+              url = await resolveProviderMediaPreviewUrl(rawPath);
+            }
             if (!url) url = steamCdnHero(nonSnapshot.appId);
             console.log(`[DASH][HERO] branch=nonRunning title="${nonSnapshot.title}" appId=${nonSnapshot.appId} src=${nonSnapshot.source} rawPath=${rawPath} selectedRole=${selected?.role} resolved=${url ?? "NULL"}`);
             if (!cancelled && generation === bgUrlGenerationRef.current) {
@@ -860,7 +932,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
     resolveHeroBg();
     return () => { cancelled = true; };
-  }, [runningLibGame, heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame, heroDebridGame]);
 
   // ─── Ambient background: feed resolved hero art + clear on unmount ──
   useEffect(() => {
@@ -885,7 +957,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (raw.startsWith("games/") || raw.startsWith("media/") || raw.startsWith("img/")) return;
     const url = isLocalPath(raw) ? (localPathToUrl(raw) ?? undefined) : raw;
     if (url) setAmbientSource("dashboard", url);
-  }, [runningLibGame, heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame, heroDebridGame]);
 
   const [heroTitle, setHeroTitle] = useState<string>("");
   useEffect(() => {
@@ -914,7 +986,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       });
     }
     return () => { cancelled = true; };
-  }, [runningLibGame, heroGame, heroAppId, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroGame, heroAppId, heroManualGame, heroEpicGame, heroDebridGame]);
 
   const lastPlayedStr = useMemo(() => {
     // Running game — use libGame playtime
@@ -935,7 +1007,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     const entry = getPlaytimeEntryByAppId(heroAppId);
     if (entry?.lastPlayedAt) return formatLastPlayed(entry.lastPlayedAt);
     return formatLastPlayed(heroGame?.lastPlayed);
-  }, [runningLibGame, heroAppId, heroGame?.lastPlayed, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroAppId, heroGame?.lastPlayed, heroManualGame, heroEpicGame, heroDebridGame]);
 
   const heroPlaytimeStr = useMemo(() => {
     // Running game — use libGame playtime
@@ -959,7 +1031,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (seconds > 0) return `${Math.round(seconds / 60)} min`;
     if (heroGame?.playtime != null) return `${heroGame.playtime} min`;
     return null;
-  }, [runningLibGame, heroAppId, heroGame?.playtime, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroAppId, heroGame?.playtime, heroManualGame, heroEpicGame, heroDebridGame]);
 
   const stopModalTitle = heroSession?.title || libGame?.title || heroGame?.title || heroEpicGame?.title || heroManualGame?.title || t("dashboard.game_hero.unknown_game", "Unknown Game");
 
@@ -1065,7 +1137,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   // ─── DIAGNOSTIC: render log (after all hooks, before early return) ──
   const _renderCount = useRef(0);
   _renderCount.current++;
-  const _diagTitle = heroGame?.title ?? heroManualGame?.title ?? heroEpicGame?.title ?? "null";
+  const _diagTitle = heroGame?.title ?? heroManualGame?.title ?? heroEpicGame?.title ?? heroDebridGame?.title ?? "null";
   console.log(`[HERO] render#${_renderCount.current} t=${Math.round(performance.now() - _heroT0)}ms snapshot=${!!snapshot} snapshotGames=${snapshotGames.length} libraryGames=${libraryGames.length} manualGames=${manualGames.length} epicGames=${epicGames.length} heroGame=${_diagTitle} heroAppId=${heroAppId ?? "null"} bgUrl=${bgUrl?.slice(0, 80) ?? "null"}`);
 
   // ─── FIX 4: Never return EmptyHero when an active session exists ──────

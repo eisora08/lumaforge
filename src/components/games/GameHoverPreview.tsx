@@ -90,8 +90,9 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
     };
   }, [game.appId]);
 
-  // Cover image for fallback
-  const coverSrc = game.coverPath || game.imageUrl || "";
+  // Cover image for fallback — skip unresolved relative paths
+  const coverRaw = game.coverPath || game.imageUrl || "";
+  const coverSrc = (coverRaw.startsWith("media/") || coverRaw.startsWith("img/") || coverRaw.startsWith("games/")) ? "" : coverRaw;
 
   // Position: right of card, clamp to viewport
   const style = useMemo(() => {

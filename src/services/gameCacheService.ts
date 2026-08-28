@@ -408,11 +408,11 @@ export function deduplicateByStableId<T extends { libraryId?: string; appId?: st
 
 /** Known media filenames that map to media roles. */
 const KNOWN_MEDIA_FILENAMES = new Set([
-  "cover.jpg", "cover.png",
-  "landscape.jpg", "landscape.png",
-  "background.jpg", "background.png",
-  "logo.png", "logo.jpg",
-  "icon.png", "icon.jpg",
+  "cover.jpg", "cover.png", "cover.webp",
+  "landscape.jpg", "landscape.png", "landscape.webp",
+  "background.jpg", "background.png", "background.webp",
+  "logo.png", "logo.jpg", "logo.webp",
+  "icon.png", "icon.jpg", "icon.webp",
 ]);
 
 /**
@@ -792,6 +792,13 @@ const resolvedSrcCache = new Map<string, string>();
 // a new ?v=N suffix → browser fetches fresh file instead of serving stale cache.
 let _mediaCacheVersion = 0;
 export function getMediaCacheVersion(): number { return _mediaCacheVersion; }
+
+// Subscription so React components can use useSyncExternalStore to react to media changes
+const _mediaCacheVersionListeners = new Set<() => void>();
+export function subscribeMediaCacheVersion(cb: () => void): () => void {
+  _mediaCacheVersionListeners.add(cb);
+  return () => { _mediaCacheVersionListeners.delete(cb); };
+}
 
 const MEDIA_PATH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -1284,7 +1291,10 @@ export function clearResolvedMediaSessionCache(): void {
 // Invalidate cache for a specific appId (e.g. after a media download updates appinfo)
 export function invalidateResolvedMediaCache(appId: string): void {
   ++_mediaCacheVersion;
+  // Notify React subscribers (useSyncExternalStore) that media cache was invalidated
+  _mediaCacheVersionListeners.forEach(cb => cb());
   clearCachedGameMediaPaths(appId);
+  clearSessionAppInfoCache(appId);
   // resolvedSrcCache keys are raw filesystem paths (not appIds), so we must
   // clear the entire cache. convertFileSrc() is cheap so this is safe.
   resolvedSrcCache.clear();

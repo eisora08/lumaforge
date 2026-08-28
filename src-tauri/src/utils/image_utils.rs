@@ -158,6 +158,7 @@ fn process_and_write(bytes: &[u8], dest_path: &Path, media_type: &str) -> Result
     let has_alpha = processed.color().has_alpha();
     let keep_alpha = preserves_alpha(media_type);
     let is_png_target = ext == "png" || keep_alpha;
+    let is_webp_target = ext == "webp";
 
     if is_png_target && (has_alpha || keep_alpha) {
         // PNG with transparency — save as PNG
@@ -182,6 +183,21 @@ fn process_and_write(bytes: &[u8], dest_path: &Path, media_type: &str) -> Result
             let _ = std::fs::remove_file(dest_path);
             std::fs::rename(&jpeg_path, dest_path)
                 .map_err(|e| format!("Rename after PNG->JPG conversion failed: {}", e))?;
+        }
+        Ok(())
+    } else if is_webp_target {
+        // WebP target — save as WebP
+        let webp_path = if ext != "webp" {
+            dest_path.with_extension("webp")
+        } else {
+            dest_path.to_path_buf()
+        };
+        processed.save(&webp_path)
+            .map_err(|e| format!("WebP save failed: {}", e))?;
+        if webp_path != dest_path {
+            let _ = std::fs::remove_file(dest_path);
+            std::fs::rename(&webp_path, dest_path)
+                .map_err(|e| format!("Rename to WebP path failed: {}", e))?;
         }
         Ok(())
     } else {

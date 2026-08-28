@@ -488,7 +488,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           !!existing.isFavorite === !!game.isFavorite &&
           !!existing.isStandalone === !!game.isStandalone &&
           !!existing.hasLua === !!game.hasLua &&
-          existing.luaScripts.length === game.luaScripts.length
+          existing.luaScripts.length === game.luaScripts.length &&
+          existing.coverPath === game.coverPath &&
+          existing.landscapePath === game.landscapePath &&
+          existing.backgroundPath === game.backgroundPath &&
+          existing.logoPath === game.logoPath &&
+          existing.iconPath === game.iconPath
         ) {
           stable.push(existing);
         } else {
@@ -1461,7 +1466,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
   const updateGame = useCallback((appId: string, updates: Partial<LibraryGame>) => {
     setGames((prev) => {
-      const idx = prev.findIndex((g) => g.appId === appId);
+      let idx = prev.findIndex((g) => g.appId === appId);
+      // Fallback: match by id (e.g. Epic games have appId=undefined but id="epic:...")
+      if (idx === -1) idx = prev.findIndex((g) => g.id === appId);
       if (idx === -1) {
         console.log(`[LIBRARY_CONTEXT][UPDATE_GAME_SKIP] appid=${appId} reason=not-found`);
         return prev;

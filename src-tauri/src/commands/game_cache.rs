@@ -1181,6 +1181,25 @@ pub async fn safe_download_image(
         return Ok(Some(dest_path.to_string_lossy().to_string()));
     }
 
+    // Delete any existing files with the same role but different extension
+    // (e.g. if downloading cover.jpg, delete cover.webp and cover.png)
+    let role = media_type.as_str();
+    if let Ok(entries) = fs::read_dir(&media_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if stem == role && path != dest_path {
+                    if fs::remove_file(&path).is_ok() {
+                        println!(
+                            "[MEDIA][CLEANUP_OLD] appid={} role={} deleted={:?}",
+                            app_id, role, path
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh).await
 }
 
@@ -1208,10 +1227,11 @@ pub fn resolve_game_media_paths(
     }
 
     // If a .tmp file exists but final doesn't, try to rename it now
+    // Priority: .png > .jpg > .webp (matches resolve_game_media_paths)
     for (tmp_name, final_name) in [
-        ("landscape.tmp", "landscape.jpg"),
-        ("cover.tmp", "cover.jpg"),
-        ("background.tmp", "background.jpg"),
+        ("landscape.tmp", "landscape.png"),
+        ("cover.tmp", "cover.png"),
+        ("background.tmp", "background.png"),
         ("logo.tmp", "logo.png"),
         ("icon.tmp", "icon.png"),
     ] {
@@ -1222,35 +1242,58 @@ pub fn resolve_game_media_paths(
             let _ = fs::rename(&tmp_path, &final_path);
         }
     }
+    // Also try .jpg for landscape/cover/background (fallback if .png doesn't exist)
+    for (tmp_name, final_name) in [
+        ("landscape.tmp", "landscape.jpg"),
+        ("cover.tmp", "cover.jpg"),
+        ("background.tmp", "background.jpg"),
+    ] {
+        let tmp_path = media_dir.join(tmp_name);
+        let final_path = media_dir.join(final_name);
+        if tmp_path.exists() && !final_path.exists() {
+            media_log(&format!("resolve: renaming orphan {} -> {}", tmp_name, final_name));
+            let _ = fs::rename(&tmp_path, &final_path);
+        }
+    }
 
     let cover_path = {
-        let p = media_dir.join("cover.jpg");
+        let p = media_dir.join("cover.png");
         if p.exists() { Some(p.to_string_lossy().to_string()) }
-        else { let p2 = media_dir.join("cover.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        else { let p = media_dir.join("cover.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("cover.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
     };
 
     let background_path = {
-        let p = media_dir.join("background.jpg");
+        let p = media_dir.join("background.png");
         if p.exists() { Some(p.to_string_lossy().to_string()) }
-        else { let p2 = media_dir.join("background.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        else { let p = media_dir.join("background.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("background.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
     };
 
     let logo_path = {
         let p = media_dir.join("logo.png");
         if p.exists() { Some(p.to_string_lossy().to_string()) }
-        else { let p2 = media_dir.join("logo.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        else { let p = media_dir.join("logo.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("logo.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
     };
 
     let icon_path = {
         let p = media_dir.join("icon.png");
         if p.exists() { Some(p.to_string_lossy().to_string()) }
-        else { let p2 = media_dir.join("icon.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        else { let p = media_dir.join("icon.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("icon.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
     };
 
     let landscape_path = {
-        let p = media_dir.join("landscape.jpg");
+        let p = media_dir.join("landscape.png");
         if p.exists() { Some(p.to_string_lossy().to_string()) }
-        else { let p2 = media_dir.join("landscape.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        else { let p = media_dir.join("landscape.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("landscape.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
     };
 
     media_log(&format!(
@@ -1296,11 +1339,11 @@ pub fn get_game_media_paths(
         (None, false)
     }
 
-    let (cover_path, cover_exists) = first_existing(&media_dir, &["cover.jpg", "cover.png"]);
-    let (landscape_path, landscape_exists) = first_existing(&media_dir, &["landscape.jpg", "landscape.png"]);
-    let (background_path, background_exists) = first_existing(&media_dir, &["background.jpg", "background.png"]);
-    let (logo_path, logo_exists) = first_existing(&media_dir, &["logo.png", "logo.jpg"]);
-    let (icon_path, icon_exists) = first_existing(&media_dir, &["icon.png", "icon.jpg"]);
+    let (cover_path, cover_exists) = first_existing(&media_dir, &["cover.png", "cover.jpg", "cover.webp"]);
+    let (landscape_path, landscape_exists) = first_existing(&media_dir, &["landscape.png", "landscape.jpg", "landscape.webp"]);
+    let (background_path, background_exists) = first_existing(&media_dir, &["background.png", "background.jpg", "background.webp"]);
+    let (logo_path, logo_exists) = first_existing(&media_dir, &["logo.png", "logo.jpg", "logo.webp"]);
+    let (icon_path, icon_exists) = first_existing(&media_dir, &["icon.png", "icon.jpg", "icon.webp"]);
 
     media_log(&format!(
         "get_game_media_paths: app={} cover={} landscape={} background={} logo={} icon={}",
@@ -1359,11 +1402,11 @@ pub fn repair_appinfo_media_paths(
         if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
     };
 
-    let disk_cover = disk_check("cover.jpg").or_else(|| disk_check("cover.png"));
-    let disk_landscape = disk_check("landscape.jpg").or_else(|| disk_check("landscape.png"));
-    let disk_background = disk_check("background.jpg").or_else(|| disk_check("background.png"));
-    let disk_logo = disk_check("logo.png").or_else(|| disk_check("logo.jpg"));
-    let disk_icon = disk_check("icon.png").or_else(|| disk_check("icon.jpg"));
+    let disk_cover = disk_check("cover.png").or_else(|| disk_check("cover.jpg")).or_else(|| disk_check("cover.webp"));
+    let disk_landscape = disk_check("landscape.png").or_else(|| disk_check("landscape.jpg")).or_else(|| disk_check("landscape.webp"));
+    let disk_background = disk_check("background.png").or_else(|| disk_check("background.jpg")).or_else(|| disk_check("background.webp"));
+    let disk_logo = disk_check("logo.png").or_else(|| disk_check("logo.jpg")).or_else(|| disk_check("logo.webp"));
+    let disk_icon = disk_check("icon.png").or_else(|| disk_check("icon.jpg")).or_else(|| disk_check("icon.webp"));
 
     media_log(&format!("[AppInfoRepair] {} existing files {{ cover={}, landscape={}, background={}, logo={}, icon={} }}",
         app_id, disk_cover.is_some(), disk_landscape.is_some(), disk_background.is_some(), disk_logo.is_some(), disk_icon.is_some()));
@@ -1523,30 +1566,37 @@ pub fn repair_media_roles(
 
     let mut changed = false;
 
-    // Check landscape.jpg
-    let landscape_path = media_dir.join("landscape.jpg");
-    if landscape_path.exists() {
+    // Helper: find the first existing file for a role across extensions
+    let find_role_file = |role: &str| -> Option<std::path::PathBuf> {
+        for ext in &["png", "jpg", "webp"] {
+            let p = media_dir.join(format!("{}.{}", role, ext));
+            if p.exists() { return Some(p); }
+        }
+        None
+    };
+
+    // Check landscape
+    if let Some(landscape_path) = find_role_file("landscape") {
         if let Ok(bytes) = fs::read(&landscape_path) {
             match image_utils::classify_image_role(&bytes, "landscape") {
                 Ok(Some(role)) if role == "landscape" => {
-                    media_log(&format!("[MediaRepair] landscape.jpg is valid for {}", app_id));
+                    media_log(&format!("[MediaRepair] landscape is valid for {}", app_id));
                 }
                 Ok(Some(role)) if role == "cover" => {
-                    // landscape.jpg is actually a cover — move to cover.jpg if missing
-                    let cover_path = media_dir.join("cover.jpg");
-                    if !cover_path.exists() {
-                        media_log(&format!("[MediaRepair] moved landscape.jpg to cover.jpg for {}", app_id));
-                        let _ = fs::rename(&landscape_path, &cover_path);
+                    let cover_path = find_role_file("cover");
+                    if cover_path.is_none() {
+                        let target = media_dir.join("cover.jpg");
+                        media_log(&format!("[MediaRepair] moved landscape to cover for {}", app_id));
+                        let _ = fs::rename(&landscape_path, &target);
                         changed = true;
                     } else {
-                        // cover.jpg already exists — just remove the misclassified landscape.jpg
-                        media_log(&format!("[MediaRepair] removed misclassified landscape.jpg (vertical) for {}", app_id));
+                        media_log(&format!("[MediaRepair] removed misclassified landscape (vertical) for {}", app_id));
                         let _ = fs::remove_file(&landscape_path);
                         changed = true;
                     }
                 }
                 Ok(None) => {
-                    media_log(&format!("[MediaRepair] landscape.jpg has invalid aspect — removing for {}", app_id));
+                    media_log(&format!("[MediaRepair] landscape has invalid aspect — removing for {}", app_id));
                     let _ = fs::remove_file(&landscape_path);
                     changed = true;
                 }
@@ -1555,16 +1605,15 @@ pub fn repair_media_roles(
         }
     }
 
-    // Check cover.jpg — if it's actually a landscape and landscape is missing, move it
-    let cover_path = media_dir.join("cover.jpg");
-    if cover_path.exists() {
-        let landscape_path = media_dir.join("landscape.jpg");
-        if !landscape_path.exists() {
+    // Check cover — if it's actually a landscape and landscape is missing, move it
+    if let Some(cover_path) = find_role_file("cover") {
+        if find_role_file("landscape").is_none() {
             if let Ok(bytes) = fs::read(&cover_path) {
                 match image_utils::classify_image_role(&bytes, "cover") {
                     Ok(Some(role)) if role == "landscape" => {
-                        media_log(&format!("[MediaRepair] moved cover.jpg to landscape.jpg for {}", app_id));
-                        let _ = fs::rename(&cover_path, &landscape_path);
+                        let target = media_dir.join("landscape.jpg");
+                        media_log(&format!("[MediaRepair] moved cover to landscape for {}", app_id));
+                        let _ = fs::rename(&cover_path, &target);
                         changed = true;
                     }
                     _ => {}
@@ -1573,25 +1622,23 @@ pub fn repair_media_roles(
         }
     }
 
-    // Check background.jpg — if it's vertical, remove it
-    let background_path = media_dir.join("background.jpg");
-    if background_path.exists() {
+    // Check background — if it's vertical, remove it
+    if let Some(background_path) = find_role_file("background") {
         if let Ok(bytes) = fs::read(&background_path) {
             match image_utils::classify_image_role(&bytes, "background") {
                 Ok(Some(role)) if role == "background" => {
-                    media_log(&format!("[MediaRepair] background.jpg is valid for {}", app_id));
+                    media_log(&format!("[MediaRepair] background is valid for {}", app_id));
                 }
                 Ok(Some(role)) if role == "landscape" => {
-                    // Accept landscape-as-background if no real background
-                    media_log(&format!("[MediaRepair] background.jpg is landscape (acceptable) for {}", app_id));
+                    media_log(&format!("[MediaRepair] background is landscape (acceptable) for {}", app_id));
                 }
                 Ok(Some(role)) if role == "cover" => {
-                    media_log(&format!("[MediaRepair] background.jpg is vertical/cover — removing for {}", app_id));
+                    media_log(&format!("[MediaRepair] background is vertical/cover — removing for {}", app_id));
                     let _ = fs::remove_file(&background_path);
                     changed = true;
                 }
                 Ok(None) => {
-                    media_log(&format!("[MediaRepair] background.jpg has invalid aspect — removing for {}", app_id));
+                    media_log(&format!("[MediaRepair] background has invalid aspect — removing for {}", app_id));
                     let _ = fs::remove_file(&background_path);
                     changed = true;
                 }
@@ -1606,11 +1653,11 @@ pub fn repair_media_roles(
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(mut entry) = serde_json::from_str::<GameAppInfo>(&content) {
-                    let disk_cover = { let p = media_dir.join("cover.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
-                    let disk_landscape = { let p = media_dir.join("landscape.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
-                    let disk_background = { let p = media_dir.join("background.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
-                    let disk_logo = { let p = media_dir.join("logo.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
-                    let disk_icon = { let p = media_dir.join("icon.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
+                    let disk_cover = { let p = media_dir.join("cover.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p = media_dir.join("cover.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p2 = media_dir.join("cover.webp"); if p2.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p2.to_string_lossy())) } else { None } } } };
+                    let disk_landscape = { let p = media_dir.join("landscape.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p = media_dir.join("landscape.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p2 = media_dir.join("landscape.webp"); if p2.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p2.to_string_lossy())) } else { None } } } };
+                    let disk_background = { let p = media_dir.join("background.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p = media_dir.join("background.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p2 = media_dir.join("background.webp"); if p2.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p2.to_string_lossy())) } else { None } } } };
+                    let disk_logo = { let p = media_dir.join("logo.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p = media_dir.join("logo.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p2 = media_dir.join("logo.webp"); if p2.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p2.to_string_lossy())) } else { None } } } };
+                    let disk_icon = { let p = media_dir.join("icon.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p = media_dir.join("icon.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { let p2 = media_dir.join("icon.webp"); if p2.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p2.to_string_lossy())) } else { None } } } };
 
                     entry.media = Some(GameMediaPaths {
                         cover_path: disk_cover,
@@ -1900,29 +1947,40 @@ pub fn resolve_game_media_paths_batch(
         }
 
         let cover_path = {
-            let p = media_dir.join("cover.jpg");
+            let p = media_dir.join("cover.png");
             if p.exists() { Some(p.to_string_lossy().to_string()) }
-            else { let p2 = media_dir.join("cover.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+            else { let p = media_dir.join("cover.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("cover.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
         };
+
         let background_path = {
-            let p = media_dir.join("background.jpg");
+            let p = media_dir.join("background.png");
             if p.exists() { Some(p.to_string_lossy().to_string()) }
-            else { let p2 = media_dir.join("background.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+            else { let p = media_dir.join("background.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("background.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
         };
         let logo_path = {
             let p = media_dir.join("logo.png");
             if p.exists() { Some(p.to_string_lossy().to_string()) }
-            else { let p2 = media_dir.join("logo.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+            else { let p = media_dir.join("logo.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("logo.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
         };
         let icon_path = {
             let p = media_dir.join("icon.png");
             if p.exists() { Some(p.to_string_lossy().to_string()) }
-            else { let p2 = media_dir.join("icon.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+            else { let p = media_dir.join("icon.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("icon.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
         };
         let landscape_path = {
-            let p = media_dir.join("landscape.jpg");
+            let p = media_dir.join("landscape.png");
             if p.exists() { Some(p.to_string_lossy().to_string()) }
-            else { let p2 = media_dir.join("landscape.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+            else { let p = media_dir.join("landscape.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("landscape.webp"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } } }
         };
 
         result.insert(app_id, GameMediaPaths {
@@ -1981,6 +2039,24 @@ pub fn save_game_media_file(
 
     let filename = format!("{}.{}", role, safe_ext);
     let dest_path = media_dir.join(&filename);
+
+    // Delete any existing files with the same role but different extension
+    // (e.g. if saving cover.jpg, delete cover.webp and cover.png)
+    if let Ok(entries) = fs::read_dir(&media_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if stem == role.as_str() && path != dest_path {
+                    if fs::remove_file(&path).is_ok() {
+                        println!(
+                            "[MEDIA][CLEANUP_OLD] appid={} role={} deleted={:?}",
+                            app_id, role, path
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     fs::write(&dest_path, &bytes)
         .map_err(|e| format!("Failed to write media file: {}", e))?;

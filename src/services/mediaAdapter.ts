@@ -18,7 +18,7 @@ import {
   saveProviderMediaFromBase64,
 } from "./tauri";
 import { invoke } from "@tauri-apps/api/core";
-import { localPathToUrl, resolveProviderMediaPreviewUrl } from "./gameCacheService";
+import { localPathToUrl, resolveProviderMediaPreviewUrl, invalidateMediaDirCache } from "./gameCacheService";
 import type {
   MediaProviderId,
   ProviderMediaPathResult,
@@ -250,6 +250,7 @@ export class SteamMediaAdapter implements GameMediaAdapter {
         role,
         filePath,
       );
+      invalidateMediaDirCache("steam", this.providerGameId);
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_FILE] provider=steam game=${this.providerGameId} role=${role} error=`, err);
@@ -272,6 +273,7 @@ export class SteamMediaAdapter implements GameMediaAdapter {
         target: "",
         forceRefresh: true,
       });
+      invalidateMediaDirCache("steam", this.providerGameId);
       return result ?? null;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_URL] provider=steam game=${this.providerGameId} role=${role} error=`, err);
@@ -287,6 +289,7 @@ export class SteamMediaAdapter implements GameMediaAdapter {
   async removeRole(role: MediaRole): Promise<boolean> {
     try {
       await deleteGameMediaFile(this.providerGameId, role);
+      invalidateMediaDirCache("steam", this.providerGameId);
       return true;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][REMOVE] provider=steam game=${this.providerGameId} role=${role} error=`, err);
@@ -384,6 +387,7 @@ export class ManualMediaAdapter implements GameMediaAdapter {
         role,
         filePath,
       );
+      invalidateMediaDirCache("manual", this.providerGameId);
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_FILE] provider=manual game=${this.providerGameId} role=${role} error=`, err);
@@ -400,6 +404,7 @@ export class ManualMediaAdapter implements GameMediaAdapter {
         url,
         true,
       );
+      invalidateMediaDirCache("manual", this.providerGameId);
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_URL] provider=manual game=${this.providerGameId} role=${role} error=`, err);
@@ -416,6 +421,7 @@ export class ManualMediaAdapter implements GameMediaAdapter {
         contentBase64,
         ext,
       );
+      invalidateMediaDirCache("manual", this.providerGameId);
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_BASE64] provider=manual game=${this.providerGameId} role=${role} error=`, err);
@@ -426,6 +432,7 @@ export class ManualMediaAdapter implements GameMediaAdapter {
   async removeRole(role: MediaRole): Promise<boolean> {
     try {
       await deleteProviderMediaFile("manual", this.providerGameId, role);
+      invalidateMediaDirCache("manual", this.providerGameId);
       return true;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][REMOVE] provider=manual game=${this.providerGameId} role=${role} error=`, err);
@@ -514,6 +521,7 @@ export class GenericMediaAdapter implements GameMediaAdapter {
         role,
         filePath,
       );
+      invalidateMediaDirCache(this.providerId, this.providerGameId);
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_FILE] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);
@@ -530,6 +538,7 @@ export class GenericMediaAdapter implements GameMediaAdapter {
         url,
         true,
       );
+      invalidateMediaDirCache(this.providerId, this.providerGameId);
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_URL] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);
@@ -546,6 +555,7 @@ export class GenericMediaAdapter implements GameMediaAdapter {
         contentBase64,
         ext,
       );
+      invalidateMediaDirCache(this.providerId, this.providerGameId);
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_BASE64] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);
@@ -556,6 +566,7 @@ export class GenericMediaAdapter implements GameMediaAdapter {
   async removeRole(role: MediaRole): Promise<boolean> {
     try {
       await deleteProviderMediaFile(this.providerId, this.providerGameId, role);
+      invalidateMediaDirCache(this.providerId, this.providerGameId);
       return true;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][REMOVE] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);

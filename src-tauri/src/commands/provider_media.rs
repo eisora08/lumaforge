@@ -178,6 +178,23 @@ pub fn save_provider_media_from_path(
     let filename = format!("{}.{}", role, ext);
     let dest_path = media_dir.join(&filename);
 
+    // Delete any existing files with the same role but different extension
+    if let Ok(entries) = fs::read_dir(&media_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if stem == role && path != dest_path {
+                    if fs::remove_file(&path).is_ok() {
+                        println!(
+                            "[PROVIDER_MEDIA][CLEANUP_OLD] provider={} game={} role={} deleted={:?}",
+                            provider, provider_game_id, role, path
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Validate source path is readable and within size limit
     let meta = fs::metadata(&source_path)
         .map_err(|e| format!("Cannot read source file: {}", e))?;
@@ -448,6 +465,23 @@ pub fn save_provider_media_from_base64(
     let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
     let filename = format!("{}.{}", role, safe_ext);
     let dest_path = media_dir.join(&filename);
+
+    // Delete any existing files with the same role but different extension
+    if let Ok(entries) = fs::read_dir(&media_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if stem == role && path != dest_path {
+                    if fs::remove_file(&path).is_ok() {
+                        println!(
+                            "[PROVIDER_MEDIA][CLEANUP_OLD] provider={} game={} role={} deleted={:?}",
+                            provider, provider_game_id, role, path
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     // Atomic write: temp file then rename
     let tmp_path = dest_path.with_extension(format!("{}.tmp", safe_ext));

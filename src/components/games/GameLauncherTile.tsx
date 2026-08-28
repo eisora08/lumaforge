@@ -24,6 +24,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
+import { subscribeMediaCacheVersion, getMediaCacheVersion } from "../../services/gameCacheService";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
 import { useInViewport } from "../../hooks/useInViewport";
@@ -93,6 +94,7 @@ type GameLauncherTileProps = {
   onHoverStart?: (game: LibraryGame, rect: DOMRect) => void;
   onHoverEnd?: () => void;
   onOverlayToggle?: (open: boolean) => void;
+  onMediaChanged?: () => void;
 };
 
 function getCardImage(
@@ -139,6 +141,7 @@ function GameLauncherTileInner({
   onHoverStart,
   onHoverEnd,
   onOverlayToggle,
+  onMediaChanged,
 }: GameLauncherTileProps) {
   countRender("GameLauncherTile");
   const { t } = useTranslation();
@@ -146,6 +149,9 @@ function GameLauncherTileInner({
   const { ref, isVisible } = useInViewport();
   const { onMouseEnter: prefetchEnter, onMouseLeave: prefetchLeave } = useHoverPrefetch(game.appId);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Subscribe to media cache version — forces re-resolution when any media is invalidated
+  const mediaCacheVersion = useSyncExternalStore(subscribeMediaCacheVersion, getMediaCacheVersion, getMediaCacheVersion);
 
   const handleHoverEnter = useCallback(() => {
     prefetchEnter();
@@ -203,7 +209,7 @@ function GameLauncherTileInner({
         if (!cancelled) setMediaLoading(false);
       });
     return () => { cancelled = true; };
-  }, [game.appId, isVisible, game.coverPath, game.landscapePath, game.backgroundPath]);
+  }, [game.appId, isVisible, game.coverPath, game.landscapePath, game.backgroundPath, mediaCacheVersion]);
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
 
@@ -291,7 +297,7 @@ function GameLauncherTileInner({
         if (!cancelled) setResolvedSrc(undefined);
       });
     return () => { cancelled = true; };
-  }, [game.appId, game.imageUrl, game.coverPath, game.landscapePath, displayImage, artworkMode]);
+  }, [game.appId, game.imageUrl, game.coverPath, game.landscapePath, displayImage, artworkMode, mediaCacheVersion]);
 
   // Render-time diagnostics â€” log once on state change, not every render
   // Disabled by default to reduce log spam. Set DEBUG_MEDIA_GRID=true in dev console to enable.
@@ -946,6 +952,7 @@ function GameLauncherTileInner({
               onClose={() => { setEditDialogOpen(false); onOverlayToggle?.(false); }}
               initialTab={editInitialTab}
               game={game}
+              onMediaChanged={onMediaChanged}
               settings={{
                 rawgApiKey: settings.rawgApiKey,
                 igdbClientId: settings.igdbClientId,
