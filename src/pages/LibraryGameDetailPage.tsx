@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { countRender } from "../services/perfCounters";
@@ -21,7 +21,7 @@ import {
 } from "../services/libraryLocalCacheService";
 import { readMediaManifest, type GameMediaCacheEntry, type GameMediaPaths, type MediaManifest } from "../services/tauri";
 import type { GameAppInfo } from "../services/gameCacheService";
-import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle, resolveProviderMediaPreviewUrl, subscribeMediaCacheVersion, getMediaCacheVersion } from "../services/gameCacheService";
+import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle, resolveProviderMediaPreviewUrl } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
 import { resolveGameDetailsArtwork, refreshGameDetailsArtwork, materializeResolvedGameMedia } from "../services/gameCacheService";
 
@@ -89,32 +89,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const _refreshInitiatorRef = useRef<string | null>(null);
   const _detailKeyRef = useRef<string | null>(null);
   const [resetGeneration, setResetGeneration] = useState(0);
-  // Subscribe to media cache version so canonicalAppInfo re-reads from disk when
-  // any media is invalidated (e.g. user saves a new cover/background in the editor).
-  useSyncExternalStore(subscribeMediaCacheVersion, getMediaCacheVersion, getMediaCacheVersion);
-  const mediaCacheVersion = getMediaCacheVersion();
   const _latestGameRef = useRef<LibraryGame | null>(null);
   _latestGameRef.current = selectedGame;
-
-  // Lightweight re-read of canonical appinfo when media cache is invalidated.
-  // Deliberately separate from the main effect (which cancels in-flight media
-  // downloads and clears per-game state) to avoid cancelling active jobs and
-  // flashing the hero on every media edit.
-  useEffect(() => {
-    const appId = selectedGame?.appId;
-    if (!appId) return;
-    let cancelled = false;
-    loadGameAppInfoWithMediaFallback(appId)
-      .then((info) => {
-        if (cancelled) return;
-        if (info) {
-          setCanonicalAppInfo(info);
-          setCanonicalLoaded(true);
-        }
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [selectedGame?.appId, mediaCacheVersion]);
 
   // Reset stale per-game state at render time (React's "adjusting state when a prop
   // changes" pattern) so the first render of a new game never receives the previous

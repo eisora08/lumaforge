@@ -2046,8 +2046,17 @@ pub fn save_game_media_file(
     let media_dir = get_media_dir(&app_handle, &app_id)?;
 
     let ext_clean = ext.trim_start_matches('.').to_lowercase();
+    let was_webp = ext_clean == "webp";
     let safe_ext = match ext_clean.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "ico" => ext_clean.clone(),
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "ico" => ext_clean.clone(),
+        // Normalize .webp → .jpg (photographic roles) or .png (logo/icon) so the
+        // asset pipeline never writes .webp files. Source is re-encoded below.
+        "webp" => {
+            match role.as_str() {
+                "logo" | "icon" => "png".to_string(),
+                _ => "jpg".to_string(),
+            }
+        }
         _ => {
             match role.as_str() {
                 "logo" | "icon" => "png".to_string(),
@@ -2077,8 +2086,14 @@ pub fn save_game_media_file(
         }
     }
 
-    fs::write(&dest_path, &bytes)
-        .map_err(|e| format!("Failed to write media file: {}", e))?;
+    // .webp source bytes are re-encoded to .jpg/.png so downstream reads use the
+    // proven extensions (asset protocol + instant refresh work for jpg/png).
+    if was_webp {
+        image_utils::process_and_save_image(&bytes, &dest_path, &role)?;
+    } else {
+        fs::write(&dest_path, &bytes)
+            .map_err(|e| format!("Failed to write media file: {}", e))?;
+    }
 
     let rel_path = format!("media/{}", filename);
     println!("[MEDIA][FILE_SAVED] appid={} role={} path={}", app_id, role, rel_path);

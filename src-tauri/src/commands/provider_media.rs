@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
+use crate::utils::image_utils;
+
 // ---------------------------------------------------------------------------
 // Provider-aware media file operations.
 // Path convention: games/<provider>/<providerGameId>/media/<role>.<ext>
@@ -173,7 +175,10 @@ pub fn save_provider_media_from_path(
         sanitize_provider(&provider)?;
     }
 
-    let ext = infer_extension(&source_path, &role);
+    let inferred_ext = infer_extension(&source_path, &role);
+    let was_webp = inferred_ext == "webp";
+    // Normalize .webp → .jpg/.png so provider media never stores .webp.
+    let ext = if was_webp { role_default_extension(&role) } else { inferred_ext };
     let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
     let filename = format!("{}.{}", role, ext);
     let dest_path = media_dir.join(&filename);
@@ -206,17 +211,25 @@ pub fn save_provider_media_from_path(
         ));
     }
 
-    // Atomic write: copy to temp, then rename
-    let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
-    fs::copy(&source_path, &tmp_path)
-        .map_err(|e| format!("Failed to copy source file: {}", e))?;
+    // .webp source bytes are re-encoded to .jpg/.png so downstream reads use
+    // the proven extensions (instant refresh works for jpg/png).
+    if was_webp {
+        let bytes = fs::read(&source_path)
+            .map_err(|e| format!("Cannot read source file: {}", e))?;
+        image_utils::process_and_save_image(&bytes, &dest_path, &role)?;
+    } else {
+        // Atomic write: copy to temp, then rename
+        let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
+        fs::copy(&source_path, &tmp_path)
+            .map_err(|e| format!("Failed to copy source file: {}", e))?;
 
-    // Remove existing final file before rename (Windows requires this)
-    if dest_path.exists() {
-        let _ = fs::remove_file(&dest_path);
+        // Remove existing final file before rename (Windows requires this)
+        if dest_path.exists() {
+            let _ = fs::remove_file(&dest_path);
+        }
+        fs::rename(&tmp_path, &dest_path)
+            .map_err(|e| format!("Failed to finalize media file: {}", e))?;
     }
-    fs::rename(&tmp_path, &dest_path)
-        .map_err(|e| format!("Failed to finalize media file: {}", e))?;
 
     let rel = relative_media_path(&provider, &provider_game_id, &role, &ext)?;
     println!(
@@ -331,27 +344,36 @@ pub async fn download_provider_media_from_url(
         ));
     }
 
-    let ext = if content_type.is_empty() {
+    let inferred_ext = if content_type.is_empty() {
         infer_extension(&url, &role)
     } else {
         extension_from_content_type(&content_type, &role)
     };
+    let was_webp = inferred_ext == "webp";
+    // Normalize .webp → .jpg/.png so provider media never stores .webp.
+    let ext = if was_webp { role_default_extension(&role) } else { inferred_ext };
 
     let filename = format!("{}.{}", role, ext);
     let dest_path = media_dir.join(&filename);
 
-    // Atomic write: temp file then rename
-    let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
-    tokio::fs::write(&tmp_path, &bytes)
-        .await
-        .map_err(|e| format!("Failed to write downloaded file: {}", e))?;
+    if was_webp {
+        // .webp downloaded bytes are re-encoded to .jpg/.png so downstream
+        // reads use the proven extensions (instant refresh works for jpg/png).
+        image_utils::process_and_save_image(bytes.as_ref(), &dest_path, &role)?;
+    } else {
+        // Atomic write: temp file then rename
+        let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
+        tokio::fs::write(&tmp_path, &bytes)
+            .await
+            .map_err(|e| format!("Failed to write downloaded file: {}", e))?;
 
-    if let Ok(()) = tokio::fs::metadata(&dest_path).await.map(|_| ()) {
-        let _ = tokio::fs::remove_file(&dest_path).await;
+        if let Ok(()) = tokio::fs::metadata(&dest_path).await.map(|_| ()) {
+            let _ = tokio::fs::remove_file(&dest_path).await;
+        }
+        tokio::fs::rename(&tmp_path, &dest_path)
+            .await
+            .map_err(|e| format!("Failed to finalize downloaded file: {}", e))?;
     }
-    tokio::fs::rename(&tmp_path, &dest_path)
-        .await
-        .map_err(|e| format!("Failed to finalize downloaded file: {}", e))?;
 
     let rel = relative_media_path(&provider, &provider_game_id, &role, &ext)?;
     println!(
@@ -442,9 +464,13 @@ pub fn save_provider_media_from_base64(
     }
 
     // Validate extension
-    let safe_ext = ext.to_lowercase();
-    let safe_ext = match safe_ext.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" => safe_ext,
+    let raw_ext = ext.to_lowercase();
+    let was_webp = raw_ext == "webp";
+    let safe_ext = match raw_ext.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" => raw_ext,
+        // Normalize .webp → .jpg/.png so provider media never stores .webp.
+        // Source bytes are re-encoded below.
+        "webp" => role_default_extension(&role),
         _ => role_default_extension(&role),
     };
 
@@ -483,16 +509,22 @@ pub fn save_provider_media_from_base64(
         }
     }
 
-    // Atomic write: temp file then rename
-    let tmp_path = dest_path.with_extension(format!("{}.tmp", safe_ext));
-    fs::write(&tmp_path, &decoded)
-        .map_err(|e| format!("Failed to write media file: {}", e))?;
+    // .webp source bytes are re-encoded to .jpg/.png so downstream reads use
+    // the proven extensions (instant refresh works for jpg/png).
+    if was_webp {
+        image_utils::process_and_save_image(&decoded, &dest_path, &role)?;
+    } else {
+        // Atomic write: temp file then rename
+        let tmp_path = dest_path.with_extension(format!("{}.tmp", safe_ext));
+        fs::write(&tmp_path, &decoded)
+            .map_err(|e| format!("Failed to write media file: {}", e))?;
 
-    if dest_path.exists() {
-        let _ = fs::remove_file(&dest_path);
+        if dest_path.exists() {
+            let _ = fs::remove_file(&dest_path);
+        }
+        fs::rename(&tmp_path, &dest_path)
+            .map_err(|e| format!("Failed to finalize media file: {}", e))?;
     }
-    fs::rename(&tmp_path, &dest_path)
-        .map_err(|e| format!("Failed to finalize media file: {}", e))?;
 
     let rel = relative_media_path(&provider, &provider_game_id, &role, &safe_ext)?;
     println!(
