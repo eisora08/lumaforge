@@ -24,6 +24,7 @@ import {
 import { EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LIBRARY } from "./epicFeatureFlag";
 import { mergeEpicOverrides } from "./epicOverrideStore";
 import type { MediaRole } from "./providerMediaPaths";
+import type { EpicMetadataResult } from "./tauri";
 
 // ── Launch metadata ──
 
@@ -140,6 +141,110 @@ async function autoDiscoverMediaPaths(
   // but the Epic store will rebuild once on the next mergeEpicOverrides call)
   if (anyWritten && DEBUG_EPIC_LIBRARY) {
     console.log("[EPIC_STORE][MEDIA_DISCOVER] auto-discovery complete");
+  }
+}
+
+// ── Title correction helpers ──
+
+/**
+ * Heuristic for a manifest title that is NOT a proper human-readable title.
+ * Epic often stores the internal codename ("Calluna") or a 32-hex appName hash
+ * as DisplayName; both should be replaced with the real catalog title.
+ */
+function isSuspiciousEpicTitle(title: string): boolean {
+  const t = (title || "").trim();
+  if (!t) return true;
+  // Pure 32-hex hash (Epic catalogItemId / appName hash)
+  if (/^[0-9a-f]{32}$/i.test(t)) return true;
+  // Single lowercase codename slug with no spaces (e.g. "calluna", "alpha-b18")
+  if (/^[a-z][a-z0-9-]{1,24}$/.test(t)) return true;
+  return false;
+}
+
+/**
+ * Apply an EpicMetadataResult (title/artwork/metadata) to a game.
+ * Artwork is applied directly; a corrected title is persisted to the override
+ * store so it survives restart (mirrors Debrid's sticky-title approach).
+ */
+async function applyEpicMetadataToGame(
+  game: LibraryGame,
+  result: EpicMetadataResult,
+): Promise<void> {
+  const a = result.artwork ?? {};
+  const patch: Record<string, string> = {};
+
+  if (a.cover) { game.coverPath = a.cover; patch.coverPath = a.cover; }
+  if (a.landscape) { game.landscapePath = a.landscape; patch.landscapePath = a.landscape; }
+  if (a.background) { game.backgroundPath = a.background; patch.backgroundPath = a.background; }
+  if (a.logo) { game.logoPath = a.logo; patch.logoPath = a.logo; }
+  if (a.icon) { game.iconPath = a.icon; patch.iconPath = a.icon; }
+
+  // Title correction: replace codename/hash with the real catalog title.
+  // A name override is written so the corrected title is stable across restarts
+  // and is applied everywhere mergeEpicOverrides runs (boot + refresh).
+  const providerGameId = game.providerGameId;
+  if (providerGameId && result.title && result.title.trim()) {
+    const current = (game.title || "").trim();
+    const resolved = result.title.trim();
+    if (current !== resolved && isSuspiciousEpicTitle(current)) {
+      game.title = resolved;
+      patch.name = resolved;
+    }
+  }
+
+  if (result.description || result.developer) {
+    (game as Record<string, unknown>).metadata = {
+      ...((game.metadata as Record<string, unknown>) || {}),
+      resolved: true,
+      name: result.title || game.title,
+      short_description: result.description || undefined,
+      about_the_game: result.description || undefined,
+      developer: result.developer || undefined,
+      genres: [],
+      categories: [],
+      release_date: result.releaseDate || undefined,
+    };
+  }
+
+  if (Object.keys(patch).length > 0 && providerGameId) {
+    const { writeEpicOverrides } = await import("./epicOverrideStore");
+    writeEpicOverrides(providerGameId, patch);
+  }
+}
+
+/**
+ * Enrich a set of Epic games (title correction + catalog artwork/metadata) in
+ * the background. Reuses the session dedup so each providerGameId is fetched
+ * at most once per session. Corrected titles + artwork are persisted to the
+ * override store and games are re-saved to SQLite afterwards.
+ */
+async function enrichEpicGamesFromCatalog(games: LibraryGame[]): Promise<void> {
+  try {
+    const { epicFetchAndSaveMetadata } = await import("./tauri");
+    for (const game of games) {
+      const providerGameId = game.providerGameId;
+      if (!providerGameId || _metadataFetchedThisSession.has(providerGameId)) continue;
+      const parts = providerGameId.split(":");
+      if (parts.length < 2) continue;
+      const [ns, catId] = parts;
+      if (!ns || !catId) continue;
+      // Skip if we already have artwork AND the title doesn't need correction.
+      const titleNeedsWork = isSuspiciousEpicTitle(game.title || "");
+      if (game.coverPath && !titleNeedsWork) continue;
+      try {
+        const result = await epicFetchAndSaveMetadata(providerGameId, ns, catId);
+        _metadataFetchedThisSession.add(providerGameId);
+        await applyEpicMetadataToGame(game, result);
+      } catch {
+        // Artwork/metadata fetch failed for this game — continue with others
+      }
+    }
+
+    // Persist any corrections so next boot loads full data instantly.
+    notifyListeners();
+    persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
+  } catch (err) {
+    console.warn("[EPIC_STORE] catalog enrichment failed:", err);
   }
 }
 
@@ -281,6 +386,14 @@ export async function refreshEpicGames(
         `[EPIC_STORE] no change games=${finalMapped.length} fingerprintUnchanged`,
       );
     }
+
+    // Persist to SQLite so next boot loads complete data (names + media) instantly.
+    persistEpicGamesToSqlite([...finalMapped, ..._ownedGames]).catch(() => {});
+
+    // Fire-and-forget: enrich titles/artwork from the catalog for installed games.
+    // Runs from the local scanner path too, so corrections apply even without an
+    // Epic login (owned-games sync is not a prerequisite).
+    enrichEpicGamesFromCatalog(_epicGames).catch(() => {});
 
     return { count: finalMapped.length, warning: null };
   } catch (error) {
@@ -510,93 +623,12 @@ export async function refreshOwnedGames(): Promise<{
       );
     }
 
-    // Fire-and-forget: fetch artwork + metadata for owned games missing media
-    (async () => {
-      try {
-        const { epicFetchAndSaveMetadata } = await import("./tauri");
-        for (const game of ownedMapped) {
-          // Skip if already has cover artwork
-          if (game.coverPath) continue;
-          // Skip if already fetched this session (prevents re-download on mode switch / re-import)
-          if (game.providerGameId && _metadataFetchedThisSession.has(game.providerGameId)) continue;
-          const parts = game.providerGameId?.split(":");
-          if (!parts || parts.length < 2) continue;
-          const [ns, catId] = parts;
-          if (!ns || !catId || !game.providerGameId) continue;
-          try {
-            const result = await epicFetchAndSaveMetadata(game.providerGameId, ns, catId);
-            _metadataFetchedThisSession.add(game.providerGameId);
-            // Apply artwork paths
-            const a = result.artwork;
-            if (a.cover) game.coverPath = a.cover;
-            if (a.landscape) game.landscapePath = a.landscape;
-            if (a.background) game.backgroundPath = a.background;
-            if (a.logo) game.logoPath = a.logo;
-            if (a.icon) game.iconPath = a.icon;
-            // Apply title if current looks like a UUID/hash
-            if (result.title && /^[0-9a-f]{32}$/i.test(game.title)) {
-              game.title = result.title;
-            }
-            // Apply text metadata
-            if (result.description || result.developer) {
-              (game as Record<string, unknown>).metadata = {
-                ...((game.metadata as Record<string, unknown>) || {}),
-                resolved: true,
-                name: result.title || game.title,
-                short_description: result.description || undefined,
-                about_the_game: result.description || undefined,
-                developer: result.developer || undefined,
-                genres: [],
-                categories: [],
-                release_date: result.releaseDate || undefined,
-              };
-            }
-          } catch {
-            // Artwork fetch failed for this game — continue with others
-          }
-        }
-
-        // Also fetch metadata for installed Epic games that lack metadata
-        for (const game of _epicGames) {
-          if (game.metadata) continue; // already has metadata
-          if (game.providerGameId && _metadataFetchedThisSession.has(game.providerGameId)) continue;
-          const parts = game.providerGameId?.split(":");
-          if (!parts || parts.length < 2) continue;
-          const [ns, catId] = parts;
-          if (!ns || !catId || !game.providerGameId) continue;
-          try {
-            const result = await epicFetchAndSaveMetadata(game.providerGameId, ns, catId);
-            _metadataFetchedThisSession.add(game.providerGameId);
-            const a = result.artwork;
-            if (a.cover) game.coverPath = a.cover;
-            if (a.landscape) game.landscapePath = a.landscape;
-            if (a.background) game.backgroundPath = a.background;
-            if (a.logo) game.logoPath = a.logo;
-            if (a.icon) game.iconPath = a.icon;
-            if (result.description || result.developer) {
-              (game as Record<string, unknown>).metadata = {
-                resolved: true,
-                name: result.title || game.title,
-                short_description: result.description || undefined,
-                about_the_game: result.description || undefined,
-                developer: result.developer || undefined,
-                genres: [],
-                categories: [],
-                release_date: result.releaseDate || undefined,
-              };
-            }
-          } catch {
-            // continue
-          }
-        }
-
-        // Always persist after metadata fetch (this is the only persist point)
-        notifyListeners();
-        persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
-      } catch (err) {
-        console.warn("[EPIC_STORE] metadata fetch batch failed:", err);
-      }
-    })();
+    // Fire-and-forget: fetch artwork + metadata (and correct titles) for games.
+    // Runs for both owned and installed games. Corrected titles and artwork are
+    // persisted to the override store + SQLite so next boot has full data instantly.
+    enrichEpicGamesFromCatalog([...ownedMapped, ..._epicGames]).catch((err) =>
+      console.warn("[EPIC_STORE] metadata fetch batch failed:", err),
+    );
 
     // Notify on change
     if (fingerprintChanged || ownedMapped.length === 0) {
@@ -677,14 +709,16 @@ export function loadEpicGamesFromCache(cachedGames: Array<{
   const installed = libGames.filter((g) => g.isInstalled);
   const owned = libGames.filter((g) => !g.isInstalled);
 
-  if (installed.length > 0) _epicGames = installed;
-  if (owned.length > 0) {
-    _ownedGames = owned.map((g) =>
-      g.providerGameId
-        ? (mergeEpicOverrides(g as unknown as Record<string, unknown>, g.providerGameId) as LibraryGame)
-        : g,
-    );
-  }
+  // Apply persisted overrides (corrected titles + media) to BOTH installed and
+  // owned games so boot shows the real name and images on the first frame —
+  // not the raw manifest codename/hash.
+  const applyOverrides = (g: LibraryGame) =>
+    g.providerGameId
+      ? (mergeEpicOverrides(g as unknown as Record<string, unknown>, g.providerGameId) as LibraryGame)
+      : g;
+
+  if (installed.length > 0) _epicGames = installed.map(applyOverrides);
+  if (owned.length > 0) _ownedGames = owned.map(applyOverrides);
 
   _epicFingerprint = computeEpicFingerprint([..._epicGames, ..._ownedGames]);
   _ownedFingerprint = _epicFingerprint;

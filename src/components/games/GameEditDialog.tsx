@@ -3083,7 +3083,7 @@ export default function GameEditDialog({
           onClose={() => { setImageSearchOpen(false); setImageSearchRole(null); }}
           appId={appId || appIdDraft || undefined}
           libraryId={(!appId && !appIdDraft) ? (manualGameId ?? (isEpicMode ? `epic:${epicProviderGameId}` : undefined)) : undefined}
-          gameTitle={appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
+          gameTitle={(epicOverrides?.name as string) ?? appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
           role={imageSearchRole}
           onMediaUpdated={handleMediaUpdated}
           onDownloadComplete={handleDownloadComplete}
