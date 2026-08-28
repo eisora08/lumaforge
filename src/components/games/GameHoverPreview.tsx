@@ -91,7 +91,7 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
   }, [game.appId]);
 
   // Cover image for fallback
-  const coverSrc = game.backgroundPath || game.landscapePath || game.coverPath || game.imageUrl || "";
+  const coverSrc = game.coverPath || game.imageUrl || "";
 
   // Position: right of card, clamp to viewport
   const style = useMemo(() => {

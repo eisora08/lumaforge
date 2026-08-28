@@ -1549,18 +1549,12 @@ function filterTmp(path: string | null | undefined): string | null {
 
 export function pickCoverImage(appInfo: GameAppInfo | null): string | null {
   if (!appInfo?.media) return null;
-  return filterTmp(appInfo.media.coverPath)
-    || filterTmp(appInfo.media.landscapePath)
-    || filterTmp(appInfo.media.backgroundPath)
-    || null;
+  return filterTmp(appInfo.media.coverPath) || null;
 }
 
 export function pickBackgroundImage(appInfo: GameAppInfo | null): string | null {
   if (!appInfo?.media) return null;
-  return filterTmp(appInfo.media.backgroundPath)
-    || filterTmp(appInfo.media.landscapePath)
-    || filterTmp(appInfo.media.coverPath)
-    || null;
+  return filterTmp(appInfo.media.backgroundPath) || null;
 }
 
 export function pickLogoImage(appInfo: GameAppInfo | null): string | null {
@@ -1570,22 +1564,17 @@ export function pickLogoImage(appInfo: GameAppInfo | null): string | null {
 
 export function pickIconImage(appInfo: GameAppInfo | null): string | null {
   if (!appInfo?.media) return null;
-  return filterTmp(appInfo.media.iconPath)
-    || filterTmp(appInfo.media.coverPath)
-    || null;
+  return filterTmp(appInfo.media.iconPath) || null;
 }
 
 export function pickLandscapeImage(appInfo: GameAppInfo | null): string | null {
   if (!appInfo?.media) return null;
-  return filterTmp(appInfo.media.landscapePath)
-    || filterTmp(appInfo.media.backgroundPath)
-    || filterTmp(appInfo.media.coverPath)
-    || null;
+  return filterTmp(appInfo.media.landscapePath) || null;
 }
 
 export function pickStoreImage(appInfo: GameAppInfo | null): string | null {
   if (!appInfo?.media) return null;
-  return filterTmp(appInfo.media.landscapePath) || filterTmp(appInfo.media.coverPath) || null;
+  return filterTmp(appInfo.media.landscapePath) || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1616,8 +1605,6 @@ export async function resolveGameMedia(
   // --- Cover priority (poster/card) ---
   if (appinfo?.media?.coverPath) {
     result.coverSrc = appinfo.media.coverPath;
-  } else if (appinfo?.media?.landscapePath) {
-    result.coverSrc = appinfo.media.landscapePath;
   } else if (remoteCapsule) {
     result.coverSrc = remoteCapsule;
   } else if (remoteHeader) {
@@ -1629,14 +1616,10 @@ export async function resolveGameMedia(
   // --- Background priority (hero/details) ---
   if (appinfo?.media?.backgroundPath) {
     result.backgroundSrc = appinfo.media.backgroundPath;
-  } else if (appinfo?.media?.landscapePath) {
-    result.backgroundSrc = appinfo.media.landscapePath;
   } else if (remoteBackground) {
     result.backgroundSrc = remoteBackground;
   } else if (remoteHeader) {
     result.backgroundSrc = remoteHeader;
-  } else if (appinfo?.media?.coverPath) {
-    result.backgroundSrc = appinfo.media.coverPath;
   }
 
   // --- Logo priority ---
@@ -1647,19 +1630,13 @@ export async function resolveGameMedia(
   // --- Icon priority ---
   if (appinfo?.media?.iconPath) {
     result.iconSrc = appinfo.media.iconPath;
-  } else if (appinfo?.media?.coverPath) {
-    result.iconSrc = appinfo.media.coverPath;
   }
 
   // --- Landscape ---
   if (appinfo?.media?.landscapePath) {
     result.landscapeSrc = appinfo.media.landscapePath;
-  } else if (appinfo?.media?.backgroundPath) {
-    result.landscapeSrc = appinfo.media.backgroundPath;
   } else if (remoteHeader) {
     result.landscapeSrc = remoteHeader;
-  } else if (appinfo?.media?.coverPath) {
-    result.landscapeSrc = appinfo.media.coverPath;
   } else if (remoteBackground) {
     result.landscapeSrc = remoteBackground;
   } else if (remoteCapsule) {

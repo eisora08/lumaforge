@@ -1433,7 +1433,7 @@ export default function LibraryGameDetails({
 
               {/* Game cover icon */}
               {(() => {
-                const coverRaw = game.coverPath || game.landscapePath || canonicalAppInfo?.media?.coverPath;
+                const coverRaw = game.coverPath || canonicalAppInfo?.media?.coverPath;
                 if (!coverRaw) return <div className="h-7 w-7 shrink-0 rounded-md bg-white/5 ring-1 ring-white/10" />;
                 const coverUrl = coverRaw.startsWith("http") || coverRaw.startsWith("asset://") || coverRaw.startsWith("data:") || coverRaw.startsWith("file://")
                   ? coverRaw

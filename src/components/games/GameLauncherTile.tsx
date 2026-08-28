@@ -103,24 +103,10 @@ function getCardImage(
   if (!media) return undefined;
 
   if (mode === "poster") {
-    return (
-      [media.coverPath, media.landscapePath, media.backgroundPath]
-        .find((p): p is string => !!p && isLocalPath(p)) ||
-      media.coverPath ||
-      media.landscapePath ||
-      media.backgroundPath ||
-      undefined
-    );
+    return media.coverPath || undefined;
   }
 
-  return (
-    [media.landscapePath, media.backgroundPath, media.coverPath]
-      .find((p): p is string => !!p && isLocalPath(p)) ||
-    media.landscapePath ||
-    media.backgroundPath ||
-    media.coverPath ||
-    undefined
-  );
+  return media.landscapePath || undefined;
 }
 
 const DEBUG_MANUAL_REMOVE = false;
@@ -267,7 +253,7 @@ function GameLauncherTileInner({
     if (!game.appId || !displayImage) {
       // Manual/Epic games: resolve provider-relative path directly
       if (!game.appId && (game.imageUrl || game.coverPath || game.landscapePath)) {
-        const providerPath = game.imageUrl || (artworkMode === "poster" ? (game.coverPath || game.landscapePath) : (game.landscapePath || game.coverPath));
+        const providerPath = game.imageUrl || (artworkMode === "poster" ? game.coverPath : game.landscapePath);
         if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_INPUT] title=${game.title} source=${game.source} appId=${game.appId} providerPath=${providerPath} canonicalInfo=${!!canonicalInfo}`);
         let cancelled = false;
         resolveProviderMediaPreviewUrl(providerPath!)
