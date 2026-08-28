@@ -138,6 +138,16 @@ export function snapshotToDisplayGame(
       // Also merge: if primary has playtime but no lastPlayed, take from alt
       if (ptEntry && !ptEntry.lastPlayedAt && altEntry.lastPlayedAt) ptEntry = altEntry;
     }
+    // Epic/GOG: playtime is stored under game.id (e.g. "epic:ns:catId:app"), not "app-${appId}"
+    if (game.source === "epic" || game.source === "gog") {
+      const providerEntry = getPlaytimeEntryByGameKey(game.appId);
+      if (providerEntry && providerEntry !== ptEntry) {
+        const provLast = providerEntry.lastPlayedAt ?? 0;
+        const curLast = ptEntry?.lastPlayedAt ?? 0;
+        if (provLast > curLast) ptEntry = providerEntry;
+        if (ptEntry && !ptEntry.lastPlayedAt && providerEntry.lastPlayedAt) ptEntry = providerEntry;
+      }
+    }
   }
   const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? (game.playtime ? game.playtime * 60 : 0);
   const lastPlayed = ptEntry?.lastPlayedAt ?? game.lastPlayed ?? null;

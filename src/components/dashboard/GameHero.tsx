@@ -586,7 +586,10 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (runningLibGame) return runningLibGame;
     if (heroManualGame) return heroManualGame;
     if (heroEpicGame) return heroEpicGame;
-    if (heroGame?.appId) return libraryGames.find((game) => game.appId === heroGame.appId);
+    if (heroGame?.appId) {
+      return libraryGames.find((g) => g.appId === heroGame.appId)
+        ?? libraryGames.find((g) => g.id === heroGame.appId || g.libraryId === heroGame.appId);
+    }
     return undefined;
   }, [runningLibGame, heroManualGame, heroEpicGame, heroGame, libraryGames]);
 
@@ -784,6 +787,35 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
       // Snapshot game — resolve via appId
       if (heroAppId && heroGame) {
+        // Epic snapshot games: find matching LibraryGame for correct provider media paths
+        if (heroAppId.startsWith("epic:")) {
+          const libMatch = libraryGames.find((g) => g.id === heroAppId || g.libraryId === heroAppId);
+          if (libMatch) {
+            const candidates = [
+              { role: "backgroundPath", value: libMatch.backgroundPath },
+              { role: "landscapePath", value: libMatch.landscapePath },
+              { role: "coverPath", value: libMatch.coverPath },
+              { role: "imageUrl", value: libMatch.imageUrl },
+            ];
+            const selected = candidates.find((c) => c.value) ?? null;
+            const rawPath = selected?.value ?? null;
+            if (rawPath) {
+              try {
+                const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+                const url = await resolveProviderMediaPreviewUrl(rawPath);
+                if (url) {
+                  console.log(`[DASH][HERO] branch=snapshot→epic title="${heroGame.title}" appId=${heroAppId} rawPath=${rawPath} resolved=${url}`);
+                  if (!cancelled && generation === bgUrlGenerationRef.current) {
+                    setBgUrl(url);
+                    setAmbientSource("dashboard", url);
+                  }
+                  return;
+                }
+              } catch { /* fall through to legacy path */ }
+            }
+          }
+        }
+
         const m = heroGame.media;
         const imgPath = m?.backgroundPath ?? m?.landscapePath ?? m?.coverPath ?? null;
 

@@ -2808,6 +2808,8 @@ export type GameEntry = {
   lastPlayed: number;
   metadataJson: string;
   updatedAt: number;
+  provider?: string;
+  mediaJson?: string;
 };
 
 export async function batchUpsertGames(entries: GameEntry[]): Promise<void> {

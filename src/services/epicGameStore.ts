@@ -509,7 +509,6 @@ export async function refreshOwnedGames(): Promise<{
     (async () => {
       try {
         const { epicFetchAndSaveMetadata } = await import("./tauri");
-        let changed = false;
         for (const game of ownedMapped) {
           // Skip if already has cover artwork
           if (game.coverPath) continue;
@@ -524,15 +523,14 @@ export async function refreshOwnedGames(): Promise<{
             _metadataFetchedThisSession.add(game.providerGameId);
             // Apply artwork paths
             const a = result.artwork;
-            if (a.cover) { game.coverPath = a.cover; changed = true; }
-            if (a.landscape) { game.landscapePath = a.landscape; changed = true; }
-            if (a.background) { game.backgroundPath = a.background; changed = true; }
-            if (a.logo) { game.logoPath = a.logo; changed = true; }
-            if (a.icon) { game.iconPath = a.icon; changed = true; }
+            if (a.cover) game.coverPath = a.cover;
+            if (a.landscape) game.landscapePath = a.landscape;
+            if (a.background) game.backgroundPath = a.background;
+            if (a.logo) game.logoPath = a.logo;
+            if (a.icon) game.iconPath = a.icon;
             // Apply title if current looks like a UUID/hash
             if (result.title && /^[0-9a-f]{32}$/i.test(game.title)) {
               game.title = result.title;
-              changed = true;
             }
             // Apply text metadata
             if (result.description || result.developer) {
@@ -547,7 +545,6 @@ export async function refreshOwnedGames(): Promise<{
                 categories: [],
                 release_date: result.releaseDate || undefined,
               };
-              changed = true;
             }
           } catch {
             // Artwork fetch failed for this game — continue with others
@@ -566,11 +563,11 @@ export async function refreshOwnedGames(): Promise<{
             const result = await epicFetchAndSaveMetadata(game.providerGameId, ns, catId);
             _metadataFetchedThisSession.add(game.providerGameId);
             const a = result.artwork;
-            if (a.cover) { game.coverPath = a.cover; changed = true; }
-            if (a.landscape) { game.landscapePath = a.landscape; changed = true; }
-            if (a.background) { game.backgroundPath = a.background; changed = true; }
-            if (a.logo) { game.logoPath = a.logo; changed = true; }
-            if (a.icon) { game.iconPath = a.icon; changed = true; }
+            if (a.cover) game.coverPath = a.cover;
+            if (a.landscape) game.landscapePath = a.landscape;
+            if (a.background) game.backgroundPath = a.background;
+            if (a.logo) game.logoPath = a.logo;
+            if (a.icon) game.iconPath = a.icon;
             if (result.description || result.developer) {
               (game as Record<string, unknown>).metadata = {
                 resolved: true,
@@ -582,15 +579,15 @@ export async function refreshOwnedGames(): Promise<{
                 categories: [],
                 release_date: result.releaseDate || undefined,
               };
-              changed = true;
             }
           } catch {
             // continue
           }
         }
 
-        // Only re-notify if something actually changed
-        if (changed) notifyListeners();
+        // Always persist after metadata fetch (this is the only persist point)
+        notifyListeners();
+        persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
       } catch (err) {
         console.warn("[EPIC_STORE] metadata fetch batch failed:", err);
       }
@@ -616,6 +613,80 @@ export async function refreshOwnedGames(): Promise<{
   }
 }
 
+// ── Cache loading (from SQLite on boot) ──
+
+/**
+ * Load Epic games from SQLite cache into memory on boot.
+ * This makes Epic games appear instantly without waiting for manifest scan + API call.
+ */
+export function loadEpicGamesFromCache(cachedGames: Array<{
+  appId: string;
+  title: string;
+  installed: boolean;
+  playtime: number;
+  lastPlayed: number;
+  provider?: string;
+  mediaJson?: string;
+}>): void {
+  const UUID_RE = /^[0-9a-f]{32}$/i;
+  const libGames: LibraryGame[] = cachedGames.map((g) => {
+    const media = g.mediaJson ? (() => { try { return JSON.parse(g.mediaJson); } catch { return {}; } })() : {};
+    const providerGameId = g.appId.replace(/^epic:/, "");
+    const libraryId = g.appId;
+    // If title is a UUID-like catalogItemId, use the appName (last segment of providerGameId) as fallback
+    let title = g.title || "Unknown Epic Game";
+    if (UUID_RE.test(title)) {
+      const parts = providerGameId.split(":");
+      const appName = parts[parts.length - 1];
+      if (appName && !UUID_RE.test(appName)) title = appName;
+    }
+    return {
+      id: g.appId,
+      title,
+      source: "epic",
+      libraryId,
+      providerId: "epic",
+      providerGameId,
+      appId: undefined,
+      isPlayable: true,
+      isInstallable: false,
+      steamInstalled: false,
+      isInstalled: g.installed,
+      steamPlaytimeMinutes: g.playtime,
+      steamLastPlayedAt: g.lastPlayed,
+      coverPath: media.coverPath || undefined,
+      landscapePath: media.landscapePath || undefined,
+      backgroundPath: media.backgroundPath || undefined,
+      logoPath: media.logoPath || undefined,
+      iconPath: media.iconPath || undefined,
+      luaScripts: [],
+      hasLua: false,
+      isLuaActive: false,
+      isLuaDisabled: false,
+      hasLuaSource: false,
+      sources: [],
+    } as LibraryGame;
+  });
+
+  // Separate installed vs owned
+  const installed = libGames.filter((g) => g.isInstalled);
+  const owned = libGames.filter((g) => !g.isInstalled);
+
+  if (installed.length > 0) _epicGames = installed;
+  if (owned.length > 0) _ownedGames = owned;
+
+  _epicFingerprint = computeEpicFingerprint([..._epicGames, ..._ownedGames]);
+  _ownedFingerprint = _epicFingerprint;
+  _scanState = installed.length > 0 ? "done" : _scanState;
+  _ownedScanState = owned.length > 0 ? "done" : _ownedScanState;
+
+  if (DEBUG_EPIC_LIBRARY) {
+    console.log(`[EPIC_STORE] loaded from cache: installed=${installed.length} owned=${owned.length}`);
+  }
+
+  notifyListeners();
+}
+
 /** Return all Epic games (installed + owned). */
 export function getAllEpicGamesIncludingOwned(): LibraryGame[] {
   return [..._epicGames, ..._ownedGames];
@@ -639,6 +710,46 @@ export function getOwnedScanWarning(): string | null {
 /** Get playtime for a specific game (from synced data). */
 export function getEpicPlaytime(appName: string): number {
   return _syncedPlaytime.get(appName) || 0;
+}
+
+// ── SQLite persistence ──
+
+/**
+ * Persist Epic games to SQLite so they load instantly on next boot.
+ * Fire-and-forget — errors are non-critical.
+ */
+async function persistEpicGamesToSqlite(games: LibraryGame[]): Promise<void> {
+  if (games.length === 0) return;
+  try {
+    const { batchUpsertGames } = await import("./tauri");
+    const entries = games
+      .filter((g) => g.id)
+      .map((g) => ({
+        appId: g.id!,
+        title: g.title || "Unknown",
+        installed: g.isInstalled || false,
+        playtime: g.steamPlaytimeMinutes ?? 0,
+        lastPlayed: g.steamLastPlayedAt ?? 0,
+        metadataJson: "{}",
+        updatedAt: Math.floor(Date.now() / 1000),
+        provider: "epic",
+        mediaJson: JSON.stringify({
+          coverPath: g.coverPath || null,
+          landscapePath: g.landscapePath || null,
+          backgroundPath: g.backgroundPath || null,
+          logoPath: g.logoPath || null,
+          iconPath: g.iconPath || null,
+        }),
+      }));
+    if (entries.length > 0) {
+      await batchUpsertGames(entries);
+      if (DEBUG_EPIC_LIBRARY) {
+        console.log(`[EPIC_STORE] persisted ${entries.length} games to SQLite`);
+      }
+    }
+  } catch (err) {
+    console.warn("[EPIC_STORE] failed to persist to SQLite:", err);
+  }
 }
 
 // ── Override change handling ──

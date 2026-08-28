@@ -18,20 +18,26 @@ pub struct GameEntry {
     pub last_played: i64,
     pub metadata_json: String,
     pub updated_at: i64,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub media_json: Option<String>,
 }
 
 pub fn upsert_game_inner(db: &Mutex<Connection>, game: &GameEntry) -> Result<(), String> {
     let conn = db.lock().unwrap();
     conn.execute(
-        "INSERT INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "INSERT INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at, provider, media_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(appId) DO UPDATE SET
             title = excluded.title,
             installed = excluded.installed,
             playtime = excluded.playtime,
             lastPlayed = excluded.lastPlayed,
             metadata_json = excluded.metadata_json,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at,
+            provider = COALESCE(excluded.provider, games.provider),
+            media_json = COALESCE(excluded.media_json, games.media_json)",
         rusqlite::params![
             game.app_id,
             game.title,
@@ -40,6 +46,8 @@ pub fn upsert_game_inner(db: &Mutex<Connection>, game: &GameEntry) -> Result<(),
             game.last_played,
             game.metadata_json,
             game.updated_at,
+            game.provider.as_deref().unwrap_or("steam"),
+            game.media_json.as_deref().unwrap_or("{}"),
         ],
     )
     .map_err(|e| format!("Failed to upsert game: {}", e))?;
@@ -53,15 +61,17 @@ pub fn batch_upsert_games_inner(db: &Mutex<Connection>, games: &[GameEntry]) -> 
     let conn = db.lock().unwrap();
     for game in games {
         conn.execute(
-            "INSERT INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at, provider, media_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(appId) DO UPDATE SET
                 title = excluded.title,
                 installed = excluded.installed,
                 playtime = excluded.playtime,
                 lastPlayed = excluded.lastPlayed,
                 metadata_json = excluded.metadata_json,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                provider = COALESCE(excluded.provider, games.provider),
+                media_json = COALESCE(excluded.media_json, games.media_json)",
             rusqlite::params![
                 game.app_id,
                 game.title,
@@ -70,6 +80,8 @@ pub fn batch_upsert_games_inner(db: &Mutex<Connection>, games: &[GameEntry]) -> 
                 game.last_played,
                 game.metadata_json,
                 game.updated_at,
+                game.provider.as_deref().unwrap_or("steam"),
+                game.media_json.as_deref().unwrap_or("{}"),
             ],
         )
         .map_err(|e| format!("Failed to batch upsert game {}: {}", game.app_id, e))?;
@@ -81,7 +93,7 @@ pub fn read_all_games_inner(db: &Mutex<Connection>) -> Result<Vec<GameEntry>, St
     let conn = db.lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT appId, title, installed, playtime, lastPlayed, metadata_json, updated_at
+            "SELECT appId, title, installed, playtime, lastPlayed, metadata_json, updated_at, provider, media_json
              FROM games ORDER BY title ASC",
         )
         .map_err(|e| format!("Failed to prepare read_all_games: {}", e))?;
@@ -95,6 +107,8 @@ pub fn read_all_games_inner(db: &Mutex<Connection>) -> Result<Vec<GameEntry>, St
                 last_played: row.get(4)?,
                 metadata_json: row.get(5)?,
                 updated_at: row.get(6)?,
+                provider: row.get(7)?,
+                media_json: row.get(8)?,
             })
         })
         .map_err(|e| format!("Failed to query all games: {}", e))?;
@@ -193,7 +207,7 @@ pub fn sqlite_get_game(
     };
     let conn = db.lock().unwrap();
     conn.query_row(
-        "SELECT appId, title, installed, playtime, lastPlayed, metadata_json, updated_at
+        "SELECT appId, title, installed, playtime, lastPlayed, metadata_json, updated_at, provider, media_json
          FROM games WHERE appId = ?1",
         [&app_id],
         |row| {
@@ -205,6 +219,8 @@ pub fn sqlite_get_game(
                 last_played: row.get(4)?,
                 metadata_json: row.get(5)?,
                 updated_at: row.get(6)?,
+                provider: row.get(7)?,
+                media_json: row.get(8)?,
             })
         },
     )

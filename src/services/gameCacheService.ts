@@ -2281,6 +2281,10 @@ export async function resolveGameMediaUrl(
     if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log("[MEDIA][RESOLVE] appId=" + appId + " input=" + path + " resolved=" + absPath + " url=" + (!!url));
     return url;
   }
+  // Provider-relative paths (e.g. "games/epic/<id>/media/landscape.jpg") — resolve from app data root
+  if (path.startsWith("games/")) {
+    return resolveProviderMediaPreviewUrl(path);
+  }
   return localPathToUrl(path);
 }
 

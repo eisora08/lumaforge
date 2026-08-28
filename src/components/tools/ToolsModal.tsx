@@ -591,7 +591,11 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
 
   if (!open) return null;
 
-  const title = game ? `Fixes · ${game.title} · #${game.appId}` : "Fixes";
+  const title = game
+    ? game.source === "epic"
+      ? `Fixes · ${game.title}`
+      : `Fixes · ${game.title} · #${game.appId}`
+    : "Fixes";
 
   const heroClass =
     transition === "kenburns"

@@ -1376,21 +1376,54 @@ export async function buildStartupSnapshotFromCurrentState(
   // Phase 2: Add Epic/GOG games (appId-less, using game.id as synthetic key).
   // These games have no canonical appinfo or Steam media paths, so media is null
   // until the user adds artwork via GameEditDialog.
+
+  // Pre-fetch SQLite Epic media (single query, reused for all Epic games)
+  const epicSqliteMedia = new Map<string, { coverPath?: string; landscapePath?: string; backgroundPath?: string; logoPath?: string; iconPath?: string }>();
+  const hasEpicGames = games.some((g) => !g.appId && g.source === "epic");
+  if (hasEpicGames) {
+    try {
+      const { readAllGames } = await import("./tauri");
+      const allGames = await readAllGames().catch(() => []);
+      for (const g of allGames) {
+        if (g.provider === "epic" && g.appId && g.mediaJson) {
+          try {
+            epicSqliteMedia.set(g.appId, JSON.parse(g.mediaJson));
+          } catch { /* malformed JSON — skip */ }
+        }
+      }
+    } catch { /* SQLite unavailable — leave map empty */ }
+  }
+
   for (const game of games) {
     if (game.appId) continue; // already processed in main Steam loop
 
     const syntheticId = game.id;
     const title = game.title || "Unknown Game";
 
-    // Try to read media paths from Epic override store
+    // Try to read media paths from Epic override store or SQLite cache
     let media: SnapshotGameMedia = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
     try {
       if (game.source === "epic") {
+        // 1. Try override store (localStorage) — user manually set via GameEditDialog
         const { readEpicOverrides } = await import("./epicOverrideStore");
         const overrides = readEpicOverrides(syntheticId);
         if (overrides) {
-          // Override store doesn't store media paths directly — they're managed by the media adapter.
-          // For now, media stays null until provider media resolution is wired.
+          if (overrides.coverPath) media.coverPath = overrides.coverPath;
+          if (overrides.landscapePath) media.landscapePath = overrides.landscapePath;
+          if (overrides.backgroundPath) media.backgroundPath = overrides.backgroundPath;
+          if (overrides.logoPath) media.logoPath = overrides.logoPath;
+          if (overrides.iconPath) media.iconPath = overrides.iconPath;
+        }
+        // 2. Fill gaps from SQLite mediaJson (persisted by epicGameStore)
+        if (!media.coverPath && !media.landscapePath && !media.backgroundPath) {
+          const m = epicSqliteMedia.get(syntheticId);
+          if (m) {
+            if (m.coverPath) media.coverPath = m.coverPath;
+            if (m.landscapePath) media.landscapePath = m.landscapePath;
+            if (m.backgroundPath) media.backgroundPath = m.backgroundPath;
+            if (m.logoPath) media.logoPath = m.logoPath;
+            if (m.iconPath) media.iconPath = m.iconPath;
+          }
         }
       }
     } catch {
@@ -1426,7 +1459,10 @@ export async function buildStartupSnapshotFromCurrentState(
         appId: syntheticId,
         title,
         provider: game.source,
-        media: { landscapePath: null, coverPath: null },
+        media: {
+          landscapePath: media.landscapePath,
+          coverPath: media.coverPath,
+        },
       });
     }
   }

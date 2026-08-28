@@ -130,11 +130,15 @@ function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry |
   return t ? t("sidebar.unknown_game") : "Unknown Game";
 }
 
-function getSnapshotMedia(appId: string): GameMediaPaths | null {
+function getSnapshotMedia(appId: string, game?: { id?: string; libraryId?: string }): GameMediaPaths | null {
   const snapshot = getBootSnapshot();
   if (!snapshot) return null;
+  // Match by appId (Steam/Lua) or by id/libraryId (Epic/GOG)
+  const matchKeys = [appId];
+  if (game?.id) matchKeys.push(game.id);
+  if (game?.libraryId) matchKeys.push(game.libraryId);
   for (const g of snapshot.library.games) {
-    if (g.appId === appId) {
+    if (matchKeys.includes(g.appId)) {
       return {
         landscapePath: g.media.landscapePath ?? null,
         coverPath: g.media.coverPath ?? null,
@@ -393,10 +397,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       });
       for (const g of unloaded) manualMediaLoading.current.delete(g.id);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      for (const g of unloaded) manualMediaLoading.current.delete(g.id);
+    };
   }, [filtered]);
 
-  // Resolve sidebar media for Epic games (no appId — use coverPath/landscapePath from overrides)
+  // Resolve sidebar media for Epic games (no appId — use coverPath/landscapePath from snapshot or overrides)
   const epicMediaLoading = useRef<Set<string>>(new Set());
   useEffect(() => {
     const epicGames = filtered.filter((g) => !g.appId && g.source === "epic");
@@ -413,10 +420,19 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         unloaded.map(async (g) => {
           epicMediaLoading.current.add(g.id);
 
-          const iconLocal = g.iconPath ?? undefined;
-          const coverLocal = g.coverPath ?? g.imageUrl ?? undefined;
-          const landscapeLocal = g.landscapePath ?? undefined;
-          const backgroundLocal = g.backgroundPath ?? undefined;
+          // Try snapshot first (validated media paths), then fall back to LibraryGame fields
+          const snapMedia = getSnapshotMedia(g.id, g);
+          const iconLocal = snapMedia?.iconPath ?? g.iconPath ?? undefined;
+          const coverLocal = snapMedia?.coverPath ?? g.coverPath ?? g.imageUrl ?? undefined;
+          const landscapeLocal = snapMedia?.landscapePath ?? g.landscapePath ?? undefined;
+          const backgroundLocal = snapMedia?.backgroundPath ?? g.backgroundPath ?? undefined;
+
+          // Debug: log what paths we're resolving for this Epic game
+          if (coverLocal || landscapeLocal || backgroundLocal) {
+            console.log(`[SIDEBAR_EPIC_MEDIA] id=${g.id} title="${g.title}" snapCover=${snapMedia?.coverPath ?? "null"} snapLandscape=${snapMedia?.landscapePath ?? "null"} libCover=${g.coverPath ?? "null"} libLandscape=${g.landscapePath ?? "null"} resolving: cover=${coverLocal ?? "null"} landscape=${landscapeLocal ?? "null"} bg=${backgroundLocal ?? "null"}`);
+          } else {
+            console.log(`[SIDEBAR_EPIC_MEDIA] id=${g.id} title="${g.title}" NO_MEDIA snapCover=${snapMedia?.coverPath ?? "null"} libCover=${g.coverPath ?? "null"} libLandscape=${g.landscapePath ?? "null"}`);
+          }
 
           const [resolvedIcon, resolvedCover, resolvedLandscape, resolvedBackground] = await Promise.all([
             iconLocal ? resolveProviderMediaPreviewUrl(iconLocal).catch(() => null) : Promise.resolve(null),
@@ -432,6 +448,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
             background: resolvedBackground ? { src: resolvedBackground, localPath: backgroundLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
             logo: { src: null, localPath: null, exists: false },
           };
+
+          // Debug: log resolved results
+          console.log(`[SIDEBAR_EPIC_MEDIA_RESULT] id=${g.id} cover=${media.cover.exists} landscape=${media.landscape.exists} coverSrc=${media.cover.src?.slice(0, 80) ?? "null"}`);
+
           return [g.id, media] as const;
         })
       );
@@ -443,7 +463,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       });
       for (const g of unloaded) epicMediaLoading.current.delete(g.id);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      for (const g of unloaded) epicMediaLoading.current.delete(g.id);
+    };
   }, [filtered]);
 
   // High-priority media resolution for visible games with missing thumbnails

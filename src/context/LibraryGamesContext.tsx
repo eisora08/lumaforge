@@ -26,6 +26,7 @@ import {
 } from "../services/gameCacheService";
 import {
   scheduleSnapshotWrite,
+  getCachedSnapshot,
 } from "../services/startupSnapshotService";
 import type { SnapshotGame } from "../services/startupSnapshotService";
 import { isStandalone as isStandaloneById } from "../services/standaloneStore";
@@ -88,7 +89,7 @@ function computeLibraryFingerprint(games: LibraryGame[]): string {
   return games.slice(0, 200).map(g => {
     // Use provider-neutral identity key to avoid undefined: prefix for Epic/GOG entries
     const identityKey = g.appId || g.libraryId || g.id;
-    return `${identityKey}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}:${g.imageUrl ?? ""}`;
+    return `${identityKey}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}:${g.imageUrl ?? ""}:${g.coverPath ?? ""}:${g.landscapePath ?? ""}:${g.backgroundPath ?? ""}:${g.logoPath ?? ""}:${g.iconPath ?? ""}`;
   }).join("|");
 }
 
@@ -376,6 +377,28 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       (m) => !m.appId || !existingKeys.has(`${m.appId}:${m.source}`),
     );
     const withManual = [...nextGames, ...freshManual, ...getEpicLibraryGamesIncludingOwned(), ...getDebridLibraryGames()];
+    // Bridge snapshot media into fresh Epic/Debrid/Manual games from stores.
+    // These stores create new LibraryGame objects without media paths (mappers don't set them),
+    // so without this bridge, they lose media that the snapshot already validated.
+    {
+      const snap = getCachedSnapshot();
+      if (snap && snap.library.games.length > 0) {
+        const snapMediaMap = new Map(snap.library.games.map((sg) => [sg.appId, sg.media]));
+        for (const game of withManual) {
+          if (game.coverPath || game.landscapePath || game.backgroundPath) continue;
+          const matchKey = game.appId || game.id || game.libraryId;
+          if (!matchKey) continue;
+          const sm = snapMediaMap.get(matchKey);
+          if (sm) {
+            if (!game.backgroundPath && sm.backgroundPath) game.backgroundPath = sm.backgroundPath;
+            if (!game.landscapePath && sm.landscapePath) game.landscapePath = sm.landscapePath;
+            if (!game.coverPath && sm.coverPath) game.coverPath = sm.coverPath;
+            if (!game.logoPath && sm.logoPath) game.logoPath = sm.logoPath;
+            if (!game.iconPath && sm.iconPath) game.iconPath = sm.iconPath;
+          }
+        }
+      }
+    }
     // Phase 2: Block empty replacement of valid data unless explicit
     if (withManual.length === 0 && current.length > 0 && !options?.allowReplace) {
       countLibraryEmptyBlocked();
@@ -710,8 +733,18 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       sg.source === "epic" ? "epic" :
       sg.source === "gog" ? "gog" :
       "steam";
+    // For Epic/GOG: derive libraryId and providerGameId from the synthetic appId
+    const libraryId = resolvedSource === "epic" ? sg.appId :
+                      resolvedSource === "gog" ? sg.appId :
+                      undefined;
+    const providerGameId = resolvedSource === "epic" ? sg.appId?.replace(/^epic:/, "") :
+                           resolvedSource === "gog" ? sg.appId?.replace(/^gog:/, "") :
+                           undefined;
     return {
       id: sg.appId,
+      libraryId,
+      providerId: resolvedSource === "epic" ? "epic" : resolvedSource === "gog" ? "gog" : undefined,
+      providerGameId,
       appId: (resolvedSource === "steam" || resolvedSource === "lua") ? sg.appId : undefined,
       title: sg.title || "",
       source: resolvedSource,
@@ -834,6 +867,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         // Bridge snapshot media into loaded games so the hero/dashboard get a stable
         // frame-1 image path for Steam/Lua games even when they come from SQLite/reconciled
         // (those sources don't populate backgroundPath/landscapePath/coverPath).
+        // Also bridges Epic/GOG games by matching on game.id or game.libraryId.
         if (snapshot && snapshot.library.games.length > 0) {
           const snapshotMediaByAppId = new Map<string, SnapshotGame["media"]>();
           const snapshotCompletionByAppId = new Map<string, string | null>();
@@ -843,8 +877,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           }
           let bridged = 0;
           for (const game of loadedGames) {
-            if (!game.appId) continue;
-            const sm = snapshotMediaByAppId.get(game.appId);
+            // Match by appId (Steam/Lua) or by id/libraryId (Epic/GOG)
+            const matchKey = game.appId || game.id || game.libraryId;
+            if (!matchKey) continue;
+            const sm = snapshotMediaByAppId.get(matchKey);
             if (!sm) continue;
             let changed = false;
             if (!game.backgroundPath && sm.backgroundPath) { game.backgroundPath = sm.backgroundPath; changed = true; }
@@ -855,7 +891,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             if (changed) bridged++;
             // Bridge completion status from snapshot for games from SQLite/reconciled
             if (!game.completionStatus) {
-              const cs = snapshotCompletionByAppId.get(game.appId);
+              const cs = snapshotCompletionByAppId.get(matchKey);
               if (cs) game.completionStatus = cs;
             }
           }

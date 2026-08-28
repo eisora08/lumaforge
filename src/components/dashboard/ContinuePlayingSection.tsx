@@ -57,18 +57,19 @@ function getContinueDisplayGames(
   const seen = new Set<string>();
   if (excludeAppId) seen.add(excludeAppId);
 
-  // Build an appId→LibraryGame index for provider-aware playtime key resolution
+  // Build an identity→LibraryGame index for provider-aware playtime key resolution
+  // Indexed by appId (Steam/Lua), libraryId (Epic/GOG/Manual/Debrid), and id (fallback)
   const libGameByAppId = new Map<string, LibraryGame>();
   for (const lg of libraryGames) {
     if (lg.appId) libGameByAppId.set(lg.appId, lg);
+    if (lg.libraryId) libGameByAppId.set(lg.libraryId, lg);
+    if (lg.id) libGameByAppId.set(lg.id, lg);
   }
 
   // Snapshot games → display games
-  // Non-Steam games (Epic/manual) go through the non-snapshot path below,
-  // which uses correct playtime keys and live media paths from LibraryGame.
+  // All sources (steam, debrid, epic, manual) go through the snapshot path when available.
   for (const sg of snapshotGames) {
     if (!sg.appId || seen.has(sg.appId)) continue;
-    if (sg.source && sg.source !== "steam" && sg.source !== "debrid") continue;
     seen.add(sg.appId);
     const libGame = libGameByAppId.get(sg.appId);
     const dg = snapshotToDisplayGame(sg as any, runningAppIds, libGame);
@@ -82,7 +83,8 @@ function getContinueDisplayGames(
   // Non-snapshot games (manual + Epic + future) → display games
   for (const mg of nonSnapshotGames) {
     const sid = mg.libraryId || mg.id;
-    if (seen.has(sid)) continue;
+    // Also check mg.appId to catch debrid games that appear in snapshot as Steam games
+    if (seen.has(sid) || (((mg as any).appId) && seen.has((mg as any).appId))) continue;
     seen.add(sid);
     const dg = manualToDisplayGame(mg as any, runningGameIds, mg.source ?? undefined);
     if (DEBUG_CONTINUE_PLAY) {
@@ -259,6 +261,16 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
       onNavigate?.("library-game-detail");
     } else if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
+      if (libGame) {
+        setSelectedGame(libGame);
+        onNavigate?.("library-game-detail");
+      }
+    }
+    // Fallback: find by libraryId or id (Epic/GOG/Manual/Debrid games have no appId)
+    if (!game._libraryGame && !game.appId) {
+      const libGame = libraryGames.find(
+        (g) => (g.libraryId && g.libraryId === game.stableId) || (g.id && g.id === game.stableId),
+      );
       if (libGame) {
         setSelectedGame(libGame);
         onNavigate?.("library-game-detail");

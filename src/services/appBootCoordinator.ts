@@ -25,6 +25,7 @@ export type BootTaskId =
   | "enrich-snapshot-titles"
   | "load-local-game-index"
   | "reconcile-lua-games"
+  | "load-epic-games-from-cache"
   | "load-achievement-summaries"
   | "load-nonsteam-achievements"
   | "load-cached-media-index"
@@ -760,6 +761,26 @@ export async function runBootTasks(): Promise<void> {
               console.warn("[BOOT] reconcile lua games failed:", String(err));
             }
             logBoot("reconcile lua games end");
+          });
+
+          // Stage 4.75: Load Epic games from SQLite cache (instant boot)
+          await track("load-epic-games-from-cache", async () => {
+            logBoot("load epic games from cache start");
+            try {
+              if (isIntegrationEnabled("epic")) {
+                const { readAllGames } = await import("./tauri");
+                const { loadEpicGamesFromCache } = await import("./epicGameStore");
+                const allGames = await readAllGames();
+                const epicGames = allGames.filter((g) => g.provider === "epic");
+                if (epicGames.length > 0) {
+                  loadEpicGamesFromCache(epicGames);
+                  if (DEBUG_BOOT) console.log(`[BOOT][EPIC_CACHE] loaded ${epicGames.length} Epic games from SQLite`);
+                }
+              }
+            } catch (err) {
+              console.warn("[BOOT] load epic games from cache failed:", String(err));
+            }
+            logBoot("load epic games from cache end");
           });
 
           // Stage 5: Load ALL cached achievement summaries into store from SQLite

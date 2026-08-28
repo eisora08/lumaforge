@@ -2552,8 +2552,8 @@
     "loading_catalog": "Loading global catalog\u2026",
     "game_hero": {
       "running": "Running",
-      "elapsed": "{time} elapsed",
-      "last_played": "Last played: {time}",
+      "elapsed": "{{time}} elapsed",
+      "last_played": "Last played: {{time}}",
       "stopping": "Stopping\u2026",
       "launching": "Launching\u2026",
       "focus_game": "Focus Game",

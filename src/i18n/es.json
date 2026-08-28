@@ -2552,8 +2552,8 @@
     "loading_catalog": "Cargando cat\u00e1logo global\u2026",
     "game_hero": {
       "running": "Ejecutando",
-      "elapsed": "{time} transcurrido",
-      "last_played": "\u00daltima vez: {time}",
+      "elapsed": "{{time}} transcurrido",
+      "last_played": "\u00daltima vez: {{time}}",
       "stopping": "Deteniendo\u2026",
       "launching": "Iniciando\u2026",
       "focus_game": "Ver detalles",
