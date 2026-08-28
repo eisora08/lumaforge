@@ -176,9 +176,12 @@ pub fn save_provider_media_from_path(
     }
 
     let inferred_ext = infer_extension(&source_path, &role);
-    let was_webp = inferred_ext == "webp";
-    // Normalize .webp → .jpg/.png so provider media never stores .webp.
-    let ext = if was_webp { role_default_extension(&role) } else { inferred_ext };
+    // Every source format is normalized to the role's canonical extension.
+    // Non-alpha roles (cover/landscape/background) → .jpg, alpha roles
+    // (logo/icon) → .png, so provider media never stores .webp/.png for
+    // non-transparent roles regardless of the source.
+    let ext = role_default_extension(&role);
+    let needs_reencode = inferred_ext != ext;
     let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
     let filename = format!("{}.{}", role, ext);
     let dest_path = media_dir.join(&filename);
@@ -211,9 +214,10 @@ pub fn save_provider_media_from_path(
         ));
     }
 
-    // .webp source bytes are re-encoded to .jpg/.png so downstream reads use
-    // the proven extensions (instant refresh works for jpg/png).
-    if was_webp {
+    // Non-canonical source bytes (webp, png, gif, bmp, jpeg, ...) are
+    // re-encoded to .jpg/.png so downstream reads use the proven extensions
+    // (instant refresh works for jpg/png).
+    if needs_reencode {
         let bytes = fs::read(&source_path)
             .map_err(|e| format!("Cannot read source file: {}", e))?;
         image_utils::process_and_save_image(&bytes, &dest_path, &role)?;
@@ -349,19 +353,23 @@ pub async fn download_provider_media_from_url(
     } else {
         extension_from_content_type(&content_type, &role)
     };
-    let was_webp = inferred_ext == "webp";
-    // Normalize .webp → .jpg/.png so provider media never stores .webp.
-    let ext = if was_webp { role_default_extension(&role) } else { inferred_ext };
+    // Every source format is normalized to the role's canonical extension.
+    // Non-alpha roles (cover/landscape/background) → .jpg, alpha roles
+    // (logo/icon) → .png, so provider media never stores .webp/.png for
+    // non-transparent roles regardless of the source.
+    let ext = role_default_extension(&role);
 
     let filename = format!("{}.{}", role, ext);
     let dest_path = media_dir.join(&filename);
 
-    if was_webp {
-        // .webp downloaded bytes are re-encoded to .jpg/.png so downstream
-        // reads use the proven extensions (instant refresh works for jpg/png).
+    let needs_reencode = inferred_ext != ext;
+    if needs_reencode {
+        // Non-canonical source bytes (webp, png, gif, bmp, jpeg, ...) are
+        // re-encoded to .jpg/.png so downstream reads use the proven
+        // extensions (instant refresh works for jpg/png).
         image_utils::process_and_save_image(bytes.as_ref(), &dest_path, &role)?;
     } else {
-        // Atomic write: temp file then rename
+        // Already the canonical extension — atomic write: temp file then rename
         let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
         tokio::fs::write(&tmp_path, &bytes)
             .await
@@ -465,14 +473,12 @@ pub fn save_provider_media_from_base64(
 
     // Validate extension
     let raw_ext = ext.to_lowercase();
-    let was_webp = raw_ext == "webp";
-    let safe_ext = match raw_ext.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "bmp" => raw_ext,
-        // Normalize .webp → .jpg/.png so provider media never stores .webp.
-        // Source bytes are re-encoded below.
-        "webp" => role_default_extension(&role),
-        _ => role_default_extension(&role),
-    };
+    // Every source format is normalized to the role's canonical extension.
+    // Non-alpha roles (cover/landscape/background) → .jpg, alpha roles
+    // (logo/icon) → .png, so provider media never stores .webp/.png for
+    // non-transparent roles regardless of the source.
+    let safe_ext = role_default_extension(&role);
+    let needs_reencode = raw_ext != safe_ext;
 
     // Decode base64
     use base64::Engine;
@@ -509,9 +515,10 @@ pub fn save_provider_media_from_base64(
         }
     }
 
-    // .webp source bytes are re-encoded to .jpg/.png so downstream reads use
-    // the proven extensions (instant refresh works for jpg/png).
-    if was_webp {
+    // Non-canonical source bytes (webp, png, gif, bmp, jpeg, ...) are
+    // re-encoded to .jpg/.png so downstream reads use the proven extensions
+    // (instant refresh works for jpg/png).
+    if needs_reencode {
         image_utils::process_and_save_image(&decoded, &dest_path, &role)?;
     } else {
         // Atomic write: temp file then rename

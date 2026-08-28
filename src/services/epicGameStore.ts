@@ -22,6 +22,7 @@ import {
   computeEpicFingerprint,
 } from "./epicGameLibraryMapper";
 import { EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LIBRARY } from "./epicFeatureFlag";
+import { mergeEpicOverrides } from "./epicOverrideStore";
 import type { MediaRole } from "./providerMediaPaths";
 
 // ── Launch metadata ──
@@ -495,7 +496,11 @@ export async function refreshOwnedGames(): Promise<{
     const fingerprintChanged = newFingerprint !== _ownedFingerprint;
 
     // Replace state
-    _ownedGames = ownedMapped;
+    _ownedGames = ownedMapped.map((g) =>
+      g.providerGameId
+        ? (mergeEpicOverrides(g as unknown as Record<string, unknown>, g.providerGameId) as LibraryGame)
+        : g,
+    );
     _ownedFingerprint = newFingerprint;
     _ownedScanState = "done";
 
@@ -673,7 +678,13 @@ export function loadEpicGamesFromCache(cachedGames: Array<{
   const owned = libGames.filter((g) => !g.isInstalled);
 
   if (installed.length > 0) _epicGames = installed;
-  if (owned.length > 0) _ownedGames = owned;
+  if (owned.length > 0) {
+    _ownedGames = owned.map((g) =>
+      g.providerGameId
+        ? (mergeEpicOverrides(g as unknown as Record<string, unknown>, g.providerGameId) as LibraryGame)
+        : g,
+    );
+  }
 
   _epicFingerprint = computeEpicFingerprint([..._epicGames, ..._ownedGames]);
   _ownedFingerprint = _epicFingerprint;
@@ -689,12 +700,23 @@ export function loadEpicGamesFromCache(cachedGames: Array<{
 
 /** Return all Epic games (installed + owned). */
 export function getAllEpicGamesIncludingOwned(): LibraryGame[] {
-  return [..._epicGames, ..._ownedGames];
+  return [
+    ..._epicGames,
+    ..._ownedGames.map((g) =>
+      g.providerGameId
+        ? (mergeEpicOverrides(g as unknown as Record<string, unknown>, g.providerGameId) as LibraryGame)
+        : g,
+    ),
+  ];
 }
 
 /** Return only owned (not installed) Epic games. */
 export function getOwnedEpicGames(): LibraryGame[] {
-  return _ownedGames;
+  return _ownedGames.map((g) =>
+    g.providerGameId
+      ? (mergeEpicOverrides(g as unknown as Record<string, unknown>, g.providerGameId) as LibraryGame)
+      : g,
+  );
 }
 
 /** Return owned games scan state. */
@@ -795,33 +817,60 @@ function applyEpicOverridesUpdate(providerGameId: string): void {
 function _applyEpicOverridesUpdateInner(providerGameId: string): void {
 
   const idx = _epicGames.findIndex((g) => g.providerGameId === providerGameId);
-  if (idx === -1) {
-    // Game not in current Epic list — possibly not scanned yet; skip
-    return;
-  }
 
-  // Re-apply overrides from localStorage
-  import("./epicOverrideStore").then(({ mergeEpicOverrides }) => {
-    const game = _epicGames[idx];
-    const updated = mergeEpicOverrides(
-      game as unknown as Record<string, unknown>,
+  // Owned (not installed) games live in a separate array. They must be re-merged
+  // with overrides too, otherwise media/metadata edits made in GameEditDialog are
+  // written to the override store but never reflected in the library UI.
+  if (idx === -1) {
+    const ownedIdx = _ownedGames.findIndex((g) => g.providerGameId === providerGameId);
+    if (ownedIdx === -1) {
+      // Game not in current Epic list — possibly not scanned yet; skip
+      return;
+    }
+
+    const ownedGame = _ownedGames[ownedIdx];
+    const ownedUpdated = mergeEpicOverrides(
+      ownedGame as unknown as Record<string, unknown>,
       providerGameId,
     ) as LibraryGame;
 
-    // Replace in array (immutably)
-    _epicGames = [..._epicGames.slice(0, idx), updated, ..._epicGames.slice(idx + 1)];
-
-    // Recompute fingerprint
-    _epicFingerprint = computeEpicFingerprint(_epicGames);
+    _ownedGames = [
+      ..._ownedGames.slice(0, ownedIdx),
+      ownedUpdated,
+      ..._ownedGames.slice(ownedIdx + 1),
+    ];
+    _ownedFingerprint = computeEpicFingerprint([..._epicGames, ..._ownedGames]);
 
     if (DEBUG_EPIC_LIBRARY) {
       console.log(
-        `[EPIC_STORE] overrides applied providerGameId=${providerGameId} title="${updated.title}" hasMetadata=${!!(updated as any).metadata}`,
+        `[EPIC_STORE] owned overrides applied providerGameId=${providerGameId} title="${ownedUpdated.title}" hasMetadata=${!!(ownedUpdated as any).metadata}`,
       );
     }
 
-    // Always notify — metadata changes (description, genres, etc.) may not
-    // affect the fingerprint but still need UI re-render
     notifyListeners();
-  });
+    return;
+  }
+
+  // Re-apply overrides from localStorage for installed games
+  const game = _epicGames[idx];
+  const updated = mergeEpicOverrides(
+    game as unknown as Record<string, unknown>,
+    providerGameId,
+  ) as LibraryGame;
+
+  // Replace in array (immutably)
+  _epicGames = [..._epicGames.slice(0, idx), updated, ..._epicGames.slice(idx + 1)];
+
+  // Recompute fingerprint
+  _epicFingerprint = computeEpicFingerprint(_epicGames);
+
+  if (DEBUG_EPIC_LIBRARY) {
+    console.log(
+      `[EPIC_STORE] overrides applied providerGameId=${providerGameId} title="${updated.title}" hasMetadata=${!!(updated as any).metadata}`,
+    );
+  }
+
+  // Always notify — metadata changes (description, genres, etc.) may not
+  // affect the fingerprint but still need UI re-render
+  notifyListeners();
 }
