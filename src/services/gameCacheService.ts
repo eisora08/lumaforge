@@ -25,6 +25,7 @@ import {
   listProviderMediaFiles,
 } from "./tauri";
 import type { ProviderMediaFileEntry } from "./tauri";
+import { invalidateImageCachesForApp } from "../components/common/AsyncImage";
 import {
   parseProviderMediaComponents,
   ROLE_EXTENSION_CANDIDATES,
@@ -1298,10 +1299,8 @@ export function invalidateResolvedMediaCache(appId: string): void {
   // resolvedSrcCache keys are raw filesystem paths (not appIds), so we must
   // clear the entire cache. convertFileSrc() is cheap so this is safe.
   resolvedSrcCache.clear();
-  // Also clear AsyncImage's global load cache for this app's images
-  import("../components/common/AsyncImage").then(({ invalidateImageLoadCacheForApp }) => {
-    invalidateImageLoadCacheForApp(appId);
-  }).catch(() => {});
+  // Clear ALL AsyncImage caches for this app (data URL cache, failed maps, load cache)
+  invalidateImageCachesForApp(appId);
   if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log(`[MEDIA][SRC_CACHE_CLEAR] reason=media-invalidated appid=${appId}`);
 }
 

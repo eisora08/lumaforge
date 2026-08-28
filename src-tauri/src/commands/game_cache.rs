@@ -1181,26 +1181,30 @@ pub async fn safe_download_image(
         return Ok(Some(dest_path.to_string_lossy().to_string()));
     }
 
-    // Delete any existing files with the same role but different extension
-    // (e.g. if downloading cover.jpg, delete cover.webp and cover.png)
-    let role = media_type.as_str();
-    if let Ok(entries) = fs::read_dir(&media_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                if stem == role && path != dest_path {
-                    if fs::remove_file(&path).is_ok() {
-                        println!(
-                            "[MEDIA][CLEANUP_OLD] appid={} role={} deleted={:?}",
-                            app_id, role, path
-                        );
+    let result = safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh).await;
+
+    // Cleanup old files with same role AFTER successful download
+    // If download failed, preserve original files (e.g. .webp) to avoid data loss
+    if result.is_ok() {
+        let role = media_type.as_str();
+        if let Ok(entries) = fs::read_dir(&media_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem == role && path != dest_path {
+                        if fs::remove_file(&path).is_ok() {
+                            println!(
+                                "[MEDIA][CLEANUP_OLD] appid={} role={} deleted={:?}",
+                                app_id, role, path
+                            );
+                        }
                     }
                 }
             }
         }
     }
 
-    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh).await
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,6 +1251,19 @@ pub fn resolve_game_media_paths(
         ("landscape.tmp", "landscape.jpg"),
         ("cover.tmp", "cover.jpg"),
         ("background.tmp", "background.jpg"),
+    ] {
+        let tmp_path = media_dir.join(tmp_name);
+        let final_path = media_dir.join(final_name);
+        if tmp_path.exists() && !final_path.exists() {
+            media_log(&format!("resolve: renaming orphan {} -> {}", tmp_name, final_name));
+            let _ = fs::rename(&tmp_path, &final_path);
+        }
+    }
+    // Also try .webp for landscape/cover/background (fallback if .png and .jpg don't exist)
+    for (tmp_name, final_name) in [
+        ("landscape.tmp", "landscape.webp"),
+        ("cover.tmp", "cover.webp"),
+        ("background.tmp", "background.webp"),
     ] {
         let tmp_path = media_dir.join(tmp_name);
         let final_path = media_dir.join(final_name);
@@ -1585,7 +1602,8 @@ pub fn repair_media_roles(
                 Ok(Some(role)) if role == "cover" => {
                     let cover_path = find_role_file("cover");
                     if cover_path.is_none() {
-                        let target = media_dir.join("cover.jpg");
+                        let ext = landscape_path.extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+                        let target = media_dir.join(format!("cover.{}", ext));
                         media_log(&format!("[MediaRepair] moved landscape to cover for {}", app_id));
                         let _ = fs::rename(&landscape_path, &target);
                         changed = true;
@@ -1611,7 +1629,8 @@ pub fn repair_media_roles(
             if let Ok(bytes) = fs::read(&cover_path) {
                 match image_utils::classify_image_role(&bytes, "cover") {
                     Ok(Some(role)) if role == "landscape" => {
-                        let target = media_dir.join("landscape.jpg");
+                        let ext = cover_path.extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+                        let target = media_dir.join(format!("landscape.{}", ext));
                         media_log(&format!("[MediaRepair] moved cover to landscape for {}", app_id));
                         let _ = fs::rename(&cover_path, &target);
                         changed = true;

@@ -128,6 +128,25 @@ export function invalidateImageLoadCacheForApp(appId: string): void {
   }
 }
 
+export function invalidateImageCachesForApp(appId: string): void {
+  // Clear imageLoadCache
+  for (const key of imageLoadCache.keys()) {
+    if (key.includes(appId)) imageLoadCache.delete(key);
+  }
+  // Clear successfulDataUrlCache — keyed by local path containing appId
+  for (const key of successfulDataUrlCache.keys()) {
+    if (key.includes(appId)) successfulDataUrlCache.delete(key);
+  }
+  // Clear failedAssetSrcMap — keyed by URL containing appId
+  for (const key of failedAssetSrcMap.keys()) {
+    if (key.includes(appId)) failedAssetSrcMap.delete(key);
+  }
+  // Clear failedLocalPathMap — keyed by local path containing appId
+  for (const key of failedLocalPathMap.keys()) {
+    if (key.includes(appId)) failedLocalPathMap.delete(key);
+  }
+}
+
 function imgLog(...args: unknown[]) {
   if (DEBUG_IMG_CACHE) {
     console.log("[IMG]", ...args);
@@ -182,6 +201,15 @@ export default function AsyncImage({
     setFailed(false);
     setDisplaySrc(null);
     dataUrlAttemptedRef.current = false;
+
+    // Clear stale data URL cache when src changes (file was replaced on disk)
+    if (fallbackLocalPath && successfulDataUrlCache.has(fallbackLocalPath)) {
+      successfulDataUrlCache.delete(fallbackLocalPath);
+    }
+    // Also clear failed-local-path mark so data URL fallback retries
+    if (fallbackLocalPath && failedLocalPathMap.has(fallbackLocalPath)) {
+      failedLocalPathMap.delete(fallbackLocalPath);
+    }
 
     if (!src) return;
 
@@ -331,7 +359,7 @@ export default function AsyncImage({
   }
 
   const imgKey = displaySrc && isDataUrl(displaySrc)
-    ? `data-${fallbackLocalPath || "unknown"}`
+    ? `data-${fallbackLocalPath || "unknown"}-${src || "none"}`
     : `src-${displaySrc || "none"}`;
 
   if (!displaySrc || failed) {

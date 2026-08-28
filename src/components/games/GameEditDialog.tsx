@@ -1397,6 +1397,16 @@ export default function GameEditDialog({
           logoPath: updatedMedia.logoPath ?? undefined,
           iconPath: updatedMedia.iconPath ?? undefined,
         });
+        // Keep React state in sync with disk store so loadRolePreviews/refreshRolePreview
+        // read the new paths (mirrors setManualEntry in the Manual branch)
+        setEpicOverrides((prev) => prev ? {
+          ...prev,
+          coverPath: updatedMedia.coverPath ?? undefined,
+          landscapePath: updatedMedia.landscapePath ?? undefined,
+          backgroundPath: updatedMedia.backgroundPath ?? undefined,
+          logoPath: updatedMedia.logoPath ?? undefined,
+          iconPath: updatedMedia.iconPath ?? undefined,
+        } : prev);
         if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][EPIC_OVERRIDES_WRITTEN] providerGameId=${epicProviderGameId} roles=${Object.keys(updatedMedia).filter(k => updatedMedia[k as keyof GameMediaPaths]).join(",")}`);
         // Refresh UI — same as Manual/Steam branches
         const epicGameId = `epic:${epicProviderGameId}`;

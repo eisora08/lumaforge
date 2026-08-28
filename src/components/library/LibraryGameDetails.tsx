@@ -57,7 +57,7 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
-import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
+import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey, subscribeMediaCacheVersion, getMediaCacheVersion } from "../../services/gameCacheService";
 import { setAmbientSource, clearAmbientSource, rememberLibraryDetails } from "../../services/ambientBackgroundStore";
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { showInfo, showSuccess, showError } from "../toast/GameToast";
@@ -496,6 +496,10 @@ export default function LibraryGameDetails({
     return () => clearTimeout(t);
   }, [backdropLayers]);
 
+  // Subscribe to media cache version so hero/backdrop re-resolve when any media is invalidated
+  useSyncExternalStore(subscribeMediaCacheVersion, getMediaCacheVersion, getMediaCacheVersion);
+  const mediaCacheVersion = getMediaCacheVersion();
+
   useEffect(() => {
     if (!rawImageUrl) {
       setImageUrl(undefined);
@@ -530,7 +534,7 @@ export default function LibraryGameDetails({
       }
     };
     resolve();
-  }, [rawImageUrl, game.appId, fallbackBundle, canonicalAppInfo, game.metadata?.background_image]);
+  }, [rawImageUrl, game.appId, fallbackBundle, canonicalAppInfo, game.metadata?.background_image, mediaCacheVersion]);
 
   // ─── Ambient background: feed hero art synchronously from in-memory snapshot media
   // (first paint, no async), then upgrade to the resolved imageUrl. On game change/unmount
