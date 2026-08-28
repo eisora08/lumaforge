@@ -570,6 +570,7 @@ export default function GameImageSearchDialog({
             <div className="space-y-3">
               <WebImageGrid
                 query={query}
+                role={role}
                 onSelect={handleInlineSelect}
               />
             </div>

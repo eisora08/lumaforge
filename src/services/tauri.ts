@@ -993,13 +993,21 @@ export type WebImageResult = {
 /** Search for images on Google or DuckDuckGo (no API key needed). */
 export async function searchWebImages(
   query: string,
-  source: "google" | "duckduckgo" = "google",
-  page: number = 0
+  source: "google" | "duckduckgo" = "duckduckgo",
+  page: number = 0,
+  safeSearch: boolean = false,
+  width?: number,
+  height?: number,
+  transparent: boolean = false,
 ): Promise<WebImageResult[]> {
   return await invoke<WebImageResult[]>("search_web_images", {
     query,
     source,
     page,
+    safeSearch,
+    width: width ?? null,
+    height: height ?? null,
+    transparent,
   });
 }
 
