@@ -835,15 +835,17 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   }
                 }}
               />
-              <MenuItem
-                label={t("context_menu.game_fixes")}
-                icon={<Wrench className="h-3.5 w-3.5" />}
-                onClick={() => {
-                  handleMenuClose();
-                  setToolsGame(menuGame);
-                  setToolsModalOpen(true);
-                }}
-              />
+              {(menuGame?.source === "steam" || menuGame?.source === "manual" || menuGame?.source === "debrid" || menuGame?.source === "lua") && (
+                <MenuItem
+                  label={t("context_menu.game_fixes")}
+                  icon={<Wrench className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    handleMenuClose();
+                    setToolsGame(menuGame);
+                    setToolsModalOpen(true);
+                  }}
+                />
+              )}
               <MenuItem
                 label={t("context_menu.create_shortcut")}
                 icon={<FileText className="h-3.5 w-3.5" />}

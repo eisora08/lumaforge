@@ -844,11 +844,13 @@ function GameLauncherTileInner({
                   icon: <Image className="h-3.5 w-3.5" />,
                   onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
-                {
-                  label: t("context_menu.game_fixes", "Game Fixes"),
-                  icon: <Wrench className="h-3.5 w-3.5" />,
-                  onClick: () => { setMenuOpen(false); setToolsModalOpen(true); onOverlayToggle?.(true); },
-                },
+                ...((game.source === "steam" || game.source === "manual" || game.source === "debrid" || game.source === "lua")
+                  ? [{
+                      label: t("context_menu.game_fixes", "Game Fixes"),
+                      icon: <Wrench className="h-3.5 w-3.5" />,
+                      onClick: () => { setMenuOpen(false); setToolsModalOpen(true); onOverlayToggle?.(true); },
+                    }]
+                  : []),
                     ...(game.source === "manual"
                     ? [{
                         label: t("context_menu.delete_manual", "Delete Manual Game"),

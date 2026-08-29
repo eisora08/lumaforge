@@ -2933,7 +2933,7 @@ export default function LibraryGameDetails({
                   setEditDialogOpen(true);
                 } else { onRefreshArtwork?.(); }
               }} />
-            {onOpenTools && (
+            {onOpenTools && (game.source === "steam" || game.source === "manual" || game.source === "debrid" || game.source === "lua") && (
               <DropdownItem label={t("library_details.actions.gameFixes")} onClick={() => { setShowActions(false); onOpenTools(game); }} />
             )}
             <DropdownItem label={t("library_details.actions.close")} onClick={() => setShowActions(false)} />
