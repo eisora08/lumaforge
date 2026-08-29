@@ -34,4 +34,4 @@ export const EPIC_AUTH_ENABLED = true;
 export const DEBUG_EPIC_LIBRARY = false;
 
 /** Diagnostics gate for Epic launch path. */
-export const DEBUG_EPIC_LAUNCH = false;
+export const DEBUG_EPIC_LAUNCH = true;

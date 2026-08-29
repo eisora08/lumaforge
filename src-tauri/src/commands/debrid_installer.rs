@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::commands::process::hide_window;
 use sha2::{Digest, Sha256};
 use winreg::enums::*;
 use winreg::RegKey;
@@ -2038,8 +2039,7 @@ fn spawn_installer_and_wait(
 
             println!("[DEBRID][INSTALL] Elevation required � retrying via PowerShell RunAs");
             let safe_path = installer_path.to_string_lossy().replace('\'', "''");
-            std::process::Command::new("powershell")
-                .args([
+            hide_window(std::process::Command::new("powershell").args([
                     "-NoProfile",
                     "-WindowStyle",
                     "Hidden",
@@ -2048,7 +2048,7 @@ fn spawn_installer_and_wait(
                         "Start-Process -FilePath '{}' -Wait -Verb RunAs; exit 0",
                         safe_path
                     ),
-                ])
+                ]))
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .stdin(std::process::Stdio::null())
@@ -2204,8 +2204,7 @@ fn spawn_installer_detached(installer_path: &Path) -> Result<u32, String> {
             println!("[DEBRID][INSTALL] Elevation required � PowerShell RunAs (detached)");
             let safe_path = installer_path.to_string_lossy().replace('\'', "''");
             let safe_work_dir = work_dir_str.replace('\'', "''");
-            let output = std::process::Command::new("powershell")
-                .args([
+            let output = hide_window(std::process::Command::new("powershell").args([
                     "-NoProfile",
                     "-WindowStyle",
                     "Hidden",
@@ -2214,7 +2213,7 @@ fn spawn_installer_detached(installer_path: &Path) -> Result<u32, String> {
                         "Start-Process -FilePath '{}' -WorkingDirectory '{}' -Verb RunAs -PassThru | Select-Object -ExpandProperty Id",
                         safe_path, safe_work_dir
                     ),
-                ])
+                ]))
                 .output()
                 .map_err(|e2| format!("Failed to launch elevated installer: {}", e2))?;
 

@@ -22,6 +22,17 @@ pub(crate) fn hide_window(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
+/// Same as [`hide_window`] but for asynchronous [`tokio::process::Command`]
+/// console programs (7z, unrar, Steamless.CLI). No-op on non-Windows.
+pub(crate) fn hide_window_tokio(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Calculate total size of all files in a directory recursively using walkdir.
 #[tauri::command]
 pub fn calculate_directory_size(path: String) -> Result<u64, String> {
@@ -243,8 +254,13 @@ pub fn spawn_game_with_elevation_fallback(
       ps_command.push_str(" -Verb RunAs -PassThru | Select-Object -ExpandProperty Id");
 
       let ps_command_ref: &str = &ps_command;
-      let output = Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_command_ref])
+      let output = hide_window(Command::new("powershell").args([
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        ps_command_ref,
+      ]))
         .output()
         .map_err(|e2| format!("Failed to launch elevated executable: {}", e2))?;
 

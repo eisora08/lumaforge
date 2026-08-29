@@ -1044,6 +1044,59 @@ pub struct EpicLaunchResult {
 
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
+/// Deliver a custom-scheme URI to the OS default protocol handler using
+/// ShellExecuteW (like Win+R), avoiding `cmd /c start` which misparses the
+/// `&silent=true` query in Epic launch URIs.
+///
+/// Runs on a dedicated thread so COM (STA) is initialized cleanly. ShellExecuteW
+/// returns the result handle / error code directly: values > 32 indicate success
+/// (the launched process handle), values <= 32 are error codes we log to pin down
+/// the exact failure reason. No visible shell windows are created.
+#[cfg(windows)]
+fn open_protocol_uri(uri: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use winapi::um::shellapi::ShellExecuteW;
+    use winapi::um::winuser::SW_SHOW;
+
+    let uri = uri.to_string();
+    std::thread::spawn(move || {
+        let wide: Vec<u16> = OsStr::new(&uri)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let code = unsafe {
+            ShellExecuteW(
+                ptr::null_mut(),
+                ptr::null(), // "open"
+                wide.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                SW_SHOW,
+            )
+        } as isize;
+
+        if code > 32 {
+            eprintln!("[EPIC_LAUNCH] ShellExecuteW OK (handle={code}) uri={uri}");
+            Ok(())
+        } else {
+            // <= 32 is a ShellExecute error code, e.g. SE_ERR_ASSOCINCOMPLETE,
+            // SE_ERR_NOASSOC, SE_ERR_ACCESSDENIED, SE_ERR_DDLEFAIL etc.
+            eprintln!("[EPIC_LAUNCH] ShellExecuteW FAILED code={code} uri={uri}");
+            Err(format!("ShellExecuteW failed with error code: {}", code))
+        }
+    })
+    .join()
+    .map_err(|_| "protocol launch thread panicked".to_string())?
+}
+
+#[cfg(not(windows))]
+fn open_protocol_uri(uri: &str) -> Result<(), String> {
+    open::that_detached(uri).map_err(|e| e.to_string())
+}
+
 /// Launch an Epic game.
 ///
 /// Attempts the Epic Games Launcher protocol URI first using the canonical
@@ -1095,8 +1148,16 @@ pub fn launch_epic_game(
         )
     };
 
-    match open::that_detached(&protocol_url) {
-        Ok(_) => Ok(EpicLaunchResult {
+    eprintln!(
+        "[EPIC_LAUNCH] app_name={} namespace={:?} catalog_item_id={:?} protocol_url={}",
+        app_name,
+        namespace,
+        catalog_item_id,
+        protocol_url
+    );
+
+    match open_protocol_uri(&protocol_url) {
+        Ok(()) => Ok(EpicLaunchResult {
             success: true,
             method: "protocol".to_string(),
             error: None,

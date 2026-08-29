@@ -3,9 +3,12 @@ use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use tauri::{Emitter, Manager};
+
+use crate::commands::process::{hide_window, hide_window_tokio};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -882,7 +885,7 @@ async fn download_and_extract_rar(
             .context("Failed to run unar")?,
         RarExtractor::WinRar(exe) => {
             let password_arg = format!("-p{}", ONLINE_FIX_RAR_PASSWORD);
-            tokio::process::Command::new(exe)
+            hide_window_tokio(&mut tokio::process::Command::new(exe))
                 .args([
                     "x",
                     &password_arg,
@@ -896,7 +899,7 @@ async fn download_and_extract_rar(
         RarExtractor::SevenZip(exe) => {
             let password_arg = format!("-p{}", ONLINE_FIX_RAR_PASSWORD);
             let output_arg = format!("-o{}", extract_dir.to_str().unwrap_or_default());
-            tokio::process::Command::new(exe)
+            hide_window_tokio(&mut tokio::process::Command::new(exe))
                 .args([
                     "x",
                     &password_arg,
@@ -1209,7 +1212,7 @@ async fn find_rar_extractor() -> Option<RarExtractor> {
     if let Some(path) = find_winrar_path() {
         return Some(RarExtractor::WinRar(path));
     }
-    if tokio::process::Command::new("7z")
+    if hide_window_tokio(&mut tokio::process::Command::new("7z"))
         .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1223,7 +1226,7 @@ async fn find_rar_extractor() -> Option<RarExtractor> {
         r"C:\Program Files\7-Zip\7z.exe",
         r"C:\Program Files (x86)\7-Zip\7z.exe",
     ] {
-        if tokio::process::Command::new(p)
+        if hide_window_tokio(&mut tokio::process::Command::new(p))
             .arg("--help")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1426,7 +1429,7 @@ async fn run_steamless_from_plugins(
 
     let result = tokio::time::timeout(
         Duration::from_secs(120),
-        tokio::process::Command::new(&steamless_exe)
+        hide_window_tokio(&mut tokio::process::Command::new(&steamless_exe))
             .current_dir(&plugins)
             .arg(strip_extended_prefix(game_exe).to_str().unwrap_or_default())
             .stdout(std::process::Stdio::piped())
@@ -3072,7 +3075,11 @@ pub async fn library_apply_goldberg(
         let temp_dir = std::env::temp_dir().join(format!("lf_goldberg_{app_id}"));
         let _ = std::fs::create_dir_all(&temp_dir);
         eprintln!("[GOLDBERG] Step 1: running {:?} with dll {:?}", tool_path, dll_path);
-        match std::process::Command::new(tool_path).arg(dll_path).current_dir(&temp_dir).output() {
+        match hide_window(&mut Command::new(tool_path))
+            .arg(dll_path)
+            .current_dir(&temp_dir)
+            .output()
+        {
             Ok(output) => {
                 let interfaces_path = temp_dir.join("steam_interfaces.txt");
                 if interfaces_path.exists() {
@@ -3134,7 +3141,7 @@ pub async fn library_apply_goldberg(
 
         if let Some(tool_path) = &generate_config_path {
             eprintln!("[GOLDBERG] Step 3: running {:?} -anon -skip_ach -name {} (cwd={:?})", tool_path, app_id_str, emu_dir);
-            match std::process::Command::new(tool_path)
+            match hide_window(&mut Command::new(tool_path))
                 .args(["-anon", "-skip_ach", &app_id_str])
                 .current_dir(&emu_dir)
                 .output()
@@ -3756,7 +3763,7 @@ async fn download_and_extract_catalog_archive(
                     .await
                     .context("Failed to run unar")?,
                 RarExtractor::WinRar(exe) => {
-                    tokio::process::Command::new(exe)
+                    hide_window_tokio(&mut tokio::process::Command::new(exe))
                         .args([
                             "x",
                             archive_path.to_str().unwrap_or_default(),
@@ -3768,7 +3775,7 @@ async fn download_and_extract_catalog_archive(
                 }
                 RarExtractor::SevenZip(exe) => {
                     let output_arg = format!("-o{}", extract_dir.to_str().unwrap_or_default());
-                    tokio::process::Command::new(exe)
+                    hide_window_tokio(&mut tokio::process::Command::new(exe))
                         .args([
                             "x",
                             &output_arg,

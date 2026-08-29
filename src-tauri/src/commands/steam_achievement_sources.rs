@@ -17,7 +17,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::commands::process::hide_window;
 use crate::utils::path_utils::detect_steam_paths;
+use std::process::Command;
 
 // ── Types ──
 
@@ -188,14 +190,15 @@ fn read_file_raw(path: &Path) -> Option<Vec<u8>> {
 fn is_steam_running() -> bool {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq steam.exe", "/NH"])
-            .output()
-            .map(|output| {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.to_lowercase().contains("steam.exe")
-            })
-            .unwrap_or(false)
+        hide_window(
+            Command::new("tasklist").args(["/FI", "IMAGENAME eq steam.exe", "/NH"]),
+        )
+        .output()
+        .map(|output| {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.to_lowercase().contains("steam.exe")
+        })
+        .unwrap_or(false)
     }
     #[cfg(not(target_os = "windows"))]
     {

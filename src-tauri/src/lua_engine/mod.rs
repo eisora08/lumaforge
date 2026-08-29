@@ -494,6 +494,7 @@ impl LuaEngine {
         let run_process = lua
             .create_function(|lua: &Lua, (exe_path, args): (String, Vec<String>)| {
                 use std::process::Command;
+                use crate::commands::process::hide_window;
                 let exe = Path::new(&exe_path);
                 if !exe.exists() {
                     return Err(mlua::Error::external(format!(
@@ -501,7 +502,7 @@ impl LuaEngine {
                         exe_path
                     )));
                 }
-                let output = Command::new(&exe_path)
+                let output = hide_window(&mut Command::new(&exe_path))
                     .args(&args)
                     .output()
                     .map_err(|e| mlua::Error::external(format!("Failed to run process: {}", e)))?;

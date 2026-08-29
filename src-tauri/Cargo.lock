@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "lumaforge"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3251,6 +3251,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "winapi",
  "windows 0.57.0",
  "winreg 0.52.0",
  "zip 2.4.2",

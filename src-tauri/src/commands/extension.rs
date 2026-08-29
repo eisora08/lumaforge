@@ -456,13 +456,14 @@ pub fn extension_run_process(
     args: Vec<String>,
 ) -> Result<ExtensionProcessResult, String> {
     use std::process::Command;
+    use crate::commands::process::hide_window;
 
     let exe = Path::new(&exe_path);
     if !exe.exists() {
         return Err(format!("Executable not found: {}", exe_path));
     }
 
-    let output = Command::new(&exe_path)
+    let output = hide_window(&mut Command::new(&exe_path))
         .args(&args)
         .output()
         .map_err(|e| format!("Failed to run process: {}", e))?;
