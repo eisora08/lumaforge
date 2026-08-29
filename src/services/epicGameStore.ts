@@ -773,6 +773,9 @@ export function loadEpicGamesFromCache(cachedGames: Array<{
   provider?: string;
   mediaJson?: string;
   metadataJson?: string;
+  installDir?: string;
+  executablePath?: string;
+  sizeOnDisk?: number;
 }>): void {
   const UUID_RE = /^[0-9a-f]{32}$/i;
   const libGames: LibraryGame[] = cachedGames.map((g) => {
@@ -807,6 +810,9 @@ export function loadEpicGamesFromCache(cachedGames: Array<{
       logoPath: media.logoPath || undefined,
       iconPath: media.iconPath || undefined,
       metadata: (Object.keys(meta).length > 0 ? meta : undefined) as LibraryGame["metadata"],
+      installDir: g.installDir || undefined,
+      executablePath: g.executablePath || undefined,
+      sizeOnDisk: g.sizeOnDisk || undefined,
       luaScripts: [],
       hasLua: false,
       isLuaActive: false,
@@ -910,6 +916,9 @@ async function persistEpicGamesToSqlite(games: LibraryGame[]): Promise<void> {
             iconPath: g.iconPath || null,
           }),
           metadataJson: JSON.stringify(metadata),
+          installDir: g.installDir || undefined,
+          executablePath: g.executablePath || undefined,
+          sizeOnDisk: g.sizeOnDisk || undefined,
         };
       });
     if (entries.length > 0) {

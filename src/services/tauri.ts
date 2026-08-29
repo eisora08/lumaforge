@@ -1612,6 +1612,9 @@ export type EpicGameEntryJson = {
   provider?: string;
   mediaJson?: string;
   metadataJson?: string;
+  installDir?: string;
+  executablePath?: string;
+  sizeOnDisk?: number;
 };
 
 /** Read all Epic game entries from the dedicated `epic_games` SQLite blob. */

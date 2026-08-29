@@ -22,6 +22,12 @@ pub struct EpicGameEntryJson {
     pub media_json: String,
     #[serde(default = "default_empty_json")]
     pub metadata_json: String,
+    #[serde(default)]
+    pub install_dir: Option<String>,
+    #[serde(default)]
+    pub executable_path: Option<String>,
+    #[serde(default)]
+    pub size_on_disk: Option<u64>,
 }
 
 fn default_provider() -> String {
