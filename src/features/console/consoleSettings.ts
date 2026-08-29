@@ -143,14 +143,14 @@ export const GRID_CARD_DEFAULTS: GridCardStyle = {
   widthPreset: 220,
   cornerRadius: 8,
   useLandscapeCards: false,
-  hideLabels: false,
+  hideLabels: true,
 };
 
 export const SPOTLIGHT_CARD_DEFAULTS: SpotlightCardStyle = {
   cardStyle: "landscape",
   widthPreset: 320,
   cornerRadius: 8,
-  hideLabels: false,
+  hideLabels: true,
   showTrailerPreview: true,
 };
 

@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LayoutPanelTop, Monitor, Wifi, WifiOff, Gamepad2, Clock } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
+import type { LibraryGame } from "../../types/libraryGame";
 import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
 import { getAvatarPreset } from "../profile/profilePresets";
 import type { ConsoleSettings, ConsoleTimeFormat } from "./consoleSettings";
 import { useNetworkStatus } from "./useNetworkStatus";
+import { useGameSession } from "../../context/GameSessionContext";
+import { focusGameWindow } from "../../services/tauri";
+import ConsoleRunningIndicator from "./ConsoleRunningIndicator";
 
 const DEBUG_CONSOLE_HUD = false;
 
@@ -14,6 +18,7 @@ type Props = {
   onNavigate?: (page: AppPage) => void;
   onOpenSettings?: () => void;
   settings?: ConsoleSettings;
+  allGames?: LibraryGame[];
 };
 
 function formatTimeWithOptions(date: Date, format: ConsoleTimeFormat, showSeconds: boolean): string {
@@ -60,10 +65,12 @@ export default function ConsoleTopHud({
   onNavigate,
   onOpenSettings,
   settings,
+  allGames,
 }: Props) {
   const [profile] = useUserProfile();
   const profileRef = useRef<HTMLButtonElement>(null);
   const networkStatus = useNetworkStatus();
+  const session = useGameSession();
 
   const timeFormat = settings?.timeFormat ?? "system";
   const showSeconds = settings?.showSeconds ?? false;
@@ -76,6 +83,18 @@ export default function ConsoleTopHud({
   const avatarPreset = useMemo(() => getAvatarPreset(profile.avatarPreset), [profile.avatarPreset]);
   const avatarDisplayUrl = useMemo(() => resolveProfileMediaUrl(profile.avatarUrl), [profile.avatarUrl]);
 
+  const activeSession = useMemo(() => {
+    for (const s of Object.values(session.sessions)) {
+      if (s.state === "running" || s.state === "launching") return s;
+    }
+    return undefined;
+  }, [session.sessions]);
+
+  const activeGame = useMemo(() => {
+    if (!activeSession || !allGames) return undefined;
+    return allGames.find((g) => g.appId === activeSession.appId || g.title === activeSession.title);
+  }, [activeSession, allGames]);
+
   if (DEBUG_CONSOLE_HUD) {
     console.log(`[CONSOLE][HUD] layout=${layoutMode} name=${profile.displayName}`);
   }
@@ -83,35 +102,52 @@ export default function ConsoleTopHud({
   return (
     <div className="relative z-20 flex shrink-0 items-center justify-between px-6 pt-5 pb-3">
       {/* Left: avatar + name — clickable to open settings */}
-      <button
-        ref={profileRef}
-        onClick={() => onOpenSettings?.()}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenSettings?.(); } }}
-        className="flex cursor-pointer items-center gap-3 rounded-2xl px-2 py-1 transition hover:bg-(--color-accent)/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent)/60"
-        aria-label="Open console settings"
-      >
-        <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-2 ring-(--color-accent)/15"
-          style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
+      <div className="flex items-center gap-2">
+        <button
+          ref={profileRef}
+          onClick={() => onOpenSettings?.()}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenSettings?.(); } }}
+          className="flex cursor-pointer items-center gap-3 rounded-2xl px-2 py-1 transition hover:bg-(--color-accent)/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent)/60"
+          aria-label="Open console settings"
         >
-          {avatarDisplayUrl ? (
-            <img src={avatarDisplayUrl} alt="" className="h-full w-full rounded-full object-cover" />
-          ) : (
-            <span className="text-sm">{avatarPreset?.icon ?? "🎮"}</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-(--color-text) drop-shadow-md">
-            {profile.displayName}
-          </span>
-        </div>
-      </button>
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-2 ring-(--color-accent)/15"
+            style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
+          >
+            {avatarDisplayUrl ? (
+              <img src={avatarDisplayUrl} alt="" className="h-full w-full rounded-full object-cover" />
+            ) : (
+              <span className="text-sm">{avatarPreset?.icon ?? "🎮"}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-(--color-text) drop-shadow-md">
+              {profile.displayName}
+            </span>
+          </div>
+        </button>
+      </div>
 
-      {/* Center: source branding */}
-      <div className="hidden select-none md:block">
-        <span className="lf-surface rounded-full px-3 py-1 text-[11px] font-bold tracking-[0.15em] text-(--color-muted)/50">
-          LUMAFORGE
-        </span>
+      {/* Center: LUMAFORGE branding or running indicator pill */}
+      <div className="hidden select-none md:flex items-center justify-center">
+        {activeSession ? (
+          <ConsoleRunningIndicator
+            session={activeSession}
+            game={activeGame}
+            onFocus={() => {
+              if (activeSession?.pid) focusGameWindow(activeSession.pid).catch(() => {});
+            }}
+            onClose={() => {
+              if (activeSession) {
+                session.stopSession(activeSession.gameKey);
+              }
+            }}
+          />
+        ) : (
+          <span className="lf-surface rounded-full px-3 py-1 text-[11px] font-bold tracking-[0.15em] text-(--color-muted)/50">
+            LUMAFORGE
+          </span>
+        )}
       </div>
 
       {/* Right: indicators + time + layout toggle + Desktop */}

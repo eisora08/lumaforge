@@ -2022,7 +2022,6 @@
     "reset_system_bar": "Restablecer Barra del Sistema a Valores Predeterminados",
     "app_language": "Idioma de la Aplicación",
     "follow_system": "Seguir Sistema",
-    "language_coming_soon": "Próximamente — Las traducciones se agregarán después de completar la función",
     "pick_random": "Elegir Juego Aleatorio",
     "pick_random_desc": "Sorpréndeme",
     "switch_view_desc": "Alternar Grid / Spotlight",
@@ -2731,5 +2730,14 @@
     "cancel": "Cancelar",
     "close": "Cerrar",
     "minimize": "Minimizar a la bandeja"
+  },
+  "console_running": {
+    "running": "Ejecutando",
+    "starting": "Iniciando...",
+    "session_time": "Tiempo de Sesión",
+    "game_start": "Inicio del Juego",
+    "focus_game": "Ver Juego",
+    "close_game": "Cerrar Juego",
+    "continue": "Continuar"
   }
 }

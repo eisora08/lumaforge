@@ -2022,7 +2022,6 @@
     "reset_system_bar": "Reset System Bar to Defaults",
     "app_language": "App Language",
     "follow_system": "Follow System",
-    "language_coming_soon": "Coming Soon — Translations will be added after feature completion",
     "pick_random": "Pick Random Game",
     "pick_random_desc": "Surprise me",
     "switch_view_desc": "Toggle Grid / Spotlight",
@@ -2731,5 +2730,14 @@
     "cancel": "Cancel",
     "close": "Close",
     "minimize": "Minimize to Tray"
+  },
+  "console_running": {
+    "running": "Running",
+    "starting": "Starting...",
+    "session_time": "Session Time",
+    "game_start": "Game Start",
+    "focus_game": "Focus Game",
+    "close_game": "Close Game",
+    "continue": "Continue"
   }
 }

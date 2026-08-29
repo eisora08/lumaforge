@@ -292,8 +292,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [currentMedia]);
 
   const playerMode = useMemo<"thumbnail" | "details">(() => {
-    if (!isCurrentTrailer || !trailerData) return "thumbnail";
-    return trailerData.playableType !== "none" ? "details" : "thumbnail";
+    if (isCurrentTrailer && trailerData && trailerData.playableType !== "none") return "details";
+    return "thumbnail";
   }, [isCurrentTrailer, trailerData]);
 
   const hasPlayableVideo = playerMode === "details" && trailerData?.playableType !== "none";
@@ -688,7 +688,13 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           });
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          setCarouselSelectedIndex(carouselFocusIndex);
+          // Play/pause the currently selected trailer
+          const video = document.querySelector<HTMLVideoElement>(
+            `[data-console-preview-video="${game?.appId}"]`
+          );
+          if (video) {
+            if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
+          }
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
           setFocusZone("media-preview");
@@ -1324,7 +1330,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 trailerData={trailerData}
                 screenshotOverrideUrl={screenshotOverrideUrl}
                 mode={playerMode}
-                autoplay
+                autoplay={playerMode === "details"}
                 showVideo={previewHovered || actionsBrowsingMedia || isRunning}
                 mediaIdentityKey={mediaIdentityKey}
               />

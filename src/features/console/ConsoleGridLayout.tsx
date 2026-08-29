@@ -6,6 +6,7 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
+import { useGameSession } from "../../context/GameSessionContext";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getConsoleHeroBackground } from "./consoleMedia";
 import { formatBytes, formatRelativeTime, formatPlaytime, getGameCompletionStatus, getGameLastPlayedTimestamp } from "./consoleGameStats";
@@ -63,7 +64,19 @@ export default function ConsoleGridLayout({
 }: Props) {
   const { t } = useTranslation();
   const { favoriteIds } = useFavorites();
+  const session = useGameSession();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const runningGameKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const [key, s] of Object.entries(session.sessions)) {
+      if (s.state === "running" || s.state === "launching") {
+        if (s.appId) keys.add(s.appId);
+        keys.add(key);
+      }
+    }
+    return keys;
+  }, [session.sessions]);
   const gridScrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -307,6 +320,7 @@ export default function ConsoleGridLayout({
         onNavigate={onNavigate}
         onOpenSettings={() => setSettingsOpen(true)}
         settings={settings}
+        allGames={allGames}
       />
 
       {/* Main content: scrollable grid + preview panel */}
@@ -333,6 +347,7 @@ export default function ConsoleGridLayout({
                   key={`grid:${i}:${game.appId || game.id}`}
                   game={game}
                   isFocused={focusedIndex === i}
+                  isRunning={runningGameKeys.has(game.appId || game.id)}
                   onClick={() => onSelectGame(game)}
                   onHover={setHoverGame}
                   onHoverEnd={() => setHoverGame(null)}
@@ -387,6 +402,7 @@ export default function ConsoleGridLayout({
                   showTrailerPreview={settings.showTrailerPreview}
                   trailerData={trailerData}
                   mode="thumbnail"
+                  showVideo={false}
                   showArtworkFirst={showArtworkFirst}
                   thumbnailAutoplaySrc={thumbnailAutoplaySrc}
                 />

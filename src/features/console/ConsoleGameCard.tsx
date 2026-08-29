@@ -8,6 +8,7 @@ import { getFavoriteKey } from "../../services/gameCacheService";
 type Props = {
   game: LibraryGame;
   isFocused?: boolean;
+  isRunning?: boolean;
   onClick?: () => void;
   compact?: boolean;
   variant?: "landscape" | "poster";
@@ -19,7 +20,7 @@ type Props = {
   onHoverEnd?: () => void;
 };
 
-function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius, onHover, onHoverEnd }: Props) {
+function ConsoleGameCardRaw({ game, isFocused, isRunning, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius, onHover, onHoverEnd }: Props) {
   const { isFavorite } = useFavorites();
   const fav = isFavorite(getFavoriteKey(game) ?? game.id);
   const isSpotlight = !compact;
@@ -105,6 +106,12 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
 
         {/* Badges */}
         <div className="absolute bottom-2 left-2 flex flex-wrap items-center gap-1">
+          {isRunning && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 animate-pulse" />
+              Running
+            </span>
+          )}
           {game.hasUpdate && (
             <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
               Update

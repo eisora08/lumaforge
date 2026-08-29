@@ -30,6 +30,10 @@ type Props = {
   /** When set in thumbnail mode, renders a muted autoplay <video> element
    *  overlaid on the trailer thumbnail. Autoplays on source change, loops on end. */
   thumbnailAutoplaySrc?: string | null;
+  /** Callback when a thumbnail autoplay video ends — used for sequential trailer playback. */
+  onTrailerEnded?: () => void;
+  /** Called when user clicks play in thumbnail mode — requests switch to details mode. */
+  onRequestDetailsMode?: () => void;
   /** Identity key that changes whenever the selected media changes.
    *  Used to force video element remount across media type/selection switches. */
   mediaIdentityKey?: string;
@@ -80,7 +84,7 @@ function formatTime(seconds: number): string {
 export default function ConsoleSelectedPreview({
   game, showTrailerPreview = true, trailerData, screenshotOverrideUrl,
   mode = "thumbnail", autoplay = false, showVideo = true, mediaIdentityKey,
-  showArtworkFirst = false, thumbnailAutoplaySrc,
+  showArtworkFirst = false, thumbnailAutoplaySrc, onTrailerEnded, onRequestDetailsMode,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -446,6 +450,15 @@ export default function ConsoleSelectedPreview({
         hlsRef.current.on(Hls.Events.MANIFEST_PARSED, () => {
           if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_READY] appid=${game?.appId}`);
           setIsLoading(false);
+          // Autoplay if queued
+          if (autoplayQueuedRef.current && videoRef.current) {
+            autoplayQueuedRef.current = false;
+            const v = videoRef.current;
+            v.muted = true;
+            v.play().then(() => {
+              v.addEventListener("playing", () => { v.muted = false; }, { once: true });
+            }).catch(() => {});
+          }
         });
         if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_ATTACHED] appid=${game?.appId}`);
       } else {
@@ -467,7 +480,8 @@ export default function ConsoleSelectedPreview({
     if (!video) return;
 
     setVideoError(false);
-    autoplayQueuedRef.current = false;
+    // Don't reset autoplayQueuedRef here — the autoplay effect sets it,
+    // and handleLoadedMetadata/initHls will consume it
 
     if (playType === "hls") {
       setIsLoading(true);
@@ -526,13 +540,20 @@ export default function ConsoleSelectedPreview({
       return;
     }
 
+    // In thumbnail mode — request switch to details mode for full video player
+    if (!detailsMode && isTrailer && trailerData?.playableType !== "none") {
+      onRequestDetailsMode?.();
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[REQUEST_DETAILS] appid=${game?.appId}`);
+      return;
+    }
+
     // Thumbnail-only click feedback (no playable source)
     if (isTrailer && playType === "none" && !hasVideo) {
       setThumbnailOnlyClicked(true);
       setTimeout(() => setThumbnailOnlyClicked(false), 2000);
       if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMBNAIL_ONLY] appid=${game?.appId} — no playable source`);
     }
-  }, [videoSrc, videoError, isTrailer, hasVideo, playType, isLoading, game?.appId]);
+  }, [videoSrc, videoError, isTrailer, hasVideo, playType, isLoading, game?.appId, detailsMode, trailerData, onRequestDetailsMode]);
 
   /* ── Native video event handlers ── */
   const handleNativePlay = useCallback(() => {
@@ -567,7 +588,8 @@ export default function ConsoleSelectedPreview({
     setIsPlaying(false);
     setHasEnded(true);
     setShowControls(true);
-  }, []);
+    onTrailerEnded?.();
+  }, [onTrailerEnded]);
 
   const handleVideoError = useCallback(() => {
     setVideoError(true);
@@ -622,10 +644,10 @@ export default function ConsoleSelectedPreview({
     if (mediaKey === prevMediaKey.current) return;
     prevMediaKey.current = mediaKey;
 
-    if (detailsMode && autoplay && !screenshotActive && playType === "direct" && videoSrc && !videoError) {
-      // Always queue — handleLoadedMetadata picks it up when the <video> mounts
+    if (detailsMode && autoplay && !screenshotActive && videoSrc && !videoError) {
+      // Queue autoplay — handleLoadedMetadata or HLS setup will pick it up
       autoplayQueuedRef.current = true;
-      if (videoRef.current) {
+      if (videoRef.current && playType === "direct") {
         const v = videoRef.current;
         v.muted = true;
         v.currentTime = 0;
@@ -672,7 +694,7 @@ export default function ConsoleSelectedPreview({
 
   const playBtnSize = "h-14 w-14";
   const playIconSize = "h-6 w-6";
-  const showControlsBar = showVideo && detailsMode && hasVideo && !videoError && !screenshotActive && (showControls || isPlaying);
+  const showControlsBar = detailsMode && hasVideo && !videoError && !screenshotActive && (showControls || isPlaying);
   const showCenterPlay = showVideo && isTrailer && displaySrc && !imgError && !screenshotActive;
 
   return (
@@ -705,7 +727,7 @@ export default function ConsoleSelectedPreview({
         </div>
       )}
 
-      {/* ── Thumbnail autoplay video (muted, loop, no controls, programmatic play()) ── */}
+      {/* ── Thumbnail autoplay video (muted, no controls, programmatic play()) ── */}
       {/* The video renders whenever thumbnailAutoplaySrc is set, regardless of
           previous playback failures. The image stays on top until autoPlaySuccess=true,
           so a failed-play video behind it is never visible. The key changes on
@@ -716,19 +738,18 @@ export default function ConsoleSelectedPreview({
           key={`${game.appId}:${thumbnailAutoplaySrc}`}
           poster={displaySrc && displaySrc !== thumbnailAutoplaySrc ? displaySrc : undefined}
           muted
-          loop
           playsInline
           preload="auto"
           className="absolute inset-0 h-full w-full object-cover"
           onLoadedMetadata={() => { setAutoVideoReady(true); if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_VIDEO_LOADEDMETA] appid=${game?.appId}`); }}
           onPlaying={() => { setAutoPlaySuccess(true); setAutoplayFailed(false); if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_VIDEO_PLAYING] appid=${game?.appId}`); }}
           onError={() => { setThumbAutoplayError(true); if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][VIDEO_ELEMENT_ERROR] appid=${game?.appId}`); }}
-          onEnded={(e) => { (e.target as HTMLVideoElement).play().catch(() => {}); }}
+          onEnded={() => { onTrailerEnded?.(); }}
         />
       )}
 
-      {/* ── Video layer (hidden unless showVideo) ── */}
-      {showVideo && detailsMode && hasVideo && !videoError && !screenshotActive && (
+      {/* ── Video layer (always renders when video source exists) ── */}
+      {detailsMode && hasVideo && !videoError && !screenshotActive && (
         <video
           ref={videoRef}
           data-console-preview-video={game.appId}
@@ -759,7 +780,8 @@ export default function ConsoleSelectedPreview({
                 <div className="flex h-16 w-16 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm">
                   <Loader2 className="h-7 w-7 animate-spin text-white/60" />
                 </div>
-              ) : hasVideo && !videoError && !screenshotActive ? (
+              ) : (hasVideo || (!detailsMode && isTrailer && trailerData?.playableType !== "none")) && !videoError && !screenshotActive ? (
+                /* Play / Replay button — shows in both thumbnail and details mode when trailer has a source */
                 /* Play / Replay button */
                 <button
                   type="button"

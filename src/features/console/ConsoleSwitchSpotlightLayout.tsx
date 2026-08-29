@@ -226,6 +226,7 @@ export default function ConsoleSwitchSpotlightLayout({
           onNavigate={onNavigate}
           onOpenSettings={() => setSettingsOpen(true)}
           settings={settings}
+          allGames={allGames}
         />
       </div>
 

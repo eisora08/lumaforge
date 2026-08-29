@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 import {
   X, Shuffle, RefreshCw, Settings, LayoutGrid,
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
@@ -434,14 +435,18 @@ const SETTING_ROWS_SYSTEM_BAR: SettingRowDef[] = [
   { id: "resetSystemBar", type: "button", label: "Reset System Bar to Defaults", labelKey: "console_settings.reset_system_bar", getValue: () => "", onAction: () => resetConsoleSystemBarSettings() },
 ];
 
+const LANG_OPTIONS = [
+  { value: "es", label: "Español" },
+  { value: "en", label: "English" },
+];
+
 const SETTING_ROWS_LANGUAGE: SettingRowDef[] = [
   {
     id: "appLanguage", type: "segmented", label: "App Language", labelKey: "console_settings.app_language",
-    segOptions: [{ value: "system", labelKey: "console_settings.follow_system" }],
-    getValue: () => "system",
+    segOptions: LANG_OPTIONS.map(o => ({ value: o.value, labelKey: o.value === "es" ? "Español" : "English" })),
+    getValue: () => "es",
     onAction: () => ({}),
   },
-  { id: "languageComingSoon", type: "button", label: "Coming Soon — Translations will be added after feature completion", labelKey: "console_settings.language_coming_soon", getValue: () => "", onAction: () => { toast("Language support is coming soon — stay tuned!", { icon: "🌐" }); return {}; } },
 ];
 
 const SUBPAGE_ROWS: Record<string, SettingRowDef[]> = {
@@ -619,6 +624,33 @@ function SegmentedRow({
 }
 
 // ============================================================
+// Language row — segmented language selector synced with desktop
+// ============================================================
+function LanguageRow({ isFocused }: { isFocused?: boolean }) {
+  const { t } = useTranslation();
+  const { settings: desktopSettings } = useSettings();
+  const currentLang = desktopSettings.language ?? "es";
+  const currentLabel = LANG_OPTIONS.find((o) => o.value === currentLang)?.label ?? currentLang;
+
+  return (
+    <div
+      className={`flex items-center justify-between rounded-xl px-4 py-3 transition ${
+        isFocused ? "bg-(--color-accent)/15 ring-2 ring-(--color-accent)/50" : ""
+      }`}
+    >
+      <span className="text-sm font-medium text-(--color-muted)">
+        {t("console_settings.app_language", "App Language")}
+      </span>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-(--color-muted)/40 opacity-40">◄</span>
+        <span className="font-medium text-(--color-text)">{currentLabel}</span>
+        <span className="text-(--color-muted)/40 opacity-40">►</span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Theme row — premium card with swatches + left/right indicators
 // ============================================================
 function ThemeRow({
@@ -779,6 +811,9 @@ function ConsoleSettingsSubPage({
               isFocused={viz}
             />
           );
+        }
+        if (row.id === "appLanguage") {
+          return <LanguageRow key={row.id} isFocused={viz} />;
         }
         return (
           <SegmentedRow
@@ -1534,22 +1569,50 @@ export default function ConsoleSettingsPanelV2({
         const rows = SUBPAGE_ROWS[subPage];
         if (settingEditingId !== null) {
           // ── Editing mode: Left/Right/Enter adjust value, Escape exits edit mode ──
-          switch (e.key) {
-            case "ArrowLeft":
-              e.preventDefault();
-              onPatch(rows[focusedIndex]!.onAction(settings, "left"));
-              break;
-            case "ArrowRight":
-            case "Enter":
-              e.preventDefault();
-              onPatch(rows[focusedIndex]!.onAction(settings, "right"));
-              break;
-            case "Escape":
-            case "b":
-            case "B":
-              e.preventDefault();
-              setSettingEditingId(null);
-              break;
+          const editingRow = rows[focusedIndex];
+          if (editingRow?.id === "appLanguage") {
+            // Special handling for language row — cycle between languages
+            switch (e.key) {
+              case "ArrowLeft":
+              case "ArrowRight":
+              case "Enter": {
+                e.preventDefault();
+                const current = (settings as any).language ?? "es";
+                const langs = ["es", "en"] as const;
+                const idx = langs.indexOf(current as "es" | "en");
+                const nextLang = e.key === "ArrowLeft"
+                  ? langs[(idx - 1 + langs.length) % langs.length]
+                  : langs[(idx + 1) % langs.length];
+                i18n.changeLanguage(nextLang);
+                localStorage.setItem("lumaforge-lang", nextLang);
+                updateDesktopSetting("language", nextLang);
+                break;
+              }
+              case "Escape":
+              case "b":
+              case "B":
+                e.preventDefault();
+                setSettingEditingId(null);
+                break;
+            }
+          } else {
+            switch (e.key) {
+              case "ArrowLeft":
+                e.preventDefault();
+                onPatch(rows[focusedIndex]!.onAction(settings, "left"));
+                break;
+              case "ArrowRight":
+              case "Enter":
+                e.preventDefault();
+                onPatch(rows[focusedIndex]!.onAction(settings, "right"));
+                break;
+              case "Escape":
+              case "b":
+              case "B":
+                e.preventDefault();
+                setSettingEditingId(null);
+                break;
+            }
           }
         } else {
           // ── Focus mode: arrows move focus, Enter enters edit or activates toggle/button ──

@@ -4,6 +4,7 @@ import { Trophy } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
+import { useGameSession } from "../../context/GameSessionContext";
 import { getConsoleHeroBackground } from "./consoleMedia";
 import { getFavoriteKey } from "../../services/gameCacheService";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
@@ -78,7 +79,19 @@ export default function ConsoleSpotlightLayout({
 }: Props) {
   const { t } = useTranslation();
   const { favoriteIds } = useFavorites();
+  const session = useGameSession();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const runningGameKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const [key, s] of Object.entries(session.sessions)) {
+      if (s.state === "running" || s.state === "launching") {
+        if (s.appId) keys.add(s.appId);
+        keys.add(key);
+      }
+    }
+    return keys;
+  }, [session.sessions]);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
   const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
@@ -162,6 +175,7 @@ export default function ConsoleSpotlightLayout({
           onNavigate={onNavigate}
           onOpenSettings={() => setSettingsOpen(true)}
           settings={settings}
+          allGames={allGames}
         />
       </div>
 
@@ -293,6 +307,7 @@ export default function ConsoleSpotlightLayout({
               focusedRail={focusedRail}
               focusedIndex={focusedIndex}
               onSelectGame={onSelectGame}
+              runningGameKeys={runningGameKeys}
               cardCompact={cardVariant === "poster"}
               cardVariant={cardVariant}
               cardWidth={settings.spotlightCardStyle?.widthPreset ?? 320}

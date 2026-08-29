@@ -17,11 +17,13 @@ import ConsoleGameDetails from "./ConsoleGameDetails";
 import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
 import ConsoleSearchOverlay from "./ConsoleSearchOverlay";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
+import ConsoleGameRunningOverlay from "./ConsoleGameRunningOverlay";
 import { useConsoleNavigation } from "./useConsoleNavigation";
 import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setOnGamepadAction } from "./useConsoleGamepadInput";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
+import { focusGameWindow } from "../../services/tauri";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
-import { showSuccess, showError, showWarning } from "../../components/toast/GameToast";
+import { showError, showWarning } from "../../components/toast/GameToast";
 import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { useControllerDetection } from "./useControllerDetection";
 
@@ -67,6 +69,10 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [runningOverlay, setRunningOverlay] = useState<{
+    game: LibraryGame;
+    returnTo: "grid" | "spotlight";
+  } | null>(null);
   const [dockFocusedIndex, setDockFocusedIndex] = useState(-1);
   const [settledFocusedRail, setSettledFocusedRail] = useState(-1);
   const [settledFocusedIndex, setSettledFocusedIndex] = useState(-1);
@@ -250,33 +256,28 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
     if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][REQUEST] appid=${game.appId ?? "manual"} title=${game.title} primaryAction=${primaryAction}`);
 
-    const toastId = `console-launch-${game.appId ?? game.id}`;
-    pendingLaunchToastRef.current.set(gameKey, toastId);
-    toast.loading(`Launching ${game.title}…`, { id: toastId, duration: 30000 });
-
     try {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_START] appid=${game.appId ?? "manual"}`);
       await session.launchGame(game);
+      setRunningOverlay({
+        game,
+        returnTo: consoleSettings.layoutMode === "spotlight" ? "spotlight" : "grid",
+      });
     } catch (err) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAIL] appid=${game.appId ?? "manual"} error=${err}`);
-      pendingLaunchToastRef.current.delete(gameKey);
-      toast.dismiss(toastId);
       showError(`Could not launch ${game.title}`, { title: "Launch failed" });
     }
-  }, [session]);
+  }, [session, consoleSettings.layoutMode]);
 
-  /* Track session state transitions for launch toast feedback */
+  /* Track session state transitions — detect failed launches */
   useEffect(() => {
     const pending = pendingLaunchToastRef.current;
     if (pending.size === 0) return;
     for (const [gameKey, toastId] of pending) {
       const state = session.getState(gameKey);
       if (state === "running") {
-        if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][RUNNING_DETECTED] gameKey=${gameKey}`);
-        const game = currentFocusedGameRef.current;
         pending.delete(gameKey);
         toast.dismiss(toastId);
-        showSuccess(`${game?.title ?? "Game"} is running`, { title: "Game launched", duration: 3500 });
       } else if (state === "idle") {
         const existingSession = session.getSession(gameKey);
         if (!existingSession && pending.has(gameKey)) {
@@ -288,6 +289,16 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       }
     }
   }, [session.sessions, session, session.getState, session.getSession]);
+
+  /* Auto-dismiss running overlay when game closes */
+  useEffect(() => {
+    if (!runningOverlay) return;
+    const key = computeGameKey(runningOverlay.game);
+    const state = session.getState(key);
+    if (state === "idle") {
+      setRunningOverlay(null);
+    }
+  }, [session.sessions, runningOverlay, session.getState]);
 
   const hookOnSelect = useCallback((railIndex: number, cardIndex: number) => {
     const game: LibraryGame | undefined = rails[railIndex]?.[cardIndex];
@@ -815,6 +826,27 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onRefreshLibrary={refreshLibraryGames}
         />
       )}
+
+      {/* Running game overlay — fullscreen when launching/running */}
+      {runningOverlay && (() => {
+        const rSession = session.getSession(computeGameKey(runningOverlay.game));
+        if (!rSession) return null;
+        return (
+          <ConsoleGameRunningOverlay
+            game={runningOverlay.game}
+            session={rSession}
+            returnTo={runningOverlay.returnTo}
+            onClose={() => {
+              session.stopSession(rSession.gameKey);
+              setRunningOverlay(null);
+            }}
+            onFocus={() => {
+              if (rSession.pid) focusGameWindow(rSession.pid).catch(() => {});
+            }}
+            onContinue={() => setRunningOverlay(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

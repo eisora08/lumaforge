@@ -12,6 +12,9 @@ type Props = {
   focusedRail: number;
   focusedIndex: number;
   onSelectGame?: (game: LibraryGame) => void;
+  onCardHover?: (game: LibraryGame) => void;
+  onCardHoverEnd?: () => void;
+  runningGameKeys?: Set<string>;
   cardCompact?: boolean;
   cardVariant?: "landscape" | "poster";
   cardWidth?: number;
@@ -28,6 +31,9 @@ export default function ConsoleHomeRail({
   focusedRail,
   focusedIndex,
   onSelectGame,
+  onCardHover,
+  onCardHoverEnd,
+  runningGameKeys,
   cardCompact,
   cardVariant = "landscape",
   cardWidth,
@@ -117,7 +123,10 @@ export default function ConsoleHomeRail({
                 key={"console:rail:" + (game.appId || game.id)}
                 game={game}
                 isFocused={isFocusedRail && focusedIndex === i}
+                isRunning={runningGameKeys?.has(game.appId || game.id) ?? false}
                 onClick={() => onSelectGame?.(game)}
+                onHover={() => onCardHover?.(game)}
+                onHoverEnd={() => onCardHoverEnd?.()}
                 compact={cardCompact}
                 variant={cardVariant}
                 cardWidth={cardWidth}
