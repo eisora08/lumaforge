@@ -4,6 +4,8 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 use crate::commands::game_cache::{get_game_dir, get_media_dir};
+use crate::commands::process::hide_window;
+use std::process::Command;
 
 
 #[tauri::command]
@@ -76,7 +78,7 @@ pub fn get_system_info() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub async fn power_shutdown() -> Result<(), String> {
     let cmd = if cfg!(target_os = "windows") {
-        std::process::Command::new("shutdown").args(["/s", "/t", "3"]).spawn()
+        hide_window(Command::new("shutdown").args(["/s", "/t", "3"])).spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to shut down"]).spawn()
     } else {
@@ -89,8 +91,8 @@ pub async fn power_shutdown() -> Result<(), String> {
 #[tauri::command]
 pub async fn power_suspend() -> Result<(), String> {
     let cmd = if cfg!(target_os = "windows") {
-        std::process::Command::new("rundll32.exe")
-            .args(["powrprof.dll,SetSuspendState", "0", "1", "0"])
+        hide_window(Command::new("rundll32.exe")
+            .args(["powrprof.dll,SetSuspendState", "0", "1", "0"]))
             .spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to sleep"]).spawn()
@@ -104,7 +106,7 @@ pub async fn power_suspend() -> Result<(), String> {
 #[tauri::command]
 pub async fn power_hibernate() -> Result<(), String> {
     let cmd = if cfg!(target_os = "windows") {
-        std::process::Command::new("shutdown").args(["/h"]).spawn()
+        hide_window(Command::new("shutdown").args(["/h"])).spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to sleep"]).spawn()
     } else {
@@ -117,7 +119,7 @@ pub async fn power_hibernate() -> Result<(), String> {
 #[tauri::command]
 pub async fn power_restart() -> Result<(), String> {
     let cmd = if cfg!(target_os = "windows") {
-        std::process::Command::new("shutdown").args(["/r", "/t", "3"]).spawn()
+        hide_window(Command::new("shutdown").args(["/r", "/t", "3"])).spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to restart"]).spawn()
     } else {

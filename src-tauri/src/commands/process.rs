@@ -4,6 +4,24 @@ use std::process::{Command, Stdio};
 use sysinfo::{PidExt, ProcessExt, System, SystemExt};
 use tauri::{AppHandle, Manager};
 
+/// Prevent console programs (taskkill/tasklist/powershell) from flashing a new
+/// console window when spawned from a GUI release build (which has no attached
+/// console). In dev the binary inherits the terminal's console so the flash is
+/// invisible, but packaged apps create a fresh console per child otherwise.
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Apply `CREATE_NO_WINDOW` so child console programs never flash a window.
+/// No-op on non-Windows.
+pub(crate) fn hide_window(cmd: &mut Command) -> &mut Command {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Calculate total size of all files in a directory recursively using walkdir.
 #[tauri::command]
 pub fn calculate_directory_size(path: String) -> Result<u64, String> {
@@ -278,8 +296,7 @@ pub fn launch_executable(
 /// so the fallback only appears for genuinely elevated targets.
 #[cfg(target_os = "windows")]
 fn kill_via_taskkill(args: Vec<String>) -> Result<(), String> {
-  let plain = Command::new("taskkill")
-    .args(&args)
+  let plain = hide_window(Command::new("taskkill").args(&args))
     .output()
     .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
 
@@ -306,8 +323,13 @@ fn kill_via_taskkill(args: Vec<String>) -> Result<(), String> {
     arg_list
   );
   let ps_command_ref: &str = &ps_command;
-  let output = Command::new("powershell")
-    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_command_ref])
+  let output = hide_window(Command::new("powershell").args([
+    "-NoProfile",
+    "-WindowStyle",
+    "Hidden",
+    "-Command",
+    ps_command_ref,
+  ]))
     .output()
     .map_err(|e| format!("Failed to execute elevated taskkill: {}", e))?;
 
@@ -375,10 +397,13 @@ pub fn terminate_process_by_name(name: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn is_process_running(pid: u32) -> Result<bool, String> {
-  let output = Command::new("tasklist")
-    .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-    .output()
-    .map_err(|e| format!("Failed to query process: {}", e))?;
+  let output = hide_window(Command::new("tasklist").args([
+    "/FI",
+    &format!("PID eq {}", pid),
+    "/NH",
+  ]))
+  .output()
+  .map_err(|e| format!("Failed to query process: {}", e))?;
 
   let stdout = String::from_utf8_lossy(&output.stdout);
   Ok(!stdout.contains("No tasks are running") && !stdout.trim().is_empty())
