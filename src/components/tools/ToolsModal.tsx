@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -103,6 +104,7 @@ export interface ToolsModalProps {
 }
 
 export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
+  const { t } = useTranslation();
   const { settings } = useSettings();
   const { updateGame } = useLibraryGames();
   const transition = useSyncExternalStore(
@@ -334,13 +336,13 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
   const markBusy = useCallback((kind: FixKind) => {
     setFixStates((prev) => ({
       ...prev,
-      [kind]: { ...prev[kind], busy: true, progress: { progress: 0, message: "Starting..." }, result: null, showGlow: false },
+      [kind]: { ...prev[kind], busy: true, progress: { progress: 0, message: t("tools_modal.starting") }, result: null, showGlow: false },
     }));
   }, []);
 
   // ── Transition a fix row from busy → completed (with glow + result) ────────
   const markCompleted = useCallback((kind: FixKind, result: GameFixResult | null) => {
-    const msg = result?.message ?? "Done";
+    const msg = result?.message ?? t("tools_modal.done");
     const files = result?.filesInstalled;
     const ok = result?.ok ?? false;
 
@@ -447,7 +449,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
     const fixType = entry.provider === "rockstar" ? "RockstarFix" : "Voices38Fix";
     setCatalogStates((prev) => ({
       ...prev,
-      [entry.id]: { ...prev[entry.id], busy: true, progress: { progress: 0, message: "Starting..." }, result: null, showGlow: false },
+      [entry.id]: { ...prev[entry.id], busy: true, progress: { progress: 0, message: t("tools_modal.starting") }, result: null, showGlow: false },
     }));
     try {
       const result = await libraryApplyCatalogFix({
@@ -498,7 +500,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
     const fixType = entry.provider === "rockstar" ? "RockstarFix" : "Voices38Fix";
     setCatalogStates((prev) => ({
       ...prev,
-      [entry.id]: { ...prev[entry.id], busy: true, progress: { progress: 0, message: "Starting..." }, result: null, showGlow: false },
+      [entry.id]: { ...prev[entry.id], busy: true, progress: { progress: 0, message: t("tools_modal.starting") }, result: null, showGlow: false },
     }));
     try {
       const result = await libraryUnfixCatalogFix({ appId, installDir, fixType });
@@ -546,7 +548,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
         persistStandalone(game.appId, false);
         localStorage.removeItem(`lumaforge-ach-platform-${game.appId}`);
         updateGame(game.appId, { isStandalone: false, executablePath: undefined });
-        showSuccess(`${game.title} — Modo standalone desactivado`);
+        showSuccess(t("tools_modal.standalone_deactivated", { title: game.title }));
       } else {
         // Activate: apply Goldberg + Steamless + seed GSE Saves
         if (!applied.goldberg) {
@@ -579,10 +581,10 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
           executablePath: nativeInfo?.exeName ?? game.executablePath,
           installDir: nativeInfo?.installPath ?? game.installDir,
         });
-        showSuccess(`${game.title} — Modo standalone activado`);
+        showSuccess(t("tools_modal.standalone_activated", { title: game.title }));
       }
     } catch (err) {
-      showError(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      showError(t("tools_modal.error", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setStandaloneBusy(false);
       await refreshNativeState();
@@ -593,9 +595,9 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
 
   const title = game
     ? game.source === "epic"
-      ? `Fixes · ${game.title}`
-      : `Fixes · ${game.title} · #${game.appId}`
-    : "Fixes";
+      ? `${t("tools_modal.title")} · ${game.title}`
+      : `${t("tools_modal.title")} · ${game.title} · #${game.appId}`
+    : t("tools_modal.title");
 
   const heroClass =
     transition === "kenburns"
@@ -624,47 +626,47 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
     }> = [
       {
         kind: "smokeApi",
-        label: "SmokeAPI",
-        description: "Bypass Steam API for multiplayer/co-op and DLC unlock",
+        label: t("tools_modal.smoke_api"),
+        description: t("tools_modal.smoke_api_desc"),
         icon: <Disc3 className="h-4 w-4" />,
         toolInstalled: !!nativeInstallStatus?.smokeApiInstalled,
         applicable: nativeInfo.installed,
         hint: nativeInfo.hasSteamApi64
-          ? "Detectado steam_api64.dll (x64)"
+          ? t("tools_modal.hint_smoke_x64")
           : nativeInfo.hasSteamApi32
-            ? "Detectado steam_api.dll (x86)"
-            : "Sin steam_api detectado — se inyectará vía Koaloader",
+            ? t("tools_modal.hint_smoke_x86")
+            : t("tools_modal.hint_smoke_no_api"),
       },
       {
         kind: "steamless",
-        label: "Steamless",
-        description: "Remove Steam DRM (SteamStub) from game executables",
+        label: t("tools_modal.steamless"),
+        description: t("tools_modal.steamless_desc"),
         icon: <Package className="h-4 w-4" />,
         toolInstalled: !!nativeInstallStatus?.steamlessInstalled,
         applicable: nativeInfo.installed,
         hint: nativeInfo.hasSteamStubDrm
-          ? `SteamStub detectado en ${nativeInfo.mainExe ?? "el ejecutable"}`
+          ? t("tools_modal.hint_steamless_detected", { exe: nativeInfo.mainExe ?? "the executable" })
           : nativeInfo.exeName
-            ? "Comprobará todos los ejecutables candidatos"
-            : "Sin ejecutables detectados",
+            ? t("tools_modal.hint_steamless_checking")
+            : t("tools_modal.hint_steamless_no_exe"),
       },
       {
         kind: "goldberg",
-        label: "Goldberg",
-        description: "Offline Steam emulator for LAN/single-player",
+        label: t("tools_modal.goldberg"),
+        description: t("tools_modal.goldberg_desc"),
         icon: <Gamepad2 className="h-4 w-4" />,
         toolInstalled: !!nativeInstallStatus?.goldbergInstalled,
         applicable: nativeInfo.installed,
-        hint: "Requiere Goldberg (fork) instalado",
+        hint: t("tools_modal.hint_goldberg"),
       },
       {
         kind: "onlineFix",
-        label: "Online Fix",
-        description: "Download multiplayer/co-op fix from online-fix database",
+        label: t("tools_modal.online_fix"),
+        description: t("tools_modal.online_fix_desc"),
         icon: <Zap className="h-4 w-4" />,
         toolInstalled: true,
         applicable: nativeInfo.hasOnlineFix,
-        hint: "Solo para juegos con fix online disponible",
+        hint: t("tools_modal.hint_online_fix"),
       },
     ];
 
@@ -676,7 +678,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
         <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
           <p className="text-xs text-amber-300/80 leading-relaxed">
-            Unofficial content from external sources. Use at your own risk. Back up your files before continuing.
+            {t("tools_modal.disclaimer")}
           </p>
         </div>
         <div className="space-y-2">
@@ -757,7 +759,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                 {/* Hint — when idle and not applied */}
                 {!isBusy && !isApplied && (!row.toolInstalled || !row.applicable) && (
                   <p className="mt-0.5 text-xs text-white/50">
-                    {row.toolInstalled ? row.hint : `${row.label} no instalado.`}
+                    {row.toolInstalled ? row.hint : t("tools_modal.not_installed", { label: row.label })}
                   </p>
                 )}
 
@@ -781,7 +783,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                   onClick={() => handleUnfix(row.kind, row.label)}
                   className={`${GLASS_BUTTON} border-red-500/40 text-red-400 hover:bg-red-500/20`}
                 >
-                  Quitar
+                  {t("tools_modal.remove")}
                 </button>
               )}
               {!isBusy && !isApplied && (
@@ -791,10 +793,10 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                   onClick={() => handleApply(row.kind, row.label)}
                   className={`${GLASS_BUTTON} border-(--color-accent)/50 bg-(--color-accent)/20 text-(--color-accent-text) hover:bg-(--color-accent)/30`}
                 >
-                  Aplicar
+                  {t("tools_modal.apply")}
                 </button>
               )}
-              {/* Online Fix: secondary "Abrir Steam" button */}
+              {/* Online Fix: secondary "Open Steam" button */}
               {!isBusy && row.kind === "onlineFix" && nativeAppId != null && (
                 <button
                   type="button"
@@ -802,7 +804,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                   className={`${GLASS_BUTTON} border-white/15 text-white/70 hover:bg-white/10`}
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  Abrir Steam
+                  {t("tools_modal.open_steam")}
                 </button>
               )}
               {/* No button when busy — progress bar IS the indicator */}
@@ -845,7 +847,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
               <button
                 type="button"
                 onClick={onClose}
-                aria-label="Cerrar"
+                aria-label={t("tools_modal.close")}
                 className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/40 text-white backdrop-blur-md transition hover:bg-black/60"
               >
                 <X className="h-4 w-4" />
@@ -861,7 +863,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
             <button
               type="button"
               onClick={onClose}
-              aria-label="Cerrar"
+              aria-label={t("tools_modal.close")}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
             >
               <X className="h-4 w-4" />
@@ -875,7 +877,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
             <div className="flex flex-col items-center gap-3 py-12 text-center">
               <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
               <p className="text-sm text-(--color-muted)">
-                Este juego no tiene carpeta de instalación.
+                {t("tools_modal.no_install_folder")}
               </p>
             </div>
           ) : (
@@ -886,7 +888,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
               {catalogFixes.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-[11px] font-medium uppercase tracking-wider text-white/30">
-                    Available from catalog
+                    {t("tools_modal.catalog_available")}
                   </p>
                   {catalogFixes.map((entry) => {
                     const state = catalogStates[entry.id];
@@ -925,7 +927,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-white">{providerLabel}</span>
                             <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
-                              Catalog
+                              {t("tools_modal.catalog_badge")}
                             </span>
                             {isApplied && !isBusy && (
                               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 lf-fix-check-pop" />
@@ -975,7 +977,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                             onClick={() => handleCatalogUnfix(entry)}
                             className={`${GLASS_BUTTON} border-red-500/40 text-red-400 hover:bg-red-500/20`}
                           >
-                            Quitar
+                            {t("tools_modal.remove")}
                           </button>
                         )}
                         {!isBusy && !isApplied && (
@@ -984,7 +986,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                             onClick={() => handleCatalogApply(entry)}
                             className={`${GLASS_BUTTON} border-(--color-accent)/50 bg-(--color-accent)/20 text-(--color-accent-text) hover:bg-(--color-accent)/30`}
                           >
-                            Aplicar
+                            {t("tools_modal.apply")}
                           </button>
                         )}
                       </div>
@@ -1002,7 +1004,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-white">Modo Standalone</span>
+                    <span className="text-sm font-medium text-white">{t("tools_modal.standalone_title")}</span>
                     {isStandalone && !standaloneBusy && (
                       <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 lf-fix-check-pop" />
                     )}
@@ -1011,11 +1013,11 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                     )}
                   </div>
                   <p className="text-[11px] text-white/40 mt-0.5">
-                    Juega sin Steam — crea esquema de logros con Goldberg + Steamless
+                    {t("tools_modal.standalone_desc")}
                   </p>
                   {!canToggleStandalone && !isStandalone && (
                     <p className="mt-0.5 text-xs text-amber-400/80">
-                      Instalá Goldberg y Steamless en Configuración &gt; Third Party Tools
+                      {t("tools_modal.standalone_warning")}
                     </p>
                   )}
                 </div>
@@ -1029,7 +1031,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                       : `${GLASS_BUTTON} border-(--color-accent)/50 bg-(--color-accent)/20 text-(--color-accent-text) hover:bg-(--color-accent)/30`
                     }`}
                   >
-                    {isStandalone ? "Desactivar" : "Activar"}
+                    {isStandalone ? t("tools_modal.deactivate") : t("tools_modal.activate")}
                   </button>
                 )}
               </div>
@@ -1053,12 +1055,12 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
             {/* Header */}
             <div className="mb-4 flex items-center justify-between">
               <h3 id="online-fix-launch-title" className="text-sm font-semibold text-(--color-text)">
-                Steam Launch Options
+                {t("tools_modal.online_fix_title")}
               </h3>
               <button
                 type="button"
                 onClick={() => setShowOnlineFixModal(false)}
-                aria-label="Cerrar"
+                aria-label={t("tools_modal.close")}
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
               >
                 <X className="h-3.5 w-3.5" />
@@ -1067,27 +1069,19 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
 
             {/* Description */}
             <p className="text-xs leading-relaxed text-(--color-muted)">
-              Generic Online Fix (Steam Lobby Spoof) — Enables multiplayer in games that use
-              the native Steam lobby system via the{" "}
-              <code className="rounded bg-(--color-surface) px-1.5 py-0.5 text-[11px] font-mono text-(--color-accent)">
-                -onlinefix
-              </code>{" "}
-              launch parameter.
+              {t("tools_modal.online_fix_desc_detail", { param: "-onlinefix" })}
             </p>
 
             {/* Compatibility note */}
             <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2.5">
               <p className="text-[11px] leading-relaxed text-amber-300/80">
-                <span className="font-semibold">Note:</span> Not all games are compatible. This
-                only works on titles relying on Steam&apos;s built-in matchmaking API. Games with
-                custom dedicated servers or proprietary online systems will not work.
+                {t("tools_modal.online_fix_note_detail")}
               </p>
             </div>
 
             {/* Instructions */}
             <p className="mt-3 text-xs text-(--color-muted)">
-              In Steam, right-click the game →{" "}
-              <strong className="text-(--color-text)">Properties → General → Launch Options</strong>
+              {t("tools_modal.online_fix_instructions")}
             </p>
 
             {/* Code row with copy */}
@@ -1105,9 +1099,9 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                 className="lf-surface inline-flex items-center gap-1.5 rounded-full border border-(--surface-active-border) px-3 py-2 text-xs font-medium text-(--color-text) transition hover:bg-(--surface-active-hover)"
               >
                 {onlineFixCopied ? (
-                  <><Check className="h-3.5 w-3.5" /> Copied</>
+                  <><Check className="h-3.5 w-3.5" /> {t("tools_modal.online_fix_copied")}</>
                 ) : (
-                  <><Copy className="h-3.5 w-3.5" /> Copy</>
+                  <><Copy className="h-3.5 w-3.5" /> {t("tools_modal.online_fix_copy")}</>
                 )}
               </button>
             </div>
@@ -1124,7 +1118,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
                 className="inline-flex items-center gap-1.5 rounded-full border border-(--color-accent)/50 bg-(--color-accent)/20 px-4 py-2 text-xs font-medium text-(--color-accent-text) backdrop-blur-md transition hover:bg-(--color-accent)/30"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                Open in Steam
+                {t("tools_modal.online_fix_open_steam")}
               </button>
             </div>
           </div>

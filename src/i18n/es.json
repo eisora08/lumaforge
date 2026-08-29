@@ -848,7 +848,14 @@
     "online_fix_copy": "Copiar",
     "online_fix_copied": "Copiado",
     "online_fix_open_steam": "Abrir en Steam",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "done": "Listo",
+    "starting": "Iniciando...",
+    "error": "Error: {{error}}",
+    "standalone_activated": "{{title}} — Modo standalone activado",
+    "standalone_deactivated": "{{title}} — Modo standalone desactivado",
+    "online_fix_desc_detail": "Online Fix genérico (Steam Lobby Spoof) — Habilita multijugador en juegos que usan el sistema de lobbies nativo de Steam mediante el parámetro de lanzamiento {{param}}.",
+    "online_fix_note_detail": "No todos los juegos son compatibles. Solo funciona en títulos que usan la API de matchmaking integrada de Steam. Juegos con servidores dedicados personalizados o sistemas online propietarios no funcionarán."
   },
   "library_details": {
     "disabled": "Desactivado",

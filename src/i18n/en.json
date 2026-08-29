@@ -848,7 +848,14 @@
     "online_fix_copy": "Copy",
     "online_fix_copied": "Copied",
     "online_fix_open_steam": "Open in Steam",
-    "close": "Close"
+    "close": "Close",
+    "done": "Done",
+    "starting": "Starting...",
+    "error": "Error: {{error}}",
+    "standalone_activated": "{{title}} — Standalone mode activated",
+    "standalone_deactivated": "{{title}} — Standalone mode deactivated",
+    "online_fix_desc_detail": "Generic Online Fix (Steam Lobby Spoof) — Enables multiplayer in games that use the native Steam lobby system via the {{param}} launch parameter.",
+    "online_fix_note_detail": "Not all games are compatible. This only works on titles relying on Steam's built-in matchmaking API. Games with custom dedicated servers or proprietary online systems will not work."
   },
   "library_details": {
     "disabled": "Disabled",
