@@ -48,6 +48,7 @@ pub mod extension;
 pub mod extension_lifecycle;
 pub mod repack_catalog;
 pub mod debrid_games;
+pub mod epic_games;
 pub mod debrid_installer;
 pub mod hydra_source;
 pub mod debrid_resolver;

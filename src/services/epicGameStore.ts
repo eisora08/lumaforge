@@ -61,6 +61,10 @@ let _syncedPlaytime = new Map<string, number>(); // appName → totalPlaytime
 // Prevents redundant API calls + downloads on re-import, mode switch, etc.
 const _metadataFetchedThisSession = new Set<string>();
 
+// Tracks which games already had auto Steam-metadata (by name) resolved this
+// session, so we don't re-run the search+resolve against Steam repeatedly.
+const _steamMetadataFetchedThisSession = new Set<string>();
+
 // ── Notification ──
 
 function notifyListeners(): void {
@@ -158,6 +162,9 @@ function isSuspiciousEpicTitle(title: string): boolean {
   if (/^[0-9a-f]{32}$/i.test(t)) return true;
   // Single lowercase codename slug with no spaces (e.g. "calluna", "alpha-b18")
   if (/^[a-z][a-z0-9-]{1,24}$/.test(t)) return true;
+  // Single token with no spaces anywhere ("Calluna", "Crow", "Duck", "Batfish", "Peppermint").
+  // Safe: the correction only applies when the catalog title actually differs (current !== resolved).
+  if (!/\s/.test(t)) return true;
   return false;
 }
 
@@ -213,6 +220,101 @@ async function applyEpicMetadataToGame(
 }
 
 /**
+ * Auto-download Steam metadata (genres, developers, publishers, release date,
+ * description) for an Epic game BY its corrected name. This mirrors the manual
+ * "Download Metadata (Steam)" flow from GameEditDialog, but runs automatically
+ * after the catalog title correction.
+ *
+ * Runs at most once per providerGameId per session, only when genres are
+ * missing, and only when the best Steam search result is a name match — to
+ * avoid attaching a wrong Steam game's metadata. The result is persisted to
+ * the override store (durable across restarts) and reflected in game.metadata.
+ */
+async function applySteamMetadataToEpicGame(game: LibraryGame): Promise<void> {
+  const providerGameId = game.providerGameId;
+  if (!providerGameId || _steamMetadataFetchedThisSession.has(providerGameId)) return;
+
+  const meta = (game.metadata as Record<string, unknown>) || {};
+  const hasGenres = (meta.genres as string[])?.length > 0;
+  if (hasGenres) {
+    _steamMetadataFetchedThisSession.add(providerGameId);
+    return;
+  }
+
+  const searchName = (game.title || "").trim();
+  if (!searchName) return;
+  _steamMetadataFetchedThisSession.add(providerGameId);
+
+  try {
+    const { resolveSteamStoreSearch } = await import("./tauri");
+    const { resolveGameMetadata } = await import("./gameMetadataResolver");
+
+    // Throttle: space out Steam lookups so a large owned library doesn't
+    // hammer the Steam store search endpoint all at once.
+    await new Promise((r) => setTimeout(r, 120));
+
+    const steamResults = await resolveSteamStoreSearch({ term: searchName, limit: 5 });
+    if (!steamResults || steamResults.length === 0) return;
+    const best = steamResults[0];
+
+    // Only accept the match when the Steam title is a credible match for the
+    // corrected name (normalized, ignoring case + separators). Prevents pulling
+    // metadata for an unrelated Steam game that happens to share a token.
+    if (!titlesMatch(searchName, best.name)) return;
+
+    const metaMap = await resolveGameMetadata([best.app_id]);
+    const steamMeta = metaMap[best.app_id];
+    if (!steamMeta) return;
+
+    const genresArr = (steamMeta.genres || []).slice(0, 8);
+    const patch: Record<string, unknown> = {};
+    if (steamMeta.genres?.length) patch.genres = steamMeta.genres.slice(0, 8);
+    if (steamMeta.developer) patch.developers = [steamMeta.developer].filter(Boolean);
+    if (steamMeta.publishers?.length) patch.publishers = steamMeta.publishers;
+    if (steamMeta.release_date) patch.releaseDate = steamMeta.release_date;
+    if (steamMeta.short_description || steamMeta.about_the_game) {
+      patch.description = (steamMeta.short_description || steamMeta.about_the_game || "").trim();
+    }
+
+    if (Object.keys(patch).length > 0) {
+      const { writeEpicOverrides } = await import("./epicOverrideStore");
+      writeEpicOverrides(providerGameId, patch as never);
+      const devs = (patch.developers as string[] | undefined) || [];
+      (game as Record<string, unknown>).metadata = {
+        ...((game.metadata as Record<string, unknown>) || {}),
+        genres: genresArr,
+        developer: devs[0] || undefined,
+        publishers: (patch.publishers as string[] | undefined) || [],
+        release_date: patch.releaseDate || undefined,
+        short_description: patch.description || undefined,
+        about_the_game: patch.description || undefined,
+        resolved: true,
+      };
+      if (DEBUG_EPIC_LIBRARY) {
+        console.log(`[EPIC_STORE][STEAM_META] ${searchName} → Steam app ${best.app_id} (${best.name})`);
+      }
+    }
+  } catch {
+    // Auto metadata fetch failed — skip this game.
+  }
+}
+
+/** Normalize a title for loose matching (lowercase, non-alphanumeric → space). */
+function normalizeMatchString(value: string): string {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** True when the Steam result name is a credible match for our corrected name. */
+function titlesMatch(ours: string, steam: string): boolean {
+  const a = normalizeMatchString(ours);
+  const b = normalizeMatchString(steam);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // Steam often appends "(Game Title)" subtitles or adds "™"/": Subtitle".
+  return a.includes(b) || b.includes(a);
+}
+
+/**
  * Enrich a set of Epic games (title correction + catalog artwork/metadata) in
  * the background. Reuses the session dedup so each providerGameId is fetched
  * at most once per session. Corrected titles + artwork are persisted to the
@@ -223,21 +325,27 @@ async function enrichEpicGamesFromCatalog(games: LibraryGame[]): Promise<void> {
     const { epicFetchAndSaveMetadata } = await import("./tauri");
     for (const game of games) {
       const providerGameId = game.providerGameId;
-      if (!providerGameId || _metadataFetchedThisSession.has(providerGameId)) continue;
+      if (!providerGameId) continue;
       const parts = providerGameId.split(":");
-      if (parts.length < 2) continue;
-      const [ns, catId] = parts;
-      if (!ns || !catId) continue;
-      // Skip if we already have artwork AND the title doesn't need correction.
-      const titleNeedsWork = isSuspiciousEpicTitle(game.title || "");
-      if (game.coverPath && !titleNeedsWork) continue;
-      try {
-        const result = await epicFetchAndSaveMetadata(providerGameId, ns, catId);
-        _metadataFetchedThisSession.add(providerGameId);
-        await applyEpicMetadataToGame(game, result);
-      } catch {
-        // Artwork/metadata fetch failed for this game — continue with others
+      const ns = parts[0];
+      const catId = parts[1];
+      // Catalog artwork/title pass — only run once per session, and only when
+      // the game still needs artwork or its title corrected.
+      if (ns && catId && !_metadataFetchedThisSession.has(providerGameId)) {
+        const titleNeedsWork = isSuspiciousEpicTitle(game.title || "");
+        if (!game.coverPath || titleNeedsWork) {
+          try {
+            const result = await epicFetchAndSaveMetadata(providerGameId, ns, catId);
+            _metadataFetchedThisSession.add(providerGameId);
+            await applyEpicMetadataToGame(game, result);
+          } catch {
+            // Artwork/metadata fetch failed for this game — continue with others
+          }
+        }
       }
+      // Auto Steam metadata (by corrected name) — self-guards (dedup, genres
+      // present, name match) and is throttled internally.
+      await applySteamMetadataToEpicGame(game);
     }
 
     // Persist any corrections so next boot loads full data instantly.
@@ -659,15 +767,17 @@ export async function refreshOwnedGames(): Promise<{
 export function loadEpicGamesFromCache(cachedGames: Array<{
   appId: string;
   title: string;
-  installed: boolean;
-  playtime: number;
-  lastPlayed: number;
+  installed?: boolean;
+  playtime?: number;
+  lastPlayed?: number;
   provider?: string;
   mediaJson?: string;
+  metadataJson?: string;
 }>): void {
   const UUID_RE = /^[0-9a-f]{32}$/i;
   const libGames: LibraryGame[] = cachedGames.map((g) => {
     const media = g.mediaJson ? (() => { try { return JSON.parse(g.mediaJson); } catch { return {}; } })() : {};
+    const meta = g.metadataJson ? (() => { try { return JSON.parse(g.metadataJson); } catch { return {}; } })() : {};
     const providerGameId = g.appId.replace(/^epic:/, "");
     const libraryId = g.appId;
     // If title is a UUID-like catalogItemId, use the appName (last segment of providerGameId) as fallback
@@ -688,14 +798,15 @@ export function loadEpicGamesFromCache(cachedGames: Array<{
       isPlayable: true,
       isInstallable: false,
       steamInstalled: false,
-      isInstalled: g.installed,
-      steamPlaytimeMinutes: g.playtime,
-      steamLastPlayedAt: g.lastPlayed,
+      isInstalled: g.installed || false,
+      steamPlaytimeMinutes: g.playtime ?? 0,
+      steamLastPlayedAt: g.lastPlayed ?? 0,
       coverPath: media.coverPath || undefined,
       landscapePath: media.landscapePath || undefined,
       backgroundPath: media.backgroundPath || undefined,
       logoPath: media.logoPath || undefined,
       iconPath: media.iconPath || undefined,
+      metadata: (Object.keys(meta).length > 0 ? meta : undefined) as LibraryGame["metadata"],
       luaScripts: [],
       hasLua: false,
       isLuaActive: false,
@@ -772,35 +883,39 @@ export function getEpicPlaytime(appName: string): number {
 
 /**
  * Persist Epic games to SQLite so they load instantly on next boot.
+ * Stored in a DEDICATED `epic_games` table (JSON blob) — NOT the shared
+ * `games` table — so Epic rows never mix with Steam/manual/debrid entries.
  * Fire-and-forget — errors are non-critical.
  */
 async function persistEpicGamesToSqlite(games: LibraryGame[]): Promise<void> {
   if (games.length === 0) return;
   try {
-    const { batchUpsertGames } = await import("./tauri");
+    const { writeEpicGames } = await import("./tauri");
     const entries = games
       .filter((g) => g.id)
-      .map((g) => ({
-        appId: g.id!,
-        title: g.title || "Unknown",
-        installed: g.isInstalled || false,
-        playtime: g.steamPlaytimeMinutes ?? 0,
-        lastPlayed: g.steamLastPlayedAt ?? 0,
-        metadataJson: "{}",
-        updatedAt: Math.floor(Date.now() / 1000),
-        provider: "epic",
-        mediaJson: JSON.stringify({
-          coverPath: g.coverPath || null,
-          landscapePath: g.landscapePath || null,
-          backgroundPath: g.backgroundPath || null,
-          logoPath: g.logoPath || null,
-          iconPath: g.iconPath || null,
-        }),
-      }));
+      .map((g) => {
+        const metadata = (g.metadata as Record<string, unknown>) || {};
+        return {
+          appId: g.id!,
+          title: g.title || "Unknown",
+          installed: g.isInstalled || false,
+          playtime: g.steamPlaytimeMinutes ?? 0,
+          lastPlayed: g.steamLastPlayedAt ?? 0,
+          provider: "epic",
+          mediaJson: JSON.stringify({
+            coverPath: g.coverPath || null,
+            landscapePath: g.landscapePath || null,
+            backgroundPath: g.backgroundPath || null,
+            logoPath: g.logoPath || null,
+            iconPath: g.iconPath || null,
+          }),
+          metadataJson: JSON.stringify(metadata),
+        };
+      });
     if (entries.length > 0) {
-      await batchUpsertGames(entries);
+      await writeEpicGames(entries);
       if (DEBUG_EPIC_LIBRARY) {
-        console.log(`[EPIC_STORE] persisted ${entries.length} games to SQLite`);
+        console.log(`[EPIC_STORE] persisted ${entries.length} games to SQLite (epic_games)`);
       }
     }
   } catch (err) {

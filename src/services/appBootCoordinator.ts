@@ -768,10 +768,9 @@ export async function runBootTasks(): Promise<void> {
             logBoot("load epic games from cache start");
             try {
               if (isIntegrationEnabled("epic")) {
-                const { readAllGames } = await import("./tauri");
+                const { readEpicGames } = await import("./tauri");
                 const { loadEpicGamesFromCache } = await import("./epicGameStore");
-                const allGames = await readAllGames();
-                const epicGames = allGames.filter((g) => g.provider === "epic");
+                const epicGames = await readEpicGames();
                 if (epicGames.length > 0) {
                   loadEpicGamesFromCache(epicGames);
                   if (DEBUG_BOOT) console.log(`[BOOT][EPIC_CACHE] loaded ${epicGames.length} Epic games from SQLite`);

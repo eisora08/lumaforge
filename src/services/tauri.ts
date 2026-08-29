@@ -1599,6 +1599,37 @@ export async function backupDebridGames(): Promise<string> {
   return await invoke<string>("backup_debrid_games");
 }
 
+// --- Epic games SQLite cache (dedicated table, kept isolated from Steam) ---
+
+/** SQLite row shape for an Epic game (dedicated `epic_games` blob table). */
+export type EpicGameEntryJson = {
+  /** Full `epic:<namespace>:<catalogItemId>:<appName>` identifier. */
+  appId: string;
+  title: string;
+  installed?: boolean;
+  playtime?: number;
+  lastPlayed?: number;
+  provider?: string;
+  mediaJson?: string;
+  metadataJson?: string;
+};
+
+/** Read all Epic game entries from the dedicated `epic_games` SQLite blob. */
+export async function readEpicGames(): Promise<EpicGameEntryJson[]> {
+  return await invoke<EpicGameEntryJson[]>("read_epic_games");
+}
+
+/** Atomically write the full Epic games array to the `epic_games` SQLite blob. */
+export async function writeEpicGames(entries: EpicGameEntryJson[]): Promise<void> {
+  return await invoke<void>("write_epic_games", { entries });
+}
+
+/** Create a timestamped backup of the Epic games cache. Returns backup filename. */
+export async function backupEpicGames(): Promise<string> {
+  return await invoke<string>("backup_epic_games");
+}
+
+
 // --- Launcher achievements (meta-achievement system) ---
 
 export type LauncherAchievementUnlockJson = {

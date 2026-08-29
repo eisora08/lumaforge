@@ -9,6 +9,7 @@ use tauri::Manager;
 pub mod achievements;
 pub mod catalog_blobs;
 pub mod debrid_games_cache;
+pub mod epic_games_cache;
 pub mod game_appinfo;
 pub mod games;
 pub mod launcher_achievements_cache;
@@ -410,6 +411,11 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
     // Debrid games cache — singleton blob for debrid game entries (uses SqliteCoreDb)
     if let Err(e) = debrid_games_cache::create_tables(conn) {
         eprintln!("[SqliteCache] debrid_games table init failed (non-fatal): {}", e);
+    }
+
+    // Epic games cache — singleton blob for Epic game entries (uses SqliteCoreDb)
+    if let Err(e) = epic_games_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] epic_games table init failed (non-fatal): {}", e);
     }
 
     // Launcher achievements — singleton blobs for launcher meta-achievement data
