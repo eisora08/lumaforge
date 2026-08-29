@@ -60,14 +60,22 @@ export default function StopGameModal({
       cancelLabel={t("library_details.cancel", "Cancel")}
       onConfirm={handleConfirm}
       onCancel={onClose}
-      secondaryLabel={onMarkStopped ? t("library_details.mark_stopped", "Mark as Stopped") : undefined}
-      onSecondary={onMarkStopped ? handleSecondary : undefined}
+      centerActions={showFindProcess}
+      aboveActions={onMarkStopped ? (
+        <button
+          type="button"
+          onClick={handleSecondary}
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-text) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-text)/30"
+        >
+          {t("library_details.mark_stopped", "Mark as Stopped")}
+        </button>
+      ) : undefined}
       extraActions={showFindProcess ? (
         <button
           type="button"
           onClick={handleFindProcess}
           disabled={findingProcess}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-text) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-text)/30 disabled:opacity-50"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-5 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-text)/30 disabled:opacity-50"
         >
           {findingProcess ? (
             <Loader2 className="h-4 w-4 animate-spin" />

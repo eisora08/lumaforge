@@ -22,6 +22,9 @@ type Props = {
   onTertiary?: () => void;
   tertiaryVariant?: ConfirmVariant;
   extraActions?: React.ReactNode;
+  aboveActions?: React.ReactNode;
+  centerActions?: boolean;
+  compact?: boolean;
 };
 
 const variantConfig: Record<ConfirmVariant, {
@@ -89,8 +92,11 @@ export default function ConfirmModal({
   onTertiary,
   tertiaryVariant,
   extraActions,
+  aboveActions,
+  centerActions = false,
+  compact = false,
 }: Props) {
-  type FocusTarget = "cancel" | "secondary" | "tertiary";
+  type FocusTarget = "cancel" | "confirm" | "secondary" | "tertiary";
   const [focusedButton, setFocusedButton] = useState<FocusTarget>("cancel");
   const focusedButtonRef = useRef<FocusTarget>("cancel");
   const activationLockedRef = useRef(false);
@@ -132,6 +138,7 @@ export default function ConfirmModal({
     setFocusedButton(btn);
     focusedButtonRef.current = btn;
     if (btn === "cancel") cancelRef.current?.focus();
+    else if (btn === "confirm") confirmRef.current?.focus();
     else if (btn === "secondary") secondaryRef.current?.focus();
     else if (btn === "tertiary") tertiaryRef.current?.focus();
   };
@@ -166,13 +173,15 @@ export default function ConfirmModal({
         case "ArrowLeft": {
           const cur = focusedButtonRef.current;
           if (cur === "tertiary" && secondaryRef.current) setFocus("secondary");
-          else if (cur === "secondary" || cur === "tertiary") setFocus("cancel");
+          else if (cur === "secondary" && confirmRef.current) setFocus("confirm");
+          else if ((cur === "confirm" || cur === "secondary" || cur === "tertiary") && cancelRef.current) setFocus("cancel");
           break;
         }
 
         case "ArrowRight": {
           const cur = focusedButtonRef.current;
-          if (cur === "cancel" && secondaryRef.current) setFocus("secondary");
+          if (cur === "cancel" && confirmRef.current) setFocus("confirm");
+          else if (cur === "confirm" && secondaryRef.current) setFocus("secondary");
           else if (cur === "secondary" && tertiaryRef.current) setFocus("tertiary");
           break;
         }
@@ -181,6 +190,7 @@ export default function ConfirmModal({
         case "ArrowDown": {
           const cur = focusedButtonRef.current;
           const targets: FocusTarget[] = ["cancel"];
+          if (confirmRef.current) targets.push("confirm");
           if (secondaryRef.current) targets.push("secondary");
           if (tertiaryRef.current) targets.push("tertiary");
           const idx = targets.indexOf(cur);
@@ -197,6 +207,7 @@ export default function ConfirmModal({
             setTimeout(() => { activationLockedRef.current = false; }, ACTIVATION_LOCK_MS);
             const cur = focusedButtonRef.current;
             if (cur === "cancel") onCancelRef.current();
+            else if (cur === "confirm") confirmRef.current?.click();
             else if (cur === "secondary") secondaryRef.current?.click();
             else if (cur === "tertiary") tertiaryRef.current?.click();
           }
@@ -244,70 +255,66 @@ export default function ConfirmModal({
           {description}
         </p>
 
-        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-          {/* Cancel — always on the left */}
-          <div className="mr-auto">
+        {/* Above-actions row (e.g. "Mark as Stopped" for StopGame) */}
+        {aboveActions && (
+          <div className="mt-6 flex justify-start">
+            {aboveActions}
+          </div>
+        )}
+
+        {/* Main button row — single unified layout */}
+        <div className={`mt-6 flex items-center gap-3 ${centerActions ? "justify-center" : "justify-end"}`}>
+          <button
+            ref={cancelRef}
+            type="button"
+            onClick={onCancel}
+            className={`cursor-pointer rounded-xl ${compact ? "px-4 py-2 text-xs" : "px-5 py-2.5 text-sm"} font-medium transition-all ${
+              focusedButton === "cancel"
+                ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent) ring-3 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/25 scale-105"
+                : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+            }`}
+          >
+            {cancelLabel}
+          </button>
+          {onConfirm && (
             <button
-              ref={cancelRef}
+              ref={confirmRef}
               type="button"
-              onClick={onCancel}
-              className={`cursor-pointer rounded-xl px-4 py-2 text-sm font-medium transition-all ${
-                focusedButton === "cancel"
-                  ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent) ring-3 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/25 scale-105"
-                  : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+              onClick={onConfirm}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${cfg.btnClass} ${
+                focusedButton === "confirm" ? "ring-3 ring-white/40 scale-105" : ""
               }`}
             >
-              {cancelLabel}
+              {confirmLabel}
             </button>
-          </div>
-
-          {/* Secondary + Tertiary — right side */}
-          {(extraActions || (secondaryLabel && onSecondary) || (tertiaryLabel && onTertiary)) && (
-            <div className="flex flex-wrap items-center gap-3">
-              {extraActions}
-              {secondaryLabel && onSecondary && (
-                <button
-                  ref={secondaryRef}
-                  type="button"
-                  onClick={() => { onSecondary(); }}
-                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${secondaryVariant
-                      ? `${variantConfig[secondaryVariant].btnClass} ${focusedButton === "secondary" ? "ring-3 ring-white/40 scale-105" : ""}`
-                      : `border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10 ${focusedButton === "secondary" ? "ring-3 ring-(--color-accent)/60 scale-105" : ""}`
-                    }`}
-                >
-                  {secondaryLabel}
-                </button>
-              )}
-              {tertiaryLabel && onTertiary && (
-                <button
-                  ref={tertiaryRef}
-                  type="button"
-                  onClick={() => { onTertiary(); }}
-                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${tertiaryVariant
-                      ? `${variantConfig[tertiaryVariant].btnClass} ${focusedButton === "tertiary" ? "ring-3 ring-white/40 scale-105" : ""}`
-                      : `border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10 ${focusedButton === "tertiary" ? "ring-3 ring-(--color-accent)/60 scale-105" : ""}`
-                    }`}
-                >
-                  {tertiaryLabel}
-                </button>
-              )}
-            </div>
           )}
-
-          {!extraActions && !(secondaryLabel && onSecondary) && !(tertiaryLabel && onTertiary) && (
-            <div className="flex flex-wrap items-center gap-3">
-              {onConfirm && (
-                <button
-                  ref={confirmRef}
-                  type="button"
-                  onClick={onConfirm}
-                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${cfg.btnClass}`}
-                >
-                  {confirmLabel}
-                </button>
-              )}
-            </div>
+          {secondaryLabel && onSecondary && (
+            <button
+              ref={secondaryRef}
+              type="button"
+              onClick={() => { onSecondary(); }}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl ${compact ? "px-4 py-2 text-xs" : "px-5 py-2.5 text-sm"} font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${secondaryVariant
+                  ? `${variantConfig[secondaryVariant].btnClass} ${focusedButton === "secondary" ? "ring-3 ring-white/40 scale-105" : ""}`
+                  : `border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10 ${focusedButton === "secondary" ? "ring-3 ring-(--color-accent)/60 scale-105" : ""}`
+                }`}
+            >
+              {secondaryLabel}
+            </button>
           )}
+          {tertiaryLabel && onTertiary && (
+            <button
+              ref={tertiaryRef}
+              type="button"
+              onClick={() => { onTertiary(); }}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl ${compact ? "px-4 py-2 text-xs" : "px-5 py-2.5 text-sm"} font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${tertiaryVariant
+                  ? `${variantConfig[tertiaryVariant].btnClass} ${focusedButton === "tertiary" ? "ring-3 ring-white/40 scale-105" : ""}`
+                  : `border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10 ${focusedButton === "tertiary" ? "ring-3 ring-(--color-accent)/60 scale-105" : ""}`
+                }`}
+            >
+              {tertiaryLabel}
+            </button>
+          )}
+          {extraActions}
         </div>
 
         {isConsoleMode() && isGamepadDetected() && (() => {

@@ -535,6 +535,8 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
         exec((w) => w.close(), "close");
       }}
       tertiaryVariant="warning"
+      centerActions
+      compact
     />
     </>
   );
