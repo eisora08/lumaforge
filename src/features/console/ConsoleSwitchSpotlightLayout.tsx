@@ -88,6 +88,7 @@ type Props = {
   allGames?: LibraryGame[];
   onRefreshLibrary?: () => void;
   dockFocusedIndex?: number;
+  onSettingsPanelOpenChange?: (open: boolean) => void;
 };
 
 export default function ConsoleSwitchSpotlightLayout({
@@ -98,6 +99,7 @@ export default function ConsoleSwitchSpotlightLayout({
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
   dockFocusedIndex = -1,
+  onSettingsPanelOpenChange,
 }: Props) {
   const { t } = useTranslation();
   const { favoriteIds } = useFavorites();
@@ -224,7 +226,7 @@ export default function ConsoleSwitchSpotlightLayout({
           layoutMode={layoutMode}
           onToggleLayout={onToggleLayout}
           onNavigate={onNavigate}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => { setSettingsOpen(true); onSettingsPanelOpenChange?.(true); }}
           settings={settings}
           allGames={allGames}
         />
@@ -582,7 +584,7 @@ export default function ConsoleSwitchSpotlightLayout({
       {/* Settings panel */}
       <ConsoleSettingsPanelV2
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => { setSettingsOpen(false); onSettingsPanelOpenChange?.(false); }}
         settings={settings}
         onPatch={onSettingsPatch}
         onNavigate={onNavigate}

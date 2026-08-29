@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "i18next";
 import {
-  X, Shuffle, RefreshCw, Settings, LayoutGrid,
+  Shuffle, RefreshCw, Settings, LayoutGrid,
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
   Wrench, Gamepad2, Film, PlayCircle,
   Maximize, Grid3X3, ChevronRight, ArrowLeft,
@@ -444,7 +444,7 @@ const SETTING_ROWS_LANGUAGE: SettingRowDef[] = [
   {
     id: "appLanguage", type: "segmented", label: "App Language", labelKey: "console_settings.app_language",
     segOptions: LANG_OPTIONS.map(o => ({ value: o.value, labelKey: o.value === "es" ? "Español" : "English" })),
-    getValue: () => "es",
+    getValue: (s) => (s as any).language ?? "es",
     onAction: () => ({}),
   },
 ];
@@ -1651,6 +1651,17 @@ export default function ConsoleSettingsPanelV2({
                 e.preventDefault();
                 if (row.type === "toggle") {
                   onPatch(row.onAction(settings, "enter"));
+                } else if (row.id === "appLanguage") {
+                  // Language: cycle directly, synced with desktop
+                  const current = (settings as any).language ?? "es";
+                  const langs = ["es", "en"] as const;
+                  const idx = langs.indexOf(current as "es" | "en");
+                  const nextLang = e.key === "ArrowLeft"
+                    ? langs[(idx - 1 + langs.length) % langs.length]
+                    : langs[(idx + 1) % langs.length];
+                  i18n.changeLanguage(nextLang);
+                  localStorage.setItem("lumaforge-lang", nextLang);
+                  updateDesktopSetting("language", nextLang);
                 } else if (row.type === "segmented") {
                   const dir = e.key === "ArrowLeft" ? "left" : "right";
                   const oldVal = row.getValue(settings);
@@ -1669,6 +1680,13 @@ export default function ConsoleSettingsPanelV2({
                 if (!row) break;
                 if (row.type === "toggle" || row.type === "button") {
                   onPatch(row.onAction(settings, "enter"));
+                } else if (row.id === "appLanguage") {
+                  // Language: cycle on Enter, synced with desktop
+                  const current = (settings as any).language ?? "es";
+                  const nextLang = current === "es" ? "en" : "es";
+                  i18n.changeLanguage(nextLang);
+                  localStorage.setItem("lumaforge-lang", nextLang);
+                  updateDesktopSetting("language", nextLang);
                 } else if (row.id === "themeMode") {
                   // Console Theme: open Theme Picker subpage
                   if (DEBUG_CONSOLE_SETTINGS) console.log(`[CONSOLE_SETTINGS][FOCUS] page=visuals index=${focusedIndex} id=themeMode action=open-picker`);
@@ -1863,15 +1881,22 @@ export default function ConsoleSettingsPanelV2({
     const titleKey = subPage ? SUBPAGE_TITLES[subPage] ?? "" : "";
     const title = titleKey ? t(titleKey) : "";
     if (rows && title) {
-      // ── Startup sub-page: sync 4 shared fields with Desktop settings ──
+      // ── Startup sub-page: sync shared fields with Desktop settings ──
       const isStartup = subPage === "startup";
+      const isLanguage = subPage === "language";
       const effectiveSettings = isStartup ? {
         ...settings,
+        launchMode: desktopSettings.launchMode as ConsoleSettings["launchMode"],
         autostart: desktopSettings.startWithWindows,
         startMaximized: desktopSettings.startMaximized,
         startInTray: desktopSettings.startInTray,
         closeToTray: desktopSettings.closeToTray,
         windowMode: desktopSettings.startupWindowMode as ConsoleSettings["windowMode"],
+        showDashboard: desktopSettings.showDashboardOnStartup,
+        disableUpdate: desktopSettings.disableAutoUpdates,
+      } : isLanguage ? {
+        ...settings,
+        language: desktopSettings.language ?? "es",
       } : settings;
 
       const effectiveOnPatch = isStartup
@@ -1891,6 +1916,10 @@ export default function ConsoleSettingsPanelV2({
               const mapped = p.launchMode === "last-used" ? "desktop" : p.launchMode;
               updateDesktopSetting("launchMode", mapped as "desktop" | "console");
             }
+            // showDashboard (Console) → showDashboardOnStartup (Desktop)
+            if (p.showDashboard !== undefined) updateDesktopSetting("showDashboardOnStartup", p.showDashboard);
+            // disableUpdate (Console) → disableAutoUpdates (Desktop)
+            if (p.disableUpdate !== undefined) updateDesktopSetting("disableAutoUpdates", p.disableUpdate);
           }
         : onPatch;
 
@@ -2045,15 +2074,6 @@ export default function ConsoleSettingsPanelV2({
         }}
         onKeyDown={handleGlobalKeyDown}
       >
-        {/* Close button — top-right of drawer */}
-        <button
-          onClick={handleClose}
-          className="absolute top-4 right-4 z-10 flex h-9 w-9 items-center justify-center rounded-xl bg-black/30 text-(--color-muted) backdrop-blur-sm transition hover:bg-black/50 hover:text-(--color-text)"
-          aria-label="Close settings"
-        >
-          <X className="h-4 w-4" />
-        </button>
-
         {/* Profile banner header — outer container is NOT overflow-hidden so avatar is never clipped */}
         <div className="relative shrink-0">
           {/* Banner media — only this inner div clips the image/gradient */}

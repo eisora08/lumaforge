@@ -49,6 +49,7 @@ type Props = {
   allGames?: LibraryGame[];
   onRefreshLibrary?: () => void;
   dockFocusedIndex?: number;
+  onSettingsPanelOpenChange?: (open: boolean) => void;
 };
 
 
@@ -61,6 +62,7 @@ export default function ConsoleGridLayout({
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
   dockFocusedIndex: _dockFocusedIndex,
+  onSettingsPanelOpenChange,
 }: Props) {
   const { t } = useTranslation();
   const { favoriteIds } = useFavorites();
@@ -318,7 +320,7 @@ export default function ConsoleGridLayout({
         layoutMode={layoutMode}
         onToggleLayout={onToggleLayout}
         onNavigate={onNavigate}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => { setSettingsOpen(true); onSettingsPanelOpenChange?.(true); }}
         settings={settings}
         allGames={allGames}
       />
@@ -648,7 +650,7 @@ export default function ConsoleGridLayout({
       {/* Settings panel v2 */}
       <ConsoleSettingsPanelV2
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => { setSettingsOpen(false); onSettingsPanelOpenChange?.(false); }}
         settings={settings}
         onPatch={onSettingsPatch}
         onNavigate={onNavigate}

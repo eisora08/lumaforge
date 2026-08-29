@@ -69,6 +69,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
   const [runningOverlay, setRunningOverlay] = useState<{
     game: LibraryGame;
     returnTo: "grid" | "spotlight";
@@ -345,6 +346,13 @@ export default function ConsoleModePage({ onNavigate }: Props) {
         }
         return;
       }
+      if (settingsPanelOpen) {
+        // Layout-opened settings panel owns ALL input while open.
+        if (DEBUG_CONSOLE_MODE) {
+          console.log(`[CONSOLE_INPUT][IGNORED_BECAUSE_SETTINGS_PANEL] key=${e.key}`);
+        }
+        return;
+      }
       // Ignore Alt — can be synthesized by browser/OS from unmapped controller buttons (e.g. BACK/Guide)
       if (e.key === "Alt" || e.key === "Meta") {
         if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_GAMEPAD][IGNORED] key=${e.key} — browser/OS synthetic`);
@@ -498,10 +506,10 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [moveUp, moveDown, moveLeft, moveRight, pageLeft, pageRight, tabForward, tabBackward, selectFocused, goBack, focusRail, detailGame, closeDetails, optionsGame, handleOptionsGame, searchOpen, handleConsolePlay, profileOpen]);
+  }, [moveUp, moveDown, moveLeft, moveRight, pageLeft, pageRight, tabForward, tabBackward, selectFocused, goBack, focusRail, detailGame, closeDetails, optionsGame, handleOptionsGame, searchOpen, handleConsolePlay, profileOpen, settingsPanelOpen]);
 
   /* ── Gamepad input: enabled when no overlay blocks navigation ── */
-  const gamepadEnabled = !searchOpen && !detailGame && !optionsGame && !profileOpen;
+  const gamepadEnabled = !searchOpen && !detailGame && !optionsGame && !profileOpen && !settingsPanelOpen;
   useConsoleGamepadInput(gamepadEnabled);
 
   /* ── Mouse cursor: hide on gamepad action, show on mousemove ── */
@@ -757,6 +765,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     onSettingsPatch: patchConsoleSettings,
     allGames: enrichedGames,
     dockFocusedIndex,
+    onSettingsPanelOpenChange: setSettingsPanelOpen,
   }), [enrichedFocusedGame, enrichedSettledGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, dockFocusedIndex]);
 
   const layout = consoleSettings.layoutMode === "spotlight"
