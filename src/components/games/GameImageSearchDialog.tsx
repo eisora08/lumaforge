@@ -246,8 +246,6 @@ export default function GameImageSearchDialog({
         const relativePath = await downloadProviderMediaFromUrl("steam", appId, role, url, true);
         if (relativePath) {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath}`);
-          invalidateResolvedMediaCache(appId);
-          clearSessionAppInfoCache(appId);
           try {
             const currentInfo = await getGameAppInfo(appId);
             const mediaKey = `${role}Path` as keyof GameMediaPaths;
@@ -263,6 +261,9 @@ export default function GameImageSearchDialog({
           } catch (e) {
             if (DEBUG_MEDIA_EDIT) console.log(`[WEB_IMAGE_SEARCH][APPINFO_WRITE_FAIL] error=${e}`);
           }
+          // Invalidate caches AFTER the appinfo write persists so re-resolving
+          // tiles read the freshly-written cover path (fixes first-download null).
+          invalidateResolvedMediaCache(appId);
           notifyMediaUpdated(appId, { source: `image-search-${source}` });
           showSuccess(`${role} downloaded`);
           onMediaUpdated?.();
