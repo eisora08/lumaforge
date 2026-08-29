@@ -2724,5 +2724,12 @@
     "downloading": "Descargando...",
     "select_download": "Seleccionar y descargar",
     "apply_url": "Aplicar URL"
+  },
+  "close_confirm": {
+    "title": "Cerrar LumaForge",
+    "description": "Podés cerrar la app, minimizar a la bandeja del sistema para mantenerla en segundo plano, o cancelar para mantenerla abierta.",
+    "cancel": "Cancelar",
+    "close": "Cerrar",
+    "minimize": "Minimizar a la bandeja"
   }
 }

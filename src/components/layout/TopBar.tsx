@@ -4,6 +4,7 @@ import { Bell, ChevronLeft, ChevronRight, Download, Minus, Monitor, Square, X } 
 import type { AppPage } from "../../types/navigation";
 import { useSearch } from "../../context/SearchContext";
 import { useGameDetails } from "../../context/GameDetailsContext";
+import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 import { subscribeHistory, getHistorySnapshot, goBack as historyGoBack, goForward as historyGoForward } from "../../services/navigationHistory";
 
@@ -12,6 +13,7 @@ import type { StoreSearchDropdownItem } from "../packages/PackagesToolbar";
 import PackageUpdatePanel from "../notifications/PackageUpdatePanel";
 import DownloadsModal from "../downloads/DownloadsModal";
 import AppUpdateIcon from "../updates/AppUpdateIcon";
+import ConfirmModal from "../common/ConfirmModal";
 
 const DEBUG_WINDOW_CONTROLS = false;
 
@@ -38,10 +40,12 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
   const { t } = useTranslation();
   const { setQuery } = useSearch();
   const { selectGame } = useGameDetails();
+  const { settings } = useSettings();
   const showSearch = true;
   const [luaUpdateCount, setLuaUpdateCount] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const bellButtonRef = useRef<HTMLButtonElement>(null);
   const { jobs } = useDownloadQueue();
 
@@ -224,7 +228,13 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
 
   const handleMinimize = useCallback(() => exec((w) => w.minimize(), "minimize"), [exec]);
   const handleToggleMaximize = useCallback(() => exec((w) => w.toggleMaximize(), "toggleMaximize"), [exec]);
-  const handleClose = useCallback(() => exec((w) => w.close(), "close"), [exec]);
+  const handleClose = useCallback(() => {
+    if (settings.closeToTray) {
+      setShowCloseConfirm(true);
+    } else {
+      exec((w) => w.close(), "close");
+    }
+  }, [exec, settings.closeToTray]);
   const handleDoubleClick = useCallback(() => exec((w) => w.toggleMaximize(), "doubleClickToggle"), [exec]);
 
   useEffect(() => {
@@ -502,6 +512,29 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
       open={downloadsOpen}
       onClose={() => setDownloadsOpen(false)}
       onNavigate={onNavigate}
+    />
+
+    <ConfirmModal
+      open={showCloseConfirm}
+      title={t("close_confirm.title")}
+      description={t("close_confirm.description")}
+      variant="warning"
+      cancelLabel={t("close_confirm.cancel")}
+      onCancel={() => setShowCloseConfirm(false)}
+      secondaryLabel={t("close_confirm.close")}
+      onSecondary={() => {
+        setShowCloseConfirm(false);
+        import("@tauri-apps/api/event").then(({ emit }) => {
+          emit("lumaforge-quit");
+        }).catch(() => {});
+      }}
+      secondaryVariant="danger"
+      tertiaryLabel={t("close_confirm.minimize")}
+      onTertiary={() => {
+        setShowCloseConfirm(false);
+        exec((w) => w.close(), "close");
+      }}
+      tertiaryVariant="warning"
     />
     </>
   );

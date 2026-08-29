@@ -13,7 +13,7 @@ type Props = {
   cancelLabel?: string;
   variant?: ConfirmVariant;
   icon?: React.ReactNode;
-  onConfirm: () => void;
+  onConfirm?: () => void;
   onCancel: () => void;
   secondaryLabel?: string;
   onSecondary?: () => void;
@@ -90,14 +90,17 @@ export default function ConfirmModal({
   tertiaryVariant,
   extraActions,
 }: Props) {
-  const [focusedButton, setFocusedButton] = useState<"cancel" | "confirm">("cancel");
-  const focusedButtonRef = useRef<"cancel" | "confirm">("cancel");
+  type FocusTarget = "cancel" | "secondary" | "tertiary";
+  const [focusedButton, setFocusedButton] = useState<FocusTarget>("cancel");
+  const focusedButtonRef = useRef<FocusTarget>("cancel");
   const activationLockedRef = useRef(false);
   const openTimeRef = useRef(0);
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const secondaryRef = useRef<HTMLButtonElement>(null);
+  const tertiaryRef = useRef<HTMLButtonElement>(null);
 
   const onCancelRef = useRef(onCancel);
   const onConfirmRef = useRef(onConfirm);
@@ -125,11 +128,12 @@ export default function ConfirmModal({
   }, [open]);
 
   /* ── Helper: sync state + ref + DOM focus ── */
-  const setFocus = (btn: "cancel" | "confirm") => {
+  const setFocus = (btn: FocusTarget) => {
     setFocusedButton(btn);
     focusedButtonRef.current = btn;
     if (btn === "cancel") cancelRef.current?.focus();
-    else confirmRef.current?.focus();
+    else if (btn === "secondary") secondaryRef.current?.focus();
+    else if (btn === "tertiary") tertiaryRef.current?.focus();
   };
 
   /* ── Keydown: ownership + navigation + activation ── */
@@ -159,25 +163,42 @@ export default function ConfirmModal({
           onCancelRef.current();
           break;
 
-        case "ArrowLeft":
-          setFocus("cancel");
+        case "ArrowLeft": {
+          const cur = focusedButtonRef.current;
+          if (cur === "tertiary" && secondaryRef.current) setFocus("secondary");
+          else if (cur === "secondary" || cur === "tertiary") setFocus("cancel");
           break;
+        }
 
-        case "ArrowRight":
-          setFocus("confirm");
+        case "ArrowRight": {
+          const cur = focusedButtonRef.current;
+          if (cur === "cancel" && secondaryRef.current) setFocus("secondary");
+          else if (cur === "secondary" && tertiaryRef.current) setFocus("tertiary");
           break;
+        }
 
         case "ArrowUp":
-        case "ArrowDown":
-          setFocus(focusedButtonRef.current === "cancel" ? "confirm" : "cancel");
+        case "ArrowDown": {
+          const cur = focusedButtonRef.current;
+          const targets: FocusTarget[] = ["cancel"];
+          if (secondaryRef.current) targets.push("secondary");
+          if (tertiaryRef.current) targets.push("tertiary");
+          const idx = targets.indexOf(cur);
+          const next = e.key === "ArrowDown"
+            ? targets[(idx + 1) % targets.length]
+            : targets[(idx - 1 + targets.length) % targets.length];
+          setFocus(next);
           break;
+        }
 
         default:
           if (isActivationKey) {
             activationLockedRef.current = true;
             setTimeout(() => { activationLockedRef.current = false; }, ACTIVATION_LOCK_MS);
-            if (focusedButtonRef.current === "cancel") onCancelRef.current();
-            else onConfirmRef.current();
+            const cur = focusedButtonRef.current;
+            if (cur === "cancel") onCancelRef.current();
+            else if (cur === "secondary") secondaryRef.current?.click();
+            else if (cur === "tertiary") tertiaryRef.current?.click();
           }
           break;
       }
@@ -224,16 +245,34 @@ export default function ConfirmModal({
         </p>
 
         <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+          {/* Cancel — always on the left */}
+          <div className="mr-auto">
+            <button
+              ref={cancelRef}
+              type="button"
+              onClick={onCancel}
+              className={`cursor-pointer rounded-xl px-4 py-2 text-sm font-medium transition-all ${
+                focusedButton === "cancel"
+                  ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent) ring-3 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/25 scale-105"
+                  : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+              }`}
+            >
+              {cancelLabel}
+            </button>
+          </div>
+
+          {/* Secondary + Tertiary — right side */}
           {(extraActions || (secondaryLabel && onSecondary) || (tertiaryLabel && onTertiary)) && (
-            <div className="flex flex-wrap items-center gap-3 mr-auto">
+            <div className="flex flex-wrap items-center gap-3">
               {extraActions}
               {secondaryLabel && onSecondary && (
                 <button
+                  ref={secondaryRef}
                   type="button"
                   onClick={() => { onSecondary(); }}
                   className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${secondaryVariant
-                      ? variantConfig[secondaryVariant].btnClass
-                      : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+                      ? `${variantConfig[secondaryVariant].btnClass} ${focusedButton === "secondary" ? "ring-3 ring-white/40 scale-105" : ""}`
+                      : `border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10 ${focusedButton === "secondary" ? "ring-3 ring-(--color-accent)/60 scale-105" : ""}`
                     }`}
                 >
                   {secondaryLabel}
@@ -241,11 +280,12 @@ export default function ConfirmModal({
               )}
               {tertiaryLabel && onTertiary && (
                 <button
+                  ref={tertiaryRef}
                   type="button"
                   onClick={() => { onTertiary(); }}
                   className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${tertiaryVariant
-                      ? variantConfig[tertiaryVariant].btnClass
-                      : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+                      ? `${variantConfig[tertiaryVariant].btnClass} ${focusedButton === "tertiary" ? "ring-3 ring-white/40 scale-105" : ""}`
+                      : `border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10 ${focusedButton === "tertiary" ? "ring-3 ring-(--color-accent)/60 scale-105" : ""}`
                     }`}
                 >
                   {tertiaryLabel}
@@ -254,31 +294,20 @@ export default function ConfirmModal({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              ref={cancelRef}
-              type="button"
-              onClick={onCancel}
-              className={`cursor-pointer rounded-xl border px-5 py-2.5 text-sm font-medium transition-all ${
-                focusedButton === "cancel"
-                  ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent) ring-3 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/25 scale-105"
-                  : "border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
-              }`}
-            >
-              {cancelLabel}
-            </button>
-
-            <button
-              ref={confirmRef}
-              type="button"
-              onClick={onConfirm}
-              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${
-                focusedButton === "confirm" ? cfg.focusedBtnClass : cfg.btnClass
-              }`}
-            >
-              {confirmLabel}
-            </button>
-          </div>
+          {!extraActions && !(secondaryLabel && onSecondary) && !(tertiaryLabel && onTertiary) && (
+            <div className="flex flex-wrap items-center gap-3">
+              {onConfirm && (
+                <button
+                  ref={confirmRef}
+                  type="button"
+                  onClick={onConfirm}
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${cfg.btnClass}`}
+                >
+                  {confirmLabel}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {isConsoleMode() && isGamepadDetected() && (() => {

@@ -58,7 +58,7 @@ export const defaultSettings: AppSettings = {
   achievementOverlayNotificationsEnabled: true,
   launcherAchievementOverlayEnabled: true,
   gameSessionOverlayEnabled: true,
-  gameSessionHudEnabled: true,
+  gameSessionHudEnabled: false,
   overlayNotificationPosition: "top-center",
   achievementAutoSyncEnabled: true,
   achievementAutoSyncIntervalSeconds: 10,
@@ -104,7 +104,7 @@ export const defaultSettings: AppSettings = {
   startWithWindows: false,
   startMaximized: false,
   startInTray: false,
-  closeToTray: false,
+  closeToTray: true,
   showDashboardOnStartup: true,
   disableAutoUpdates: false,
 

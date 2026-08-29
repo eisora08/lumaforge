@@ -64,11 +64,17 @@ const KNOWN_PAGES: Set<AppPage> = new Set([
 
 function restoreActivePage(): AppPage {
   try {
+    const raw = localStorage.getItem("lumaforge-settings");
+    if (raw) {
+      const settings = JSON.parse(raw);
+      if (settings.showDashboardOnStartup === true) {
+        return "home";
+      }
+    }
+  } catch { /* ignore */ }
+  try {
     const stored = localStorage.getItem(ACTIVE_PAGE_KEY);
     if (stored && KNOWN_PAGES.has(stored as AppPage)) {
-      // Store handles its own partial cache gracefully via allStoreSections fallback.
-      // No longer redirect Store → Home on incomplete cache — let Store render
-      // with whatever cached data is available (partial sections, ranked catalog, etc.).
       return stored as AppPage;
     }
   } catch { /* ignore */ }
@@ -311,6 +317,10 @@ function App() {
       initialRender.current = false;
       return;
     }
+    // Scroll to top on page change
+    requestAnimationFrame(() => {
+      document.querySelector("main")?.scrollTo({ top: 0, behavior: "instant" });
+    });
     try {
       localStorage.setItem(ACTIVE_PAGE_KEY, activePage);
     } catch { /* ignore */ }

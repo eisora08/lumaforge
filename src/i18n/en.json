@@ -2724,5 +2724,12 @@
     "downloading": "Downloading...",
     "select_download": "Select & Download",
     "apply_url": "Apply URL"
+  },
+  "close_confirm": {
+    "title": "Close LumaForge",
+    "description": "You can close the app, minimize to the system tray to keep it running in the background, or cancel to stay open.",
+    "cancel": "Cancel",
+    "close": "Close",
+    "minimize": "Minimize to Tray"
   }
 }

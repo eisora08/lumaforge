@@ -244,6 +244,14 @@ pub fn run() {
                         }
                     });
                 }
+
+                // Listen for frontend quit request (from close confirmation modal)
+                {
+                    let handle = app.handle().clone();
+                    app.listen("lumaforge-quit", move |_| {
+                        handle.exit(0);
+                    });
+                }
             }
 
             // ── Listen for mode changes → rebuild tray menu with correct label ──
