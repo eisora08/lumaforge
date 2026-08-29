@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import {
   FolderOpen,
   RefreshCw,
@@ -41,6 +42,7 @@ function toolIcon(id: string): React.ReactNode {
 }
 
 export default function ThirdPartyToolsSection() {
+  const { t } = useTranslation();
   const { settings } = useSettings();
   const [tools, setTools] = useState<ThirdPartyToolInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -54,7 +56,7 @@ export default function ThirdPartyToolsSection() {
       const result = await listThirdPartyTools();
       setTools(result);
     } catch (err) {
-      showError(`No se pudieron cargar las herramientas: ${err instanceof Error ? err.message : String(err)}`);
+      showError(t("tools_section.error_load", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setLoading(false);
     }
@@ -70,10 +72,10 @@ export default function ThirdPartyToolsSection() {
     try {
       const steamRoot = settings.steamRoot || undefined;
       const res = await installThirdPartyTool(toolId, steamRoot);
-      if (res.ok) showSuccess(res.message || "Instalada correctamente.");
-      else showError(res.message || "Falló la instalación.");
+      if (res.ok) showSuccess(res.message || t("tools_section.install_ok"));
+      else showError(res.message || t("tools_section.install_fail"));
     } catch (err) {
-      showError(`Error al instalar: ${err instanceof Error ? err.message : String(err)}`);
+      showError(t("tools_section.error_install", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setWorkingId(null);
       load();
@@ -86,10 +88,10 @@ export default function ThirdPartyToolsSection() {
     try {
       const steamRoot = settings.steamRoot || undefined;
       const res = await uninstallThirdPartyTool(toolId, steamRoot);
-      if (res.ok) showSuccess(res.message || "Desinstalada correctamente.");
-      else showError(res.message || "Falló la desinstalación.");
+      if (res.ok) showSuccess(res.message || t("tools_section.uninstall_ok"));
+      else showError(res.message || t("tools_section.uninstall_fail"));
     } catch (err) {
-      showError(`Error al desinstalar: ${err instanceof Error ? err.message : String(err)}`);
+      showError(t("tools_section.error_uninstall", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setWorkingId(null);
       load();
@@ -102,10 +104,10 @@ export default function ThirdPartyToolsSection() {
     try {
       const steamRoot = settings.steamRoot || undefined;
       const res = await setThirdPartyToolEnabled(toolId, !currentEnabled, steamRoot);
-      if (res.ok) showSuccess(res.message || "Estado actualizado.");
-      else showError(res.message || "Error al cambiar estado.");
+      if (res.ok) showSuccess(res.message || t("tools_section.toggle_ok"));
+      else showError(res.message || t("tools_section.toggle_fail"));
     } catch (err) {
-      showError(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      showError(t("tools_section.error_toggle", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setWorkingId(null);
       load();
@@ -119,7 +121,7 @@ export default function ThirdPartyToolsSection() {
       setTools(result);
       const outdated = result.filter((t) => t.updateAvailable);
       if (outdated.length === 0) {
-        showSuccess("Todas las herramientas están actualizadas.");
+        showSuccess(t("tools_section.all_updated"));
         return;
       }
       let updated = 0;
@@ -130,9 +132,9 @@ export default function ThirdPartyToolsSection() {
         const res = await updateThirdPartyTool(t.id, steamRoot);
         if (res.ok) updated++;
       }
-      showSuccess(`${updated} de ${outdated.length} herramienta(s) actualizada(s).`);
+      showSuccess(t("tools_section.updated_count", { updated, total: outdated.length }));
     } catch (err) {
-      showError(`Error al comprobar actualizaciones: ${err instanceof Error ? err.message : String(err)}`);
+      showError(t("tools_section.error_updates", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setWorkingId(null);
       setCheckingUpdates(false);
@@ -144,7 +146,7 @@ export default function ThirdPartyToolsSection() {
     try {
       await openThirdPartyFolder();
     } catch (err) {
-      showError(`No se pudo abrir la carpeta: ${err instanceof Error ? err.message : String(err)}`);
+      showError(t("tools_section.error_open_folder", { error: err instanceof Error ? err.message : String(err) }));
     }
   }, []);
 
@@ -157,10 +159,10 @@ export default function ThirdPartyToolsSection() {
         <div>
           <h3 className="flex items-center gap-2 text-sm font-semibold text-(--color-text)">
             <HardDrive className="h-4 w-4 text-(--color-accent)" />
-            Herramientas de terceros
+            {t("tools_section.title")}
           </h3>
           <p className="mt-1 text-xs text-(--color-muted)">
-            Utilidades para juegos (SmokeAPI, Steamless, Goldberg, OpenSteamTool). Se descargan desde sus repositorios oficiales de GitHub.
+            {t("tools_section.desc")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -170,7 +172,7 @@ export default function ThirdPartyToolsSection() {
             className="flex items-center gap-1.5 rounded-lg border border-(--surface-active-border) px-3 py-1.5 text-xs font-medium text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
           >
             <FolderOpen className="h-3.5 w-3.5" />
-            Abrir carpeta
+            {t("tools_section.open_folder")}
           </button>
           <button
             type="button"
@@ -183,7 +185,7 @@ export default function ThirdPartyToolsSection() {
             ) : (
               <RefreshCw className="h-3.5 w-3.5" />
             )}
-            Comprobar actualizaciones
+            {t("tools_section.check_updates")}
           </button>
         </div>
       </div>
@@ -193,13 +195,13 @@ export default function ThirdPartyToolsSection() {
         {loading && tools.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-(--color-muted)">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Cargando herramientas...
+            {t("tools_section.loading")}
           </div>
         ) : tools.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
             <HardDrive className="h-8 w-8 text-(--color-muted)" />
             <p className="text-sm text-(--color-muted)">
-              No hay herramientas registradas. Comprueba las actualizaciones o abre la carpeta.
+              {t("tools_section.empty")}
             </p>
           </div>
         ) : (
@@ -221,20 +223,22 @@ export default function ThirdPartyToolsSection() {
                     {tool.installed && (
                       <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
                         <CheckCircle2 className="h-3 w-3" />
-                        {tool.installedVersion ? `v${tool.installedVersion}` : "Instalada"}
+                        {tool.installedVersion ? `v${tool.installedVersion}` : t("tools_section.installed")}
                       </span>
                     )}
                     {tool.updateAvailable && (
                       <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
                         <AlertTriangle className="h-3 w-3" />
-                        Actualización {tool.latestVersion ? `v${tool.latestVersion}` : "disponible"}
+                        {tool.latestVersion
+                          ? t("tools_section.update_available", { version: `v${tool.latestVersion}` })
+                          : t("tools_section.update_available", { version: "" })}
                       </span>
                     )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs text-(--color-muted)">{tool.description}</p>
                   {!tool.installed && tool.latestVersion && (
                     <p className="mt-0.5 text-[11px] text-(--color-muted)">
-                      Última versión: v{tool.latestVersion}
+                      {t("tools_section.latest_version", { version: tool.latestVersion })}
                     </p>
                   )}
                 </div>
@@ -270,8 +274,8 @@ export default function ThirdPartyToolsSection() {
                             setWorkingAction("update");
                             const steamRoot = settings.steamRoot || undefined;
                             updateThirdPartyTool(tool.id, steamRoot).then((res) => {
-                              if (res.ok) showSuccess(res.message || "Actualizada.");
-                              else showError(res.message || "Falló la actualización.");
+                              if (res.ok) showSuccess(res.message || t("tools_section.update_ok"));
+                              else showError(res.message || t("tools_section.update_fail"));
                             }).catch((err) =>
                               showError(err instanceof Error ? err.message : String(err))
                             ).finally(() => {
@@ -286,7 +290,7 @@ export default function ThirdPartyToolsSection() {
                           ) : (
                             <RefreshCw className="h-3.5 w-3.5" />
                           )}
-                          Actualizar
+                          {t("tools_section.update")}
                         </button>
                       )}
                       <button
@@ -300,7 +304,7 @@ export default function ThirdPartyToolsSection() {
                         ) : (
                           <X className="h-3.5 w-3.5" />
                         )}
-                        Desinstalar
+                        {t("tools_section.uninstall")}
                       </button>
                     </>
                   ) : tool.installed ? (
@@ -314,8 +318,8 @@ export default function ThirdPartyToolsSection() {
                             setWorkingAction("update");
                             const steamRoot = settings.steamRoot || undefined;
                             updateThirdPartyTool(tool.id, steamRoot).then((res) => {
-                              if (res.ok) showSuccess(res.message || "Actualizada.");
-                              else showError(res.message || "Falló la actualización.");
+                              if (res.ok) showSuccess(res.message || t("tools_section.update_ok"));
+                              else showError(res.message || t("tools_section.update_fail"));
                             }).catch((err) =>
                               showError(err instanceof Error ? err.message : String(err))
                             ).finally(() => {
@@ -330,7 +334,7 @@ export default function ThirdPartyToolsSection() {
                           ) : (
                             <RefreshCw className="h-3.5 w-3.5" />
                           )}
-                          Actualizar
+                          {t("tools_section.update")}
                         </button>
                       )}
                       <button
@@ -344,7 +348,7 @@ export default function ThirdPartyToolsSection() {
                         ) : (
                           <X className="h-3.5 w-3.5" />
                         )}
-                        Desinstalar
+                        {t("tools_section.uninstall")}
                       </button>
                     </>
                   ) : (
@@ -359,7 +363,7 @@ export default function ThirdPartyToolsSection() {
                       ) : (
                         <HardDrive className="h-3.5 w-3.5" />
                       )}
-                      Instalar
+                      {t("tools_section.install")}
                     </button>
                   )}
                 </div>

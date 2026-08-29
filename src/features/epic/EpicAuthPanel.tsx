@@ -129,7 +129,7 @@ export function EpicAuthPanel() {
     return (
       <div className="rounded-lg border border-slate-700 bg-slate-800/30 p-4">
         <p className="text-sm text-slate-400">
-          {t("epic.auth_disabled", "La autenticación de Epic Games no está habilitada.")}
+          {t("epic.auth_disabled")}
         </p>
       </div>
     );
@@ -148,7 +148,7 @@ export function EpicAuthPanel() {
             </div>
             <div>
               <p className="text-sm font-medium text-emerald-300">
-                {t("epic.connected", "Conectado como")}
+                {t("epic.connected")}
               </p>
               <p className="text-xs text-slate-400">
                 {accountInfo.displayName || accountInfo.id}
@@ -160,7 +160,7 @@ export function EpicAuthPanel() {
             disabled={isLoading}
             className="rounded-md px-3 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-slate-700/50 hover:text-slate-200 disabled:opacity-50"
           >
-            {t("epic.disconnect", "Desconectar")}
+            {t("epic.disconnect")}
           </button>
         </div>
         {error && (
@@ -177,7 +177,7 @@ export function EpicAuthPanel() {
         <div className="flex items-center gap-3">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
           <p className="text-sm text-cyan-300">
-            {t("epic.auth_window_open", "Se abrió la ventana de login de Epic. Completá el login y se conectará automáticamente.")}
+            {t("epic.auth_window_open")}
           </p>
         </div>
         {error && (
@@ -191,7 +191,7 @@ export function EpicAuthPanel() {
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-800/30 p-4">
       <p className="mb-3 text-sm text-slate-400">
-        {t("epic.connect_description", "Conecta tu cuenta de Epic Games para importar tu librería completa.")}
+        {t("epic.connect_description")}
       </p>
       <button
         onClick={handleConnect}
@@ -199,8 +199,8 @@ export function EpicAuthPanel() {
         className="rounded-md bg-[#2a2a2a] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#3a3a3a] disabled:opacity-50"
       >
         {isLoading
-          ? t("epic.connecting", "Conectando...")
-          : t("epic.connect_button", "Conectar Cuenta")}
+          ? t("epic.connecting")
+          : t("epic.connect_button")}
       </button>
       {error && (
         <p className="mt-2 text-xs text-red-400">{error}</p>

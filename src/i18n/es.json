@@ -159,6 +159,8 @@
     "temp_use_system": "Usar carpeta temporal del sistema",
     "steam_account": "Cuenta de Steam",
     "steam_account_desc": "Credenciales de cuenta para achievement tracking e integraciones.",
+    "epic_account": "Cuenta de Epic Games",
+    "epic_account_desc": "Conecta tu cuenta de Epic Games para importar tu librería.",
     "enable_achievements": "Activar seguimiento de logros de Steam",
     "achievements_desc": "Usa Steam Web API para cargar progreso de logros, badges y rareza. Requiere API Key y SteamID64.",
     "achievements_warning": "Completa la API Key de Steam Web y SteamID64 para activar el seguimiento.",
@@ -856,6 +858,15 @@
     "standalone_deactivated": "{{title}} — Modo standalone desactivado",
     "online_fix_desc_detail": "Online Fix genérico (Steam Lobby Spoof) — Habilita multijugador en juegos que usan el sistema de lobbies nativo de Steam mediante el parámetro de lanzamiento {{param}}.",
     "online_fix_note_detail": "No todos los juegos son compatibles. Solo funciona en títulos que usan la API de matchmaking integrada de Steam. Juegos con servidores dedicados personalizados o sistemas online propietarios no funcionarán."
+  },
+  "epic": {
+    "auth_disabled": "La autenticación de Epic Games no está habilitada.",
+    "connected": "Conectado como",
+    "disconnect": "Desconectar",
+    "auth_window_open": "Se abrió la ventana de login de Epic. Completá el login y se conectará automáticamente.",
+    "connect_description": "Conecta tu cuenta de Epic Games para importar tu librería completa.",
+    "connecting": "Conectando...",
+    "connect_button": "Conectar Cuenta"
   },
   "library_details": {
     "disabled": "Desactivado",

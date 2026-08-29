@@ -159,6 +159,8 @@
     "temp_use_system": "Use system temp folder",
     "steam_account": "Steam Account",
     "steam_account_desc": "Account credentials for achievement tracking and integrations.",
+    "epic_account": "Epic Games Account",
+    "epic_account_desc": "Connect your Epic Games account to import your library.",
     "enable_achievements": "Enable Steam Achievements Tracking",
     "achievements_desc": "Use Steam Web API to load achievement progress, badges and rarity. Requires API Key and SteamID64.",
     "achievements_warning": "Fill in Steam Web API Key and SteamID64 below to enable achievement tracking.",
@@ -856,6 +858,15 @@
     "standalone_deactivated": "{{title}} — Standalone mode deactivated",
     "online_fix_desc_detail": "Generic Online Fix (Steam Lobby Spoof) — Enables multiplayer in games that use the native Steam lobby system via the {{param}} launch parameter.",
     "online_fix_note_detail": "Not all games are compatible. This only works on titles relying on Steam's built-in matchmaking API. Games with custom dedicated servers or proprietary online systems will not work."
+  },
+  "epic": {
+    "auth_disabled": "Epic Games authentication is not enabled.",
+    "connected": "Connected as",
+    "disconnect": "Disconnect",
+    "auth_window_open": "The Epic login window opened. Complete the login and it will connect automatically.",
+    "connect_description": "Connect your Epic Games account to import your full library.",
+    "connecting": "Connecting...",
+    "connect_button": "Connect Account"
   },
   "library_details": {
     "disabled": "Disabled",
