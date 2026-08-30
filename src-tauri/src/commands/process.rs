@@ -306,11 +306,12 @@ pub fn launch_executable(
 /// Run `taskkill` with an elevated (UAC) fallback on Windows.
 ///
 /// Plain `taskkill` cannot terminate a process that was launched elevated via
-/// `Start-Process -Verb RunAs` (the Debrid launch path) — Windows returns
-/// "Access is denied". When the plain kill fails we retry once elevated via
-/// PowerShell `Start-Process -Verb RunAs`, capturing the elevated exit code
-/// with `-PassThru`. The UAC prompt is blocking and user-initiated (Stop),
-/// so the fallback only appears for genuinely elevated targets.
+/// `ShellExecuteW` with verb `runas` (the Debrid/Manual launch path) — Windows
+/// returns "Access is denied". When the plain kill fails we retry once elevated
+/// via `ShellExecuteExW` with verb `runas`, which triggers UAC directly without
+/// an intermediate PowerShell process.  The UAC prompt is blocking and
+/// user-initiated (Stop), so the fallback only appears for genuinely elevated
+/// targets.
 #[cfg(target_os = "windows")]
 fn kill_via_taskkill(args: Vec<String>) -> Result<(), String> {
   let plain = hide_window(Command::new("taskkill").args(&args))
@@ -330,39 +331,67 @@ fn kill_via_taskkill(args: Vec<String>) -> Result<(), String> {
     stderr.trim()
   );
 
-  let arg_list = args
-    .iter()
-    .map(|a| format!("'{}'", a.replace('\'', "''")))
-    .collect::<Vec<_>>()
-    .join(",");
-  let ps_command = format!(
-    "Start-Process taskkill -Verb RunAs -Wait -PassThru -ArgumentList {} | Select-Object -ExpandProperty ExitCode",
-    arg_list
-  );
-  let ps_command_ref: &str = &ps_command;
-  let output = hide_window(Command::new("powershell").args([
-    "-NoProfile",
-    "-WindowStyle",
-    "Hidden",
-    "-Command",
-    ps_command_ref,
-  ]))
-    .output()
-    .map_err(|e| format!("Failed to execute elevated taskkill: {}", e))?;
+  // ── Elevated fallback: ShellExecuteExW with verb "runas" ──
+  // Replaces the previous PowerShell `Start-Process taskkill -Verb RunAs`
+  // approach.  PowerShell itself was hidden via CREATE_NO_WINDOW, but the
+  // *child* taskkill.exe process it spawned received its own console window —
+  // producing a visible flash.  Calling ShellExecuteExW directly avoids the
+  // intermediate PowerShell process entirely: the OS shows the UAC dialog,
+  // then runs taskkill.exe with SW_HIDE.  No console window, no flash.
+  #[cfg(target_os = "windows")]
+  {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::GetExitCodeProcess;
+    use winapi::um::shellapi::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
+    use winapi::um::synchapi::WaitForSingleObject;
+    use winapi::um::winbase::INFINITE;
+    use winapi::um::winuser::SW_HIDE;
 
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let code = stdout.trim();
-  if code == "0" {
-    println!("[TERMINATE] elevated taskkill exit=0 (target killed)");
-    Ok(())
-  } else {
-    let err = String::from_utf8_lossy(&output.stderr);
-    Err(format!(
-      "Failed to terminate process (elevated taskkill exit='{}'): {}",
-      code,
-      err.trim()
-    ))
+    let params: Vec<u16> = OsStr::new(&args.join(" "))
+      .encode_wide()
+      .chain(std::iter::once(0))
+      .collect();
+    let file: Vec<u16> = OsStr::new("taskkill")
+      .encode_wide()
+      .chain(std::iter::once(0))
+      .collect();
+    let verb: Vec<u16> = OsStr::new("runas")
+      .encode_wide()
+      .chain(std::iter::once(0))
+      .collect();
+
+    return unsafe {
+      let mut sei: SHELLEXECUTEINFOW = std::mem::zeroed();
+      sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+      sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+      sei.lpVerb = verb.as_ptr();
+      sei.lpFile = file.as_ptr();
+      sei.lpParameters = params.as_ptr();
+      sei.nShow = SW_HIDE;
+
+      if ShellExecuteExW(&mut sei) == 0 || sei.hProcess.is_null() {
+        return Err("Failed to launch elevated taskkill".into());
+      }
+
+      WaitForSingleObject(sei.hProcess, INFINITE);
+      let mut exit_code: u32 = 0;
+      GetExitCodeProcess(sei.hProcess, &mut exit_code);
+      CloseHandle(sei.hProcess);
+
+      if exit_code == 0 {
+        println!("[TERMINATE] elevated taskkill exit=0 (target killed)");
+        Ok(())
+      } else {
+        Err(format!(
+          "Failed to terminate process (elevated taskkill exit='{}')",
+          exit_code
+        ))
+      }
+    };
   }
+
 }
 
 #[cfg(not(target_os = "windows"))]
