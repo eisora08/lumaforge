@@ -201,6 +201,7 @@ pub fn spawn_game_with_elevation_fallback(
     cmd.args(a.iter().filter(|a| !a.is_empty()));
   }
   cmd.stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null());
+  hide_window(&mut cmd);
 
   match cmd.spawn() {
     Ok(child) => {
