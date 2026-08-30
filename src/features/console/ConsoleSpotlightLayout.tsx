@@ -10,6 +10,7 @@ import { getFavoriteKey } from "../../services/gameCacheService";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getGameAchievementSummary, getGameLastPlayedTimestamp } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
+import { useCrossfadeSrc } from "../../hooks/useCrossfadeSrc";
 import ConsoleHomeRail from "./ConsoleHomeRail";
 import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleSpotlightDock from "./ConsoleSpotlightDock";
@@ -94,6 +95,7 @@ export default function ConsoleSpotlightLayout({
   }, [session.sessions]);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
+  const { prevSrc: prevHeroSrc, currentSrc: crossfadeHeroSrc } = useCrossfadeSrc(heroSrc);
   const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
@@ -141,13 +143,22 @@ export default function ConsoleSpotlightLayout({
 
       {/* ── Layer 1: Hero background — z-[0] ── */}
       <div className="absolute inset-0 z-[0] overflow-hidden">
-        {heroSrc ? (
+        {crossfadeHeroSrc ? (
           <div className={`h-full w-full ${useHeroMotion ? "spotlight-hero-motion" : ""}`}>
+            {prevHeroSrc && (
+              <img
+                key={`prev-${prevHeroSrc}`}
+                src={prevHeroSrc}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover animate-hero-media-out"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
             <img
-              key={focusedGame?.appId ?? "none"}
-              src={heroSrc}
+              key={`cur-${crossfadeHeroSrc}`}
+              src={crossfadeHeroSrc}
               alt=""
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover animate-hero-crossfade-in"
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
             />
           </div>

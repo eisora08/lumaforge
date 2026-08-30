@@ -564,6 +564,15 @@ html {
     heroCrossfadeIn 600ms ease-out both;
 }
 
+/* Panel content entrance: fade + slide up on game change */
+@keyframes panelContentFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-panel-content-in {
+  animation: panelContentFadeIn 300ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-hero-crossfade-in,
   .animate-hero-media-out,
@@ -571,7 +580,8 @@ html {
   .animate-hero-focus-in,
   .animate-hero-blur-in,
   .animate-hero-sharp-in,
-  .animate-hero-entrance {
+  .animate-hero-entrance,
+  .animate-panel-content-in {
     animation: none !important;
   }
 }

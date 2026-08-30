@@ -752,7 +752,7 @@ export default function ConsoleSelectedPreview({
       {detailsMode && hasVideo && !videoError && !screenshotActive && (
         <video
           ref={videoRef}
-          data-console-preview-video={game.appId}
+          data-console-preview-video={game.appId || game.id}
           key={`${game.appId}-${mediaIdentityKey ?? trailerData?.playableUrl ?? "none"}`}
           src={playType === "direct" && videoSrc ? videoSrc : undefined}
           muted

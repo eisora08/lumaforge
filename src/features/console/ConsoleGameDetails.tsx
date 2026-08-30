@@ -205,7 +205,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const [muted, setMuted] = useState(true);
   const toggleVideoMute = useCallback(() => {
     const video = document.querySelector<HTMLVideoElement>(
-      `[data-console-preview-video="${game?.appId}"]`
+      `[data-console-preview-video="${game?.appId || game?.id}"]`
     );
     if (video) {
       video.muted = !video.muted;
@@ -301,12 +301,12 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   /* ── Video seek (for LT/RT triggers) ── */
   const seekVideo = useCallback((delta: number) => {
     const video = document.querySelector<HTMLVideoElement>(
-      `[data-console-preview-video="${game?.appId}"]`
+      `[data-console-preview-video="${game?.appId || game?.id}"]`
     );
     if (video && hasPlayableVideo) {
       video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta));
     }
-  }, [game?.appId, hasPlayableVideo]);
+  }, [game?.appId || game?.id, hasPlayableVideo]);
 
   const mediaIdentityKey = useMemo(() => {
     return `${game?.appId ?? "?"}-${carouselSelectedIndex}-${currentMedia?.type ?? "none"}`;
@@ -632,7 +632,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           e.stopImmediatePropagation();
           if (actionsBrowsingMedia) {
             const video = document.querySelector<HTMLVideoElement>(
-              `[data-console-preview-video="${game?.appId}"]`
+              `[data-console-preview-video="${game?.appId || game?.id}"]`
             );
             if (video && hasPlayableVideo) {
               if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
@@ -660,7 +660,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           const video = document.querySelector<HTMLVideoElement>(
-            `[data-console-preview-video="${game?.appId}"]`
+            `[data-console-preview-video="${game?.appId || game?.id}"]`
           );
           if (video && hasPlayableVideo) {
             if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
@@ -690,7 +690,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           e.preventDefault();
           // Play/pause the currently selected trailer
           const video = document.querySelector<HTMLVideoElement>(
-            `[data-console-preview-video="${game?.appId}"]`
+            `[data-console-preview-video="${game?.appId || game?.id}"]`
           );
           if (video) {
             if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
@@ -809,6 +809,18 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     effectivePercent,
     isPerfected,
   } = useConsoleAchievements(appIdStr);
+
+  const [animatedPercent, setAnimatedPercent] = useState(0);
+  useEffect(() => {
+    setAnimatedPercent(0);
+    const raf = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        setAnimatedPercent(effectivePercent);
+      });
+      return () => cancelAnimationFrame(raf2);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [effectivePercent]);
 
   const gameStatus = useMemo(() => {
     if (isPerfected) return { label: t("console_settings.completed", "Completed"), color: "text-emerald-400", Icon: CircleCheck };
@@ -1175,7 +1187,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${isPerfected ? "bg-gradient-to-r from-amber-400 to-yellow-300" : "bg-(--color-accent)"}`}
-                    style={{ width: `${effectivePercent}%` }}
+                    style={{ width: `${animatedPercent}%` }}
                   />
                 </div>
               </div>

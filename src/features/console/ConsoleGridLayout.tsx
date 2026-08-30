@@ -142,6 +142,18 @@ export default function ConsoleGridLayout({
     hasData: gridHasAchievements,
   } = useConsoleAchievements(appIdStr);
 
+  const [animatedPercent, setAnimatedPercent] = useState(0);
+  useEffect(() => {
+    setAnimatedPercent(0);
+    const raf = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        setAnimatedPercent(effectivePercent);
+      });
+      return () => cancelAnimationFrame(raf2);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [effectivePercent]);
+
   const {
     reviewSummary,
     hasData: gridHasReviews,
@@ -567,7 +579,7 @@ export default function ConsoleGridLayout({
                       <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-(--color-border)">
                         <div
                           className="h-full rounded-full bg-(--color-accent) transition-all duration-300"
-                          style={{ width: `${effectivePercent}%` }}
+                          style={{ width: `${animatedPercent}%` }}
                         />
                       </div>
                     </div>

@@ -13,6 +13,7 @@ import ConsoleSpotlightDock from "./ConsoleSpotlightDock";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleActionHints from "./ConsoleActionHints";
 import { deduplicateByStableId, getFavoriteKey } from "../../services/gameCacheService";
+import { useCrossfadeSrc } from "../../hooks/useCrossfadeSrc";
 import { RichEmptyState } from "./ConsoleEmptyState";
 
 const DEBUG_SWITCH_SPOTLIGHT = false;
@@ -107,6 +108,7 @@ export default function ConsoleSwitchSpotlightLayout({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
+  const { prevSrc: prevHeroSrc, currentSrc: crossfadeHeroSrc } = useCrossfadeSrc(heroSrc);
   const logoSrc = useMemo(() => getConsoleLogoSrc(focusedGame), [focusedGame]);
   const [logoNaturalHeight, setLogoNaturalHeight] = useState<number | null>(null);
   const handleLogoLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -191,13 +193,22 @@ export default function ConsoleSwitchSpotlightLayout({
 
       {/* ── Layer 1: Hero background — z-[0] ── */}
       <div className="absolute inset-0 z-[0] overflow-hidden">
-        {heroSrc ? (
+        {crossfadeHeroSrc ? (
           <div className={`h-full w-full ${useHeroMotion ? "spotlight-hero-motion" : ""}`}>
+            {prevHeroSrc && (
+              <img
+                key={`prev-${prevHeroSrc}`}
+                src={prevHeroSrc}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover animate-hero-media-out"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
             <img
-              key={focusedGame?.appId ?? "none"}
-              src={heroSrc}
+              key={`cur-${crossfadeHeroSrc}`}
+              src={crossfadeHeroSrc}
               alt=""
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover animate-hero-crossfade-in"
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
             />
           </div>
