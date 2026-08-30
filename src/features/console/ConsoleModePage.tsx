@@ -26,6 +26,10 @@ import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showError, showWarning } from "../../components/toast/GameToast";
 import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { useControllerDetection } from "./useControllerDetection";
+import { playNavigateSound, playSelectSound, playLaunchSound, playSwitchSound } from "../../services/soundEffectsService";
+import { startAmbientSound, stopAmbientSound, setAmbientVolume, isAmbientPlaying } from "../../services/ambientSoundService";
+import { useSettings } from "../../context/SettingsContext";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 function getBlockedReason(action: string): string {
   switch (action) {
@@ -64,6 +68,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const enrichedGames = useConsoleLibraryMedia(games);
   const { favoriteIds } = useFavorites();
   const [consoleSettings, patchConsoleSettings] = useConsoleSettings();
+  const { settings: desktopSettings } = useSettings();
   const [detailGame, setDetailGame] = useState<LibraryGame | null>(null);
   const [railContext, setRailContext] = useState<{ games: LibraryGame[]; currentIndex: number } | null>(null);
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
@@ -87,6 +92,45 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   useControllerDetection();
 
+  // Ambient sound lifecycle
+  useEffect(() => {
+    if (desktopSettings.consoleAmbientEnabled && desktopSettings.soundEffectsEnabled) {
+      startAmbientSound(desktopSettings.soundEffectsVolume);
+    }
+    return () => stopAmbientSound();
+  }, []);
+
+  useEffect(() => {
+    if (desktopSettings.consoleAmbientEnabled && desktopSettings.soundEffectsEnabled) {
+      setAmbientVolume(desktopSettings.soundEffectsVolume);
+    } else {
+      stopAmbientSound();
+    }
+  }, [desktopSettings.soundEffectsVolume, desktopSettings.consoleAmbientEnabled, desktopSettings.soundEffectsEnabled]);
+
+  // Pause ambient when window loses focus, resume when it regains focus
+  useEffect(() => {
+    let wasPlayingBeforeBlur = false;
+
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) {
+        // Window losing focus — remember if ambient was playing, then pause
+        wasPlayingBeforeBlur = isAmbientPlaying();
+        if (wasPlayingBeforeBlur) {
+          stopAmbientSound();
+        }
+      } else {
+        // Window regained focus — resume only if it was playing before
+        if (wasPlayingBeforeBlur && desktopSettings.consoleAmbientEnabled && desktopSettings.soundEffectsEnabled) {
+          startAmbientSound(desktopSettings.soundEffectsVolume);
+        }
+        wasPlayingBeforeBlur = false;
+      }
+    });
+
+    return () => { unlisten.then((fn) => fn()); };
+  }, [desktopSettings.consoleAmbientEnabled, desktopSettings.soundEffectsEnabled, desktopSettings.soundEffectsVolume]);
+
   if (DEBUG_CONSOLE_MODE) {
     const installedCount = enrichedGames.filter(isSidebarInstalledGame).length;
     const luaCount = enrichedGames.filter((g) => g.hasLua || g.hasLuaSource || g.isLuaActive).length;
@@ -94,6 +138,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   }
 
   const toggleLayout = useCallback(() => {
+    playSwitchSound();
     patchConsoleSettings({ layoutMode: consoleSettings.layoutMode === "spotlight" ? "grid" : "spotlight" as ConsoleLayoutMode });
   }, [consoleSettings.layoutMode, patchConsoleSettings]);
 
@@ -372,19 +417,23 @@ export default function ConsoleModePage({ onNavigate }: Props) {
         switch (e.key) {
           case "ArrowLeft":
             e.preventDefault();
+            playNavigateSound();
             setDockFocusedIndex(dfi <= 0 ? railCount - 1 : dfi - 1);
             break;
           case "ArrowRight":
             e.preventDefault();
+            playNavigateSound();
             setDockFocusedIndex(dfi >= railCount - 1 ? 0 : dfi + 1);
             break;
           case "ArrowUp":
             e.preventDefault();
+            playNavigateSound();
             focusRail(dfi, focusedIndexRef.current);
             setDockFocusedIndex(-1);
             break;
           case "Enter":
             e.preventDefault();
+            playSelectSound();
             focusRail(dfi, 0);
             setDockFocusedIndex(-1);
             break;
@@ -399,6 +448,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       switch (e.key) {
         case "ArrowUp":
           e.preventDefault();
+          playNavigateSound();
           if (layoutModeRef.current === "grid") {
             const fr = focusedRailRef.current;
             const fi = focusedIndexRef.current;
@@ -418,6 +468,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           break;
         case "ArrowDown":
           e.preventDefault();
+          playNavigateSound();
           if (layoutModeRef.current === "grid") {
             const fr = focusedRailRef.current;
             const fi = focusedIndexRef.current;
@@ -444,23 +495,24 @@ export default function ConsoleModePage({ onNavigate }: Props) {
             }
           }
           break;
-        case "ArrowLeft": e.preventDefault(); moveLeft(); break;
-        case "ArrowRight": e.preventDefault(); moveRight(); break;
+        case "ArrowLeft": e.preventDefault(); playNavigateSound(); moveLeft(); break;
+        case "ArrowRight": e.preventDefault(); playNavigateSound(); moveRight(); break;
         case "Enter":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); selectFocused(); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playSelectSound(); selectFocused(); }
           break;
         case "Escape": e.preventDefault(); break; // no-op — only Quick Menu "Switch to Desktop Mode" can exit Console Mode
         case "Tab":
           e.preventDefault();
+          playNavigateSound();
           if (e.shiftKey) { tabBackward(); } else { tabForward(); }
           break;
         case "x":
         case "X":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); const fg = currentFocusedGameRef.current; if (fg) handleConsolePlay(fg); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playLaunchSound(); const fg = currentFocusedGameRef.current; if (fg) handleConsolePlay(fg); }
           break;
         case "d":
         case "D":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); selectFocused(); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playSelectSound(); selectFocused(); }
           break;
         case "/":
           if (!isInputActive && !isInDialog) { e.preventDefault(); setSearchOpen(true); }
@@ -470,10 +522,10 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           if (!isInputActive && !isInDialog) { e.preventDefault(); e.stopImmediatePropagation(); setSearchOpen(true); }
           break;
         case "PageUp":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); pageLeft(); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playNavigateSound(); pageLeft(); }
           break;
         case "PageDown":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); pageRight(); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playNavigateSound(); pageRight(); }
           break;
         case "o":
         case "O":
@@ -483,15 +535,15 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           break;
         case "q":
         case "Q":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); tabBackward(); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playNavigateSound(); tabBackward(); }
           break;
         case "e":
         case "E":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); tabForward(); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playNavigateSound(); tabForward(); }
           break;
         case "p":
         case "P":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); const fg = currentFocusedGameRef.current; if (fg) handleConsolePlay(fg); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); playLaunchSound(); const fg = currentFocusedGameRef.current; if (fg) handleConsolePlay(fg); }
           break;
         case "v":
         case "V":

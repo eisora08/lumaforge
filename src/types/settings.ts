@@ -95,6 +95,13 @@ export type AppSettings = {
   showDashboardOnStartup: boolean;
   disableAutoUpdates: boolean;
 
+  // ── Sound ──────────────────────────────────────────────────────────
+  soundEffectsEnabled: boolean;
+  soundEffectsVolume: number;
+  achievementSoundsEnabled: boolean;
+  achievementSoundStyle: "classic" | "playstation" | "xbox" | "retro" | "minimal" | "epic" | "steam";
+  consoleAmbientEnabled: boolean;
+
   language: "es" | "en";
 };
 

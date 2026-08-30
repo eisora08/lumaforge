@@ -36,6 +36,8 @@ import AchievementWatcherInit from "./components/achievements/AchievementWatcher
 import DebridCompletionModal from "./components/common/DebridCompletionModal";
 
 import { runBootTasks } from "./services/appBootCoordinator";
+import { preloadAmbientSound } from "./services/ambientSoundService";
+import { preloadAchievementSounds } from "./features/activity/achievements/achievementSound";
 import AppRouteTransition from "./components/common/AppRouteTransition";
 import { ConfirmProvider } from "./services/confirmService";
 import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
@@ -189,6 +191,8 @@ function App() {
     if (bootStarted) return;
     setBootStarted(true);
     runBootTasks();
+    preloadAmbientSound();
+    preloadAchievementSounds();
   }, [bootStarted]);
 
   // Push to navigation history when Store sub-views are opened inline

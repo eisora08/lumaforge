@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { playEntrySound, playExitSound } from "../../services/soundEffectsService";
 
 export type ModeSwitchMode = "enter-console" | "exit-console";
 
@@ -83,6 +84,12 @@ export default function ModeSwitchSplash({ mode, visible, onComplete }: Props) {
 
     const reduced = hasReducedMotion();
     completeCalledRef.current = false;
+
+    if (mode === "enter-console") {
+      playEntrySound();
+    } else {
+      playExitSound();
+    }
 
     const enterTimer = setTimeout(() => {
       setPhase("entering");

@@ -1,6 +1,7 @@
 import { Toast, toast } from "react-hot-toast";
 import type { UnlockEvent } from "../../types/gameAchievements";
 import { AchievementToastBody, MultiAchievementStrip } from "./AchievementToastBody";
+import { playAchievementSound, rarityFromPercent } from "../../features/activity/achievements/achievementSound";
 
 export const ACHIEVEMENT_TOAST_DURATION = 4500;
 export const ACHIEVEMENT_TOAST_EXIT_DURATION = 180;
@@ -40,6 +41,10 @@ export function showAchievementToast(event: UnlockEvent, appId?: string, gameTit
   _shownThisSession.add(key);
   setTimeout(() => _shownThisSession.delete(key), 5 * 60 * 1000);
 
+  // Play achievement sound
+  const rarity = rarityFromPercent(event.rarityPercent);
+  playAchievementSound(rarity);
+
   const duration = getToastDuration(event.rarityPercent, event.isPlatinum);
 
   toast.custom(
@@ -49,6 +54,11 @@ export function showAchievementToast(event: UnlockEvent, appId?: string, gameTit
 }
 
 export function showGroupedAchievementToast(unlocks: UnlockEvent[], appId?: string, gameTitle?: string) {
+  // Play sound for the first unlock
+  if (unlocks.length > 0) {
+    const rarity = rarityFromPercent(unlocks[0].rarityPercent);
+    playAchievementSound(rarity);
+  }
   const maxDuration = unlocks.reduce((max, u) => Math.max(max, getToastDuration(u.rarityPercent, u.isPlatinum)), 4500);
   toast.custom(
     (t) => <MultiToastComponent t={t} unlocks={unlocks} appId={appId} gameTitle={gameTitle} />,

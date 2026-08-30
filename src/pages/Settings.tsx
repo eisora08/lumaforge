@@ -23,6 +23,8 @@ import {
   Code,
   Zap,
   Cloud,
+  Volume2,
+  Play,
 } from "lucide-react";
 
 import {
@@ -57,10 +59,13 @@ import { useTheme } from "../context/ThemeContext";
 import { useSettings } from "../context/SettingsContext";
 import { clearIgdbTokenCache } from "../services/igdbAccessTokenService";
 import { openExternalUrl } from "../services/externalLinks";
+import { previewAchievementSound } from "../features/activity/achievements/achievementSound";
+import { ACHIEVEMENT_SOUND_STYLES } from "../features/activity/achievements/achievementSoundStyles";
 
 type SettingsSectionId =
   | "general"
   | "appearance"
+  | "sound"
   | "library"
   | "notifications"
   | "metadata"
@@ -84,6 +89,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
   }[] = [
     { key: "general", label: t("settings.general"), icon: <Cog className="h-4 w-4" />, description: t("settings.general_desc") },
     { key: "appearance", label: t("settings.appearance"), icon: <Palette className="h-4 w-4" />, description: t("settings.appearance_desc") },
+    { key: "sound", label: t("settings.sound"), icon: <Volume2 className="h-4 w-4" />, description: t("settings.sound_desc") },
     { key: "library", label: t("settings.layout"), icon: <Library className="h-4 w-4" />, description: t("settings.layout_desc") },
     { key: "notifications", label: t("settings.notifications"), icon: <Gamepad2 className="h-4 w-4" />, description: t("settings.notifications_desc") },
     { key: "metadata", label: t("settings.metadata"), icon: <Database className="h-4 w-4" />, description: t("settings.metadata_desc") },
@@ -589,6 +595,125 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 <HomeLayoutEditor />
 
                 <CardLayoutEditor />
+              </>
+            )}
+
+            {activeSection === "sound" && (
+              <>
+                <SettingsSection
+                  title={t("settings.sound_effects_title")}
+                  description={t("settings.sound_effects_desc")}
+                >
+                  <div className="space-y-4">
+                    <ToggleOption
+                      label={t("settings.sound_effects_enabled")}
+                      description={t("settings.sound_effects_enabled_desc")}
+                      enabled={settings.soundEffectsEnabled}
+                      onChange={(enabled) => updateSetting("soundEffectsEnabled", enabled)}
+                    />
+
+                    {settings.soundEffectsEnabled && (
+                      <div className="lf-surface rounded-2xl border p-4">
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-sm font-medium text-(--color-text)">
+                              {t("settings.sound_effects_volume")}
+                            </label>
+                            <p className="text-xs text-(--color-muted)">
+                              {t("settings.sound_effects_volume_desc")}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <Volume2 className="h-4 w-4 text-(--color-muted)" />
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              value={Math.round(settings.soundEffectsVolume * 100)}
+                              onChange={(e) => updateSetting("soundEffectsVolume", Number(e.target.value) / 100)}
+                              className="h-2 flex-1 cursor-pointer appearance-none rounded-full bg-white/10 accent-(--color-accent)"
+                            />
+                            <span className="min-w-[3ch] text-right text-xs text-(--color-muted)">
+                              {Math.round(settings.soundEffectsVolume * 100)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </SettingsSection>
+
+                <SettingsSection
+                  title={t("settings.achievement_sounds_title")}
+                  description={t("settings.achievement_sounds_desc")}
+                >
+                  <div className="space-y-4">
+                    <ToggleOption
+                      label={t("settings.achievement_sounds_enabled")}
+                      description={t("settings.achievement_sounds_enabled_desc")}
+                      enabled={settings.achievementSoundsEnabled}
+                      onChange={(enabled) => updateSetting("achievementSoundsEnabled", enabled)}
+                    />
+
+                    {settings.achievementSoundsEnabled && (
+                      <div className="lf-surface rounded-2xl border p-4">
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-sm font-medium text-(--color-text)">
+                              {t("settings.achievement_sound_style")}
+                            </label>
+                            <p className="text-xs text-(--color-muted)">
+                              {t("settings.achievement_sound_style_desc")}
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            {ACHIEVEMENT_SOUND_STYLES.map((style) => (
+                              <div
+                                key={style.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => updateSetting("achievementSoundStyle", style.id as any)}
+                                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); updateSetting("achievementSoundStyle", style.id as any); } }}
+                                className={`flex items-center justify-between gap-2 rounded-xl border p-3 text-left transition ${
+                                  settings.achievementSoundStyle === style.id
+                                    ? "border-(--color-accent) bg-(--color-accent)/10 text-(--color-accent)"
+                                    : "border-white/10 bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                                }`}
+                              >
+                                <span className="text-sm font-medium">{style.label}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    previewAchievementSound(style.id, "legendary");
+                                  }}
+                                  className="rounded-lg p-1.5 transition hover:bg-white/10"
+                                  title={t("settings.achievement_sound_preview")}
+                                >
+                                  <Play className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </SettingsSection>
+
+                <SettingsSection
+                  title={t("settings.ambient_sound_title")}
+                  description={t("settings.ambient_sound_desc")}
+                >
+                  <div className="space-y-4">
+                    <ToggleOption
+                      label={t("settings.ambient_sound_enabled")}
+                      description={t("settings.ambient_sound_enabled_desc")}
+                      enabled={settings.consoleAmbientEnabled}
+                      onChange={(enabled) => updateSetting("consoleAmbientEnabled", enabled)}
+                    />
+                  </div>
+                </SettingsSection>
               </>
             )}
 

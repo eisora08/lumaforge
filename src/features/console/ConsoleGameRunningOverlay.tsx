@@ -4,6 +4,7 @@ import { Square, Maximize2, ArrowRight, Loader2, CheckCircle2 } from "lucide-rea
 import type { LibraryGame } from "../../types/libraryGame";
 import type { RunningGameSession } from "../../context/GameSessionContext";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
+import { playNavigateSound, playSelectSound, playOpenSound } from "../../services/soundEffectsService";
 
 function useElapsedTime(launchedAt: number): number {
   const [elapsed, setElapsed] = useState(Date.now() - launchedAt);
@@ -73,6 +74,7 @@ export default function ConsoleGameRunningOverlay({
   // Phase transitions
   useEffect(() => {
     if (phase === "entering") {
+      playOpenSound();
       const timer = setTimeout(() => setPhase("active"), 800);
       return () => clearTimeout(timer);
     }
@@ -110,11 +112,12 @@ export default function ConsoleGameRunningOverlay({
   // Keyboard navigation — useConsoleGamepadInput dispatches gamepad as keyboard events
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleExit();
-      if (e.key === "ArrowLeft") setActiveButtonIndex((i) => Math.max(0, i - 1));
-      if (e.key === "ArrowRight") setActiveButtonIndex((i) => Math.min(buttonCount - 1, i + 1));
+      if (e.key === "Escape") { playSelectSound(); handleExit(); }
+      if (e.key === "ArrowLeft") { playNavigateSound(); setActiveButtonIndex((i) => Math.max(0, i - 1)); }
+      if (e.key === "ArrowRight") { playNavigateSound(); setActiveButtonIndex((i) => Math.min(buttonCount - 1, i + 1)); }
       if (e.key === "Enter") {
         e.preventDefault();
+        playSelectSound();
         // Read current index from functional updater to avoid stale state
         setActiveButtonIndex((current) => {
           executeByIndex(current);

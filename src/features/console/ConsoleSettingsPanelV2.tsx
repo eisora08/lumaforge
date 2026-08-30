@@ -4,7 +4,7 @@ import i18n from "i18next";
 import {
   Shuffle, RefreshCw, Settings, LayoutGrid,
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
-  Wrench, Gamepad2, Film, PlayCircle,
+  Wrench, Gamepad2, Film, PlayCircle, Volume2,
   Maximize, Grid3X3, ChevronRight, ArrowLeft,
   Image, Tag, Rows3, FolderOpen, Trash2,
   HardDrive, Activity, Info, Clock,
@@ -44,6 +44,7 @@ import { openAppDataFolder, openLogsFolder, clearTempCache, getSystemInfo, power
 import toast from "react-hot-toast";
 import type { SystemInfo } from "../../services/tauri";
 import ConfirmModal from "../../components/common/ConfirmModal";
+import { playNavigateSound, playSelectSound, playOpenSound, playCloseSound } from "../../services/soundEffectsService";
 
 const DEBUG_CONSOLE_SETTINGS = false;
 
@@ -59,6 +60,7 @@ type PanelPage =
   | "time"
   | "startup"
   | "system-bar"
+  | "sound"
   | "tools"
   | "help"
   | "theme-picker"
@@ -968,6 +970,64 @@ type ToolActionEntry = {
   handler: () => Promise<void> | void;
 };
 
+// ============================================================
+// Sound sub-panel (reads/writes Desktop AppSettings directly)
+// ============================================================
+function ConsoleSoundSubPanel({
+  onBack, focusedIndex, onFocusChange: _onFocusChange, itemCount,
+}: {
+  onBack: () => void;
+  focusedIndex: number;
+  onFocusChange: (i: number) => void;
+  itemCount: React.MutableRefObject<number>;
+}) {
+  const { t } = useTranslation();
+  const { settings: desktopSettings, updateSetting: updateDesktopSetting } = useSettings();
+  const totalItems = 4;
+  itemCount.current = totalItems;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <SubPanelHeader title={t("console_settings.sound", "Sound")} onBack={onBack} />
+      <div className="flex flex-col gap-3 px-2 pb-4">
+        <ToggleRow
+          label={t("console_settings.sound_effects", "Sound Effects")}
+          description={t("console_settings.sound_effects_desc", "Navigation and interaction sounds.")}
+          enabled={desktopSettings.soundEffectsEnabled}
+          onChange={() => updateDesktopSetting("soundEffectsEnabled", !desktopSettings.soundEffectsEnabled)}
+          isFocused={focusedIndex === 0}
+        />
+        {desktopSettings.soundEffectsEnabled && (
+          <SliderRow
+            label={t("console_settings.sound_volume", "Volume")}
+            value={Math.round(desktopSettings.soundEffectsVolume * 100)}
+            min={0}
+            max={100}
+            step={1}
+            unit="%"
+            onChange={(v) => updateDesktopSetting("soundEffectsVolume", v / 100)}
+            isFocused={focusedIndex === 1}
+          />
+        )}
+        <ToggleRow
+          label={t("console_settings.achievement_sounds", "Achievement Sounds")}
+          description={t("console_settings.achievement_sounds_desc", "Sound on achievement unlock.")}
+          enabled={desktopSettings.achievementSoundsEnabled}
+          onChange={() => updateDesktopSetting("achievementSoundsEnabled", !desktopSettings.achievementSoundsEnabled)}
+          isFocused={focusedIndex === (desktopSettings.soundEffectsEnabled ? 2 : 1)}
+        />
+        <ToggleRow
+          label={t("console_settings.ambient_sound", "Ambient Background")}
+          description={t("console_settings.ambient_sound_desc", "Subtle background drone in Console mode.")}
+          enabled={desktopSettings.consoleAmbientEnabled}
+          onChange={() => updateDesktopSetting("consoleAmbientEnabled", !desktopSettings.consoleAmbientEnabled)}
+          isFocused={focusedIndex === (desktopSettings.soundEffectsEnabled ? 3 : 2)}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ConsoleToolsSubPanel({
   onBack, focusedIndex, onFocusChange: _onFocusChange, itemCount,
 }: {
@@ -1258,6 +1318,7 @@ function SettingsCategoryGrid({
     { key: "time", icon: Clock, labelKey: "console_settings.time", descKey: "console_settings.time_desc" },
     { key: "startup", icon: Rocket, labelKey: "console_settings.startup", descKey: "console_settings.startup_desc" },
     { key: "system-bar", icon: Monitor, labelKey: "console_settings.system_bar", descKey: "console_settings.system_bar_desc" },
+    { key: "sound", icon: Volume2, labelKey: "console_settings.sound", descKey: "console_settings.sound_desc" },
     { key: "language", icon: Globe, labelKey: "console_settings.language", descKey: "console_settings.language_desc" },
   ];
 
@@ -1344,6 +1405,7 @@ export default function ConsoleSettingsPanelV2({
   // Mount/unmount animation
   useEffect(() => {
     if (open) {
+      playOpenSound();
       openedAtRef.current = Date.now();
       prevFocusRef.current = document.activeElement as HTMLElement | null;
       menuStackRef.current = [];
@@ -1378,6 +1440,7 @@ export default function ConsoleSettingsPanelV2({
   }, [visible]);
 
   const handleClose = useCallback(() => {
+    playCloseSound();
     setVisible(false);
     setTimeout(() => {
       onClose();
@@ -1440,13 +1503,16 @@ export default function ConsoleSettingsPanelV2({
         // ── Main page navigation ──
         switch (e.key) {
           case "ArrowUp":
+            playNavigateSound();
             setFocusedIndex((i) => Math.max(0, i - 1));
             break;
           case "ArrowDown":
+            playNavigateSound();
             setFocusedIndex((i) => Math.min(MAIN_OPTIONS.length - 1, i + 1));
             break;
           case "ArrowRight":
             {
+              playSelectSound();
               const opt = MAIN_OPTIONS[focusedIndex];
               if (!opt || opt.action !== "sub" || !opt.subPage) break;
               menuStackRef.current.push({ page, subPage: null, focusedIndex });
@@ -1460,6 +1526,7 @@ export default function ConsoleSettingsPanelV2({
             break;
           case "Enter":
             {
+              playSelectSound();
               const opt = MAIN_OPTIONS[focusedIndex];
               if (!opt) break;
               switch (opt.action) {
@@ -1513,6 +1580,7 @@ export default function ConsoleSettingsPanelV2({
           case "Escape":
           case "b":
           case "B":
+            playCloseSound();
             handleClose();
             break;
           case "v":
@@ -1522,6 +1590,7 @@ export default function ConsoleSettingsPanelV2({
               break;
             }
             if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][CLOSE_REQUEST] source=view`);
+            playCloseSound();
             handleClose();
             break;
         }
@@ -1530,18 +1599,21 @@ export default function ConsoleSettingsPanelV2({
         // Gamepad dispatches keydown on document.body which never reaches
         // React's #root-level delegation, so the grid's onKeyDown never
         // fires. Handle navigation here directly.
-        const SETTINGS_KEYS: PanelPage[] = ["grid-card-style", "spotlight-card-style", "spotlight-content", "visuals", "media", "input", "time", "startup", "system-bar", "language"];
+        const SETTINGS_KEYS: PanelPage[] = ["grid-card-style", "spotlight-card-style", "spotlight-content", "visuals", "media", "input", "time", "startup", "system-bar", "sound", "language"];
         switch (e.key) {
           case "ArrowUp":
             e.preventDefault();
+            playNavigateSound();
             setFocusedIndex((i) => Math.max(0, i - 1));
             break;
           case "ArrowDown":
             e.preventDefault();
+            playNavigateSound();
             setFocusedIndex((i) => Math.min(SETTINGS_KEYS.length - 1, i + 1));
             break;
           case "ArrowLeft":
             e.preventDefault();
+            playCloseSound();
             setPage("main");
             break;
           case "ArrowRight":
@@ -1549,6 +1621,7 @@ export default function ConsoleSettingsPanelV2({
           case "a":
           case "A":
             e.preventDefault();
+            playSelectSound();
             {
               const target = SETTINGS_KEYS[focusedIndex];
               if (target) {
@@ -1561,6 +1634,7 @@ export default function ConsoleSettingsPanelV2({
           case "Escape":
           case "b":
           case "B":
+            playCloseSound();
             setPage("main");
             break;
         }
@@ -1577,6 +1651,7 @@ export default function ConsoleSettingsPanelV2({
               case "ArrowRight":
               case "Enter": {
                 e.preventDefault();
+                playSelectSound();
                 const current = (settings as any).language ?? "es";
                 const langs = ["es", "en"] as const;
                 const idx = langs.indexOf(current as "es" | "en");
@@ -1592,6 +1667,7 @@ export default function ConsoleSettingsPanelV2({
               case "b":
               case "B":
                 e.preventDefault();
+                playCloseSound();
                 setSettingEditingId(null);
                 break;
             }
@@ -1599,17 +1675,20 @@ export default function ConsoleSettingsPanelV2({
             switch (e.key) {
               case "ArrowLeft":
                 e.preventDefault();
+                playNavigateSound();
                 onPatch(rows[focusedIndex]!.onAction(settings, "left"));
                 break;
               case "ArrowRight":
               case "Enter":
                 e.preventDefault();
+                playSelectSound();
                 onPatch(rows[focusedIndex]!.onAction(settings, "right"));
                 break;
               case "Escape":
               case "b":
               case "B":
                 e.preventDefault();
+                playCloseSound();
                 setSettingEditingId(null);
                 break;
             }
@@ -1619,6 +1698,7 @@ export default function ConsoleSettingsPanelV2({
           switch (e.key) {
             case "ArrowUp":
               e.preventDefault();
+              playNavigateSound();
               {
                 const prev = focusedIndex;
                 const next = Math.max(0, prev - 1);
@@ -1632,6 +1712,7 @@ export default function ConsoleSettingsPanelV2({
               break;
             case "ArrowDown":
               e.preventDefault();
+              playNavigateSound();
               {
                 const prev = focusedIndex;
                 const next = Math.min(rows.length - 1, prev + 1);
@@ -1646,6 +1727,7 @@ export default function ConsoleSettingsPanelV2({
             case "ArrowLeft":
             case "ArrowRight":
               {
+                playNavigateSound();
                 const row = rows[focusedIndex];
                 if (!row) break;
                 e.preventDefault();
@@ -1675,6 +1757,7 @@ export default function ConsoleSettingsPanelV2({
               break;
             case "Enter":
               e.preventDefault();
+              playSelectSound();
               {
                 const row = rows[focusedIndex];
                 if (!row) break;
@@ -1702,6 +1785,7 @@ export default function ConsoleSettingsPanelV2({
             case "Escape":
             case "b":
             case "B":
+              playCloseSound();
               doBackNav();
               break;
           }
@@ -1738,6 +1822,41 @@ export default function ConsoleSettingsPanelV2({
                 onPatch({ themeMode: selected as ConsoleThemeMode });
                 doBackNav();
               }
+            }
+            break;
+          case "Escape":
+          case "b":
+          case "B":
+            e.preventDefault();
+            doBackNav();
+            break;
+        }
+      } else if (subPage === "sound") {
+        // ── Sound sub-page ──
+        const soundRowCount = desktopSettings.soundEffectsEnabled ? 4 : 3;
+        switch (e.key) {
+          case "ArrowUp":
+            e.preventDefault();
+            playNavigateSound();
+            setFocusedIndex((i) => Math.max(0, i - 1));
+            break;
+          case "ArrowDown":
+            e.preventDefault();
+            playNavigateSound();
+            setFocusedIndex((i) => Math.min(soundRowCount - 1, i + 1));
+            break;
+          case "Enter":
+          case "a":
+            e.preventDefault();
+            playSelectSound();
+            if (focusedIndex === 0) {
+              updateDesktopSetting("soundEffectsEnabled", !desktopSettings.soundEffectsEnabled);
+            } else if (focusedIndex === 1 && desktopSettings.soundEffectsEnabled) {
+              // volume slider — no-op on Enter
+            } else if (focusedIndex === (desktopSettings.soundEffectsEnabled ? 2 : 1)) {
+              updateDesktopSetting("achievementSoundsEnabled", !desktopSettings.achievementSoundsEnabled);
+            } else if (focusedIndex === (desktopSettings.soundEffectsEnabled ? 3 : 2)) {
+              updateDesktopSetting("consoleAmbientEnabled", !desktopSettings.consoleAmbientEnabled);
             }
             break;
           case "Escape":
@@ -1937,6 +2056,7 @@ export default function ConsoleSettingsPanelV2({
       );
     }
     switch (subPage) {
+      case "sound": return <ConsoleSoundSubPanel onBack={doBackNav} focusedIndex={focusedIndex} onFocusChange={setFocusedIndex} itemCount={subItemCount} />;
       case "tools": return <ConsoleToolsSubPanel onBack={doBackNav} focusedIndex={focusedIndex} onFocusChange={setFocusedIndex} itemCount={subItemCount} />;
       case "help": return <ConsoleHelpSubPanel onBack={doBackNav} focusedIndex={focusedIndex} onFocusChange={setFocusedIndex} itemCount={subItemCount} />;
       case "theme-picker": return (
@@ -2032,6 +2152,7 @@ export default function ConsoleSettingsPanelV2({
       case "time": return "Time & Clock";
       case "startup": return "Startup";
       case "system-bar": return "System Bar";
+      case "sound": return "Sound";
       case "language": return "Language";
       case "tools": return "Tools";
       case "help": return "Help";

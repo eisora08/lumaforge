@@ -108,6 +108,12 @@ export const defaultSettings: AppSettings = {
   showDashboardOnStartup: true,
   disableAutoUpdates: false,
 
+  soundEffectsEnabled: true,
+  soundEffectsVolume: 0.7,
+  achievementSoundsEnabled: true,
+  achievementSoundStyle: "classic",
+  consoleAmbientEnabled: true,
+
   language: "es",
 };
 

@@ -1,62 +1,129 @@
 /**
- * Lightweight Web Audio synth for achievement unlock sounds.
- * No external audio files — pure oscillator-based chimes.
- * Rarity determines pitch and complexity: common = simple beep, legendary = rich chord.
+ * Achievement sound player using preloaded audio buffers.
+ * Sounds are loaded from /sounds/achievements/ at app startup.
+ * Each play creates a fresh AudioContext for guaranteed playback.
  */
 
-let _audioCtx: AudioContext | null = null;
+import { getAchievementStyle, getAllAchievementStyles } from "./achievementSoundStyles";
 
-function getAudioContext(): AudioContext | null {
+const STORAGE_KEY = "lumaforge-settings";
+const _bufferCache = new Map<string, AudioBuffer>();
+
+/** Convert a Steam rarity percentage to a rarity string for sound lookup. */
+export function rarityFromPercent(percent?: number): string {
+  if (percent == null || percent <= 0) return "common";
+  if (percent >= 50) return "common";
+  if (percent >= 20) return "uncommon";
+  if (percent >= 10) return "rare";
+  if (percent >= 5) return "epic";
+  return "legendary";
+}
+
+function readSoundSettings(): { enabled: boolean; styleId: string; volume: number } {
   try {
-    if (!_audioCtx) {
-      _audioCtx = new AudioContext();
-    }
-    if (_audioCtx.state === "suspended") {
-      _audioCtx.resume().catch(() => {});
-    }
-    return _audioCtx;
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { enabled: true, styleId: "classic", volume: 0.7 };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      enabled: typeof parsed.achievementSoundsEnabled === "boolean" ? parsed.achievementSoundsEnabled : true,
+      styleId: typeof parsed.achievementSoundStyle === "string" ? parsed.achievementSoundStyle : "classic",
+      volume: typeof parsed.soundEffectsVolume === "number" ? parsed.soundEffectsVolume : 0.7,
+    };
   } catch {
-    return null;
+    return { enabled: true, styleId: "classic", volume: 0.7 };
   }
 }
 
-type RarityTone = { freqs: number[]; duration: number; gain: number; waveType: OscillatorType };
+/** Preload all achievement sound files into AudioBuffer cache. Call once at app startup. */
+export async function preloadAchievementSounds(): Promise<void> {
+  let ctx: AudioContext;
+  try { ctx = new AudioContext(); } catch { return; }
 
-const RARITY_TONES: Record<string, RarityTone> = {
-  common:    { freqs: [880], duration: 0.15, gain: 0.12, waveType: "sine" },
-  uncommon:  { freqs: [880, 1100], duration: 0.2, gain: 0.12, waveType: "sine" },
-  rare:      { freqs: [660, 880, 1100], duration: 0.28, gain: 0.14, waveType: "triangle" },
-  epic:      { freqs: [440, 554, 660, 880], duration: 0.35, gain: 0.15, waveType: "triangle" },
-  legendary: { freqs: [440, 554, 660, 880, 1100], duration: 0.5, gain: 0.16, waveType: "sine" },
-};
+  const files = new Set<string>();
+  for (const style of getAllAchievementStyles()) {
+    for (const file of Object.values(style.sounds)) {
+      files.add(file);
+    }
+  }
+
+  let loaded = 0;
+  await Promise.all(
+    [...files].map(async (file) => {
+      try {
+        const res = await fetch(`/sounds/achievements/${file}`);
+        if (!res.ok) {
+          console.warn(`[ACH] Failed to fetch ${file}: ${res.status}`);
+          return;
+        }
+        const data = await res.arrayBuffer();
+        const buffer = await ctx.decodeAudioData(data);
+        _bufferCache.set(file, buffer);
+        loaded++;
+      } catch (e) {
+        console.warn(`[ACH] Failed to decode ${file}:`, e);
+      }
+    }),
+  );
+  console.log(`[ACH] Preloaded ${loaded}/${files.size} achievement sounds`);
+  ctx.close().catch(() => {});
+}
+
+function playBuffer(buffer: AudioBuffer, volume: number): void {
+  let ctx: AudioContext;
+  try { ctx = new AudioContext(); } catch { return; }
+
+  const source = ctx.createBufferSource();
+  const gain = ctx.createGain();
+  source.buffer = buffer;
+  gain.gain.setValueAtTime(volume, ctx.currentTime);
+  source.connect(gain);
+  gain.connect(ctx.destination);
+
+  if (ctx.state === "suspended") {
+    ctx.resume().then(() => { source.start(); }).catch(() => {});
+  } else {
+    source.start();
+  }
+
+  setTimeout(() => { ctx.close().catch(() => {}); }, buffer.duration * 1000 + 500);
+}
 
 export function playAchievementSound(rarity: string): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
+  const { enabled, styleId, volume } = readSoundSettings();
+  if (!enabled || volume <= 0) return;
 
-  const tone = RARITY_TONES[rarity] ?? RARITY_TONES.common;
-  const now = ctx.currentTime;
+  const style = getAchievementStyle(styleId);
+  const file = style.sounds[rarity] ?? style.sounds.common;
+  const buffer = _bufferCache.get(file);
 
-  // Master gain — fade out at end
-  const master = ctx.createGain();
-  master.gain.setValueAtTime(tone.gain, now);
-  master.gain.exponentialRampToValueAtTime(0.001, now + tone.duration);
-  master.connect(ctx.destination);
+  console.log(`[ACH] play: rarity=${rarity} style=${styleId} file=${file} buffer=${!!buffer} vol=${volume} enabled=${enabled}`);
 
-  for (let i = 0; i < tone.freqs.length; i++) {
-    const osc = ctx.createOscillator();
-    osc.type = tone.waveType;
-    osc.frequency.setValueAtTime(tone.freqs[i], now);
+  if (!buffer) return;
 
-    // Stagger higher notes slightly for shimmer
-    const delay = i * 0.03;
-    const noteGain = ctx.createGain();
-    noteGain.gain.setValueAtTime(0, now + delay);
-    noteGain.gain.linearRampToValueAtTime(1, now + delay + 0.02);
-    noteGain.gain.exponentialRampToValueAtTime(0.001, now + tone.duration + delay);
-    noteGain.connect(master);
+  playBuffer(buffer, volume);
+}
 
-    osc.start(now + delay);
-    osc.stop(now + tone.duration + delay + 0.01);
+export function previewAchievementSound(styleId: string, rarity: string): void {
+  const style = getAchievementStyle(styleId);
+  const file = style.sounds[rarity] ?? style.sounds.common;
+  const buffer = _bufferCache.get(file);
+
+  console.log(`[ACH] preview: style=${styleId} rarity=${rarity} file=${file} buffer=${!!buffer}`);
+
+  if (!buffer) return;
+
+  let ctx: AudioContext;
+  try { ctx = new AudioContext(); } catch { return; }
+
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+
+  if (ctx.state === "suspended") {
+    ctx.resume().then(() => { source.start(); }).catch(() => {});
+  } else {
+    source.start();
   }
+
+  setTimeout(() => { ctx.close().catch(() => {}); }, buffer.duration * 1000 + 500);
 }

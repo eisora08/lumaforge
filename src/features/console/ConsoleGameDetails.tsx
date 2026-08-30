@@ -41,6 +41,7 @@ import { showWarning, showError } from "../../components/toast/GameToast";
 import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamepadInput";
 import { handleConsolePrimaryAction, getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel } from "./consoleGameActions";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
+import { playNavigateSound, playSelectSound, playLaunchSound, playOpenSound, playCloseSound } from "../../services/soundEffectsService";
 
 import { useCrossfadeSrc } from "../../hooks/useCrossfadeSrc";
 
@@ -313,6 +314,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game?.appId, carouselSelectedIndex, currentMedia?.type]);
 
   useEffect(() => {
+    playOpenSound();
     const raf = requestAnimationFrame(() => {
       requestAnimationFrame(() => setPhase("visible"));
     });
@@ -325,6 +327,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   const handleClose = useCallback(() => {
     if (phase === "exit") return;
+    playCloseSound();
     setPhase("exit");
     setTimeout(() => onClose(), EXIT_DURATION + 20);
   }, [phase, onClose]);
@@ -505,6 +508,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     // X = Play from any zone
     if (e.key === "x" || e.key === "X") {
       e.preventDefault();
+      playLaunchSound();
       handlePlay();
       return;
     }
@@ -512,11 +516,13 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     if (onNavigateRail) {
       if (e.key === "q" || e.key === "Q") {
         e.preventDefault();
+        playNavigateSound();
         onNavigateRail("prev");
         return;
       }
       if (e.key === "e" || e.key === "E") {
         e.preventDefault();
+        playNavigateSound();
         onNavigateRail("next");
         return;
       }
@@ -553,15 +559,19 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       case "back-button": {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          playSelectSound();
           handleClose();
         } else if (e.key === "ArrowDown") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("hero");
         } else if (e.key === "ArrowLeft" && onNavigateRail) {
           e.preventDefault();
+          playNavigateSound();
           onNavigateRail("prev");
         } else if (e.key === "ArrowRight" && onNavigateRail) {
           e.preventDefault();
+          playNavigateSound();
           onNavigateRail("next");
         }
         break;
@@ -569,15 +579,19 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       case "hero": {
         if (e.key === "ArrowDown") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("cards");
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("back-button");
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("actions");
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          playLaunchSound();
           handlePlay();
         }
         break;
@@ -585,14 +599,18 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       case "cards": {
         if (e.key === "ArrowDown") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("actions");
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("hero");
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("media-preview");
         } else if (e.key === "PageUp" || e.key === "PageDown") {
+          playNavigateSound();
           const container = document.querySelector('[data-scroll-container]');
           if (container) {
             const delta = e.key === "PageUp" ? -80 : 80;
@@ -604,14 +622,17 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       case "actions": {
         if (e.key === "ArrowDown") {
           e.preventDefault();
+          playNavigateSound();
           setActionsBrowsingMedia(false);
           setLeftActionSubIndex((i) => (i < maxSubIndex ? i + 1 : 0));
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
+          playNavigateSound();
           setActionsBrowsingMedia(false);
           setLeftActionSubIndex((i) => (i > 0 ? i - 1 : maxSubIndex));
         } else if (e.key === "ArrowLeft") {
           e.preventDefault();
+          playNavigateSound();
           setActionsBrowsingMedia(true);
           setCarouselFocusIndex((i) => {
             const next = Math.max(0, i - 1);
@@ -620,6 +641,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           });
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
+          playNavigateSound();
           setActionsBrowsingMedia(true);
           setCarouselFocusIndex((i) => {
             const next = Math.min(mediaItems.length - 1, i + 1);
@@ -630,6 +652,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
+          playSelectSound();
           if (actionsBrowsingMedia) {
             const video = document.querySelector<HTMLVideoElement>(
               `[data-console-preview-video="${game?.appId || game?.id}"]`
@@ -649,16 +672,20 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       case "media-preview": {
         if (e.key === "ArrowDown") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("media-carousel");
           setCarouselFocusIndex(carouselSelectedIndex);
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("actions");
         } else if (e.key === "ArrowLeft") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("cards");
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          playSelectSound();
           const video = document.querySelector<HTMLVideoElement>(
             `[data-console-preview-video="${game?.appId || game?.id}"]`
           );
@@ -667,6 +694,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           }
         } else if (e.key === "PageUp" || e.key === "PageDown") {
           e.preventDefault();
+          playNavigateSound();
           seekVideo(e.key === "PageUp" ? -10 : 10);
         }
         break;
@@ -674,6 +702,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       case "media-carousel": {
         if (e.key === "ArrowLeft") {
           e.preventDefault();
+          playNavigateSound();
           setCarouselFocusIndex((i) => {
             const next = Math.max(0, i - 1);
             setCarouselSelectedIndex(next);
@@ -681,6 +710,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           });
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
+          playNavigateSound();
           setCarouselFocusIndex((i) => {
             const next = Math.min(mediaItems.length - 1, i + 1);
             setCarouselSelectedIndex(next);
@@ -688,6 +718,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           });
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          playSelectSound();
           // Play/pause the currently selected trailer
           const video = document.querySelector<HTMLVideoElement>(
             `[data-console-preview-video="${game?.appId || game?.id}"]`
@@ -697,12 +728,15 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           }
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("media-preview");
         } else if (e.key === "ArrowDown") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("hints");
         } else if (e.key === "PageUp" || e.key === "PageDown") {
           e.preventDefault();
+          playNavigateSound();
           seekVideo(e.key === "PageUp" ? -10 : 10);
         }
         break;
@@ -710,9 +744,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       case "hints": {
         if (e.key === "ArrowUp") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("media-carousel");
         } else if (e.key === "ArrowDown") {
           e.preventDefault();
+          playNavigateSound();
           setFocusZone("back-button");
         }
         break;

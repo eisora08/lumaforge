@@ -8,6 +8,7 @@ import type { AppAchievementCache, AchievementProgressEntry } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
 import { sendAchievementNativeNotification, queueAchievementOverlay } from "./achievementNotificationService";
 import { showAchievementToast, showGroupedAchievementToast } from "../components/library/AchievementToast";
+import { playAchievementSound, rarityFromPercent } from "../features/activity/achievements/achievementSound";
 import {
   ACHIEVEMENTS_AUTO_ENABLED,
   ACHIEVEMENT_WATCHER_PROCESS_EVENTS,
@@ -550,6 +551,10 @@ class AchievementWatcherService {
       if (overlayEnabled) {
         console.log(`[ACH][TOAST_BATCH] appid=${appId} newUnlocks=${unlocks.length} route=overlay-batch`);
         for (let i = 0; i < unlocks.length; i++) {
+          // Play achievement sound
+          const rarity = rarityFromPercent(unlocks[i].rarityPercent);
+          playAchievementSound(rarity);
+
           queueAchievementOverlay({
             name: unlocks[i].name,
             description: unlocks[i].description,
