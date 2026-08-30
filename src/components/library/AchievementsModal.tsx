@@ -474,7 +474,7 @@ export default function AchievementsModal({
 
       <div
         className="relative z-10 flex flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface shadow-2xl lf-modal-panel"
-        style={{ width: "min(920px, calc(100vw - 48px))", maxHeight: "86vh" }}
+        style={{ width: "min(920px, calc(100vw - 48px))", height: "86vh" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ===== HEADER ===== */}
@@ -1174,7 +1174,7 @@ function AchievementGroupsTab({
 
               {/* Smooth collapse/expand */}
               <div
-                className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                className={`grid transition-[grid-template-rows] duration-300 ease-out ${
                   isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
                 }`}
               >
