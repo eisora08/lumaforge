@@ -8,6 +8,8 @@
  * No Rust backend needed — pure localStorage persistence.
  */
 
+import type { SteamMovie } from "../types/gameMetadata";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -49,6 +51,10 @@ export type EpicOverrideData = {
   backgroundPath?: string;
   logoPath?: string;
   iconPath?: string;
+  /** Screenshots URLs resolved from Steam cross-reference. */
+  screenshots?: string[];
+  /** Trailers/movies resolved from Steam cross-reference. */
+  movies?: SteamMovie[];
   /** Timestamp of last override write. */
   updatedAt: number;
 };
@@ -184,7 +190,8 @@ export function mergeEpicOverrides(
   // Build synthetic SteamAppMetadata from overrides so LibraryGameDetails
   // can read game.metadata?.genres, game.metadata?.developer, etc.
   const hasMetadataOverrides = overrides.name || overrides.description || overrides.genres?.length ||
-    overrides.developers?.length || overrides.publishers?.length || overrides.releaseDate || overrides.categories?.length;
+    overrides.developers?.length || overrides.publishers?.length || overrides.releaseDate || overrides.categories?.length ||
+    overrides.screenshots?.length || overrides.movies?.length;
 
   if (hasMetadataOverrides) {
     const existingMeta = (result.metadata ?? {}) as Record<string, unknown>;
@@ -212,8 +219,8 @@ export function mergeEpicOverrides(
       languages: (existingMeta.languages as string[]) ?? [],
       dlc_count: (existingMeta.dlc_count as number) ?? 0,
       dlc_app_ids: (existingMeta.dlc_app_ids as number[]) ?? [],
-      screenshots: (existingMeta.screenshots as string[]) ?? [],
-      movies: (existingMeta.movies ?? []) as any[],
+      screenshots: overrides.screenshots ?? (existingMeta.screenshots as string[]) ?? [],
+      movies: overrides.movies ?? (existingMeta.movies ?? []) as any[],
       resolved: false,
     };
   }

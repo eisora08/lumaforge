@@ -284,7 +284,7 @@ export default function ConsoleSelectedPreview({
 
   /* ── Reset video/metadata state on game change ── */
   useEffect(() => {
-    if (!game?.appId) return;
+    if (!game?.appId && !game?.id) return;
     setIsPlaying(false);
     setVideoError(false);
     setIsLoading(false);
@@ -300,15 +300,15 @@ export default function ConsoleSelectedPreview({
     setAutoHlsState("idle");
     setCurrentTime(0);
     setDuration(0);
-    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[GAME_CHANGE_RESET] appid=${game.appId}`);
-  }, [game?.appId]);
+    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[GAME_CHANGE_RESET] id=${game?.appId || game?.id}`);
+  }, [game?.appId || game?.id]);
 
   /* ── Reset autoplay state on source/appId change ──
    *  Runs BEFORE the play-attempt effect to ensure stale failure state
    *  (autoplayFailed, thumbAutoplayError) from a previous source does not
    *  persist into the new source's first render. */
   useEffect(() => {
-    if (!thumbnailAutoplaySrc || !game?.appId) return;
+    if (!thumbnailAutoplaySrc || (!game?.appId && !game?.id)) return;
     setAutoPlayCalled(false);
     setAutoPlaySuccess(false);
     setAutoPlayError(null);
@@ -316,17 +316,17 @@ export default function ConsoleSelectedPreview({
     setAutoplayFailed(false);
     setThumbAutoplayError(false);
     setAutoHlsState("idle");
-    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[AUTO_RESET] appid=${game.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
-  }, [thumbnailAutoplaySrc, game?.appId]);
+    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[AUTO_RESET] id=${game?.appId || game?.id} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
+  }, [thumbnailAutoplaySrc, game?.appId || game?.id]);
 
   /* ── Programmatic autoplay for thumbnail preview video ── */
   const prevThumbAutoplayKey = useRef<string | null>(null);
   useEffect(() => {
-    const key = thumbnailAutoplaySrc ? `${game?.appId}:${thumbnailAutoplaySrc}` : null;
+    const key = thumbnailAutoplaySrc ? `${game?.appId || game?.id}:${thumbnailAutoplaySrc}` : null;
     if (!key || key === prevThumbAutoplayKey.current) return;
     prevThumbAutoplayKey.current = key;
 
-    const appId = game?.appId;
+    const appId = game?.appId || game?.id;
     if (!appId) return;
 
     // Use force test MP4 URL when enabled (bypasses actual source)
@@ -735,7 +735,7 @@ export default function ConsoleSelectedPreview({
       {!detailsMode && thumbnailAutoplaySrc && !screenshotActive && !showArtworkFirst && (
         <video
           ref={thumbAutoplayVideoRef}
-          key={`${game.appId}:${thumbnailAutoplaySrc}`}
+          key={`${game.appId || game.id}:${thumbnailAutoplaySrc}`}
           poster={displaySrc && displaySrc !== thumbnailAutoplaySrc ? displaySrc : undefined}
           muted
           playsInline

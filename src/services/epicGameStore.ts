@@ -275,6 +275,8 @@ async function applySteamMetadataToEpicGame(game: LibraryGame): Promise<void> {
     if (steamMeta.short_description || steamMeta.about_the_game) {
       patch.description = (steamMeta.short_description || steamMeta.about_the_game || "").trim();
     }
+    if (steamMeta.screenshots?.length) patch.screenshots = steamMeta.screenshots;
+    if (steamMeta.movies?.length) patch.movies = steamMeta.movies;
 
     if (Object.keys(patch).length > 0) {
       const { writeEpicOverrides } = await import("./epicOverrideStore");
@@ -288,10 +290,14 @@ async function applySteamMetadataToEpicGame(game: LibraryGame): Promise<void> {
         release_date: patch.releaseDate || undefined,
         short_description: patch.description || undefined,
         about_the_game: patch.description || undefined,
+        screenshots: (patch.screenshots as string[]) || [],
+        movies: (patch.movies as any[]) || [],
         resolved: true,
       };
       if (DEBUG_EPIC_LIBRARY) {
-        console.log(`[EPIC_STORE][STEAM_META] ${searchName} → Steam app ${best.app_id} (${best.name})`);
+        const ssCount = (patch.screenshots as string[] | undefined)?.length ?? 0;
+        const mvCount = (patch.movies as any[] | undefined)?.length ?? 0;
+        console.log(`[EPIC_STORE][STEAM_META] ${searchName} → Steam app ${best.app_id} (${best.name}) screenshots=${ssCount} movies=${mvCount}`);
       }
     }
   } catch {

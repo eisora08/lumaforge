@@ -461,6 +461,15 @@ export default function GameEditDialog({
         setAppIdDraft(game?.appId ?? overrides.linkedSteamAppId ?? "");
         setEpicOverrides(overrides as unknown as Record<string, unknown>);
       }
+      // Populate read-only metadata for screenshots/trailers gallery
+      if (overrides.screenshots?.length || overrides.movies?.length) {
+        setMetadata({
+          ...((game?.metadata ?? {}) as Record<string, unknown>),
+          app_id: 0,
+          screenshots: overrides.screenshots ?? (game?.metadata?.screenshots as string[]) ?? [],
+          movies: overrides.movies ?? (game?.metadata?.movies ?? []) as any[],
+        } as SteamAppMetadata);
+      }
       setLoading(false);
       loadRolePreviews();
       return;
