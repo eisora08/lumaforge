@@ -147,6 +147,10 @@ class AchievementAutoSyncService {
     return Array.from(this.watchers.keys());
   }
 
+  getPlatform(appId: string): string | undefined {
+    return this.watchers.get(appId)?.params.platform;
+  }
+
   triggerRefresh(appId: string, reason: "game-stopped" | "window-focus"): void {
     const state = this.watchers.get(appId);
     if (!state) {
@@ -282,6 +286,10 @@ class AchievementAutoSyncService {
     if (!accountId) return;
 
     try {
+      // Gate: librarycache metadata tracking is disabled when LIBRARYCACHE_PROCESSING_ENABLED is false
+      const { LIBRARYCACHE_PROCESSING_ENABLED } = await import("./achievementWatcherService");
+      if (!LIBRARYCACHE_PROCESSING_ENABLED) return;
+
       const meta = await checkAchievementLibraryCacheMetadata({
         appId: Number(appId),
         steamAccountId: accountId,
@@ -303,6 +311,10 @@ class AchievementAutoSyncService {
     if (state.inFlight) return;
 
     try {
+      // Gate: librarycache polling is disabled — only usergamestats events drive updates
+      const { LIBRARYCACHE_PROCESSING_ENABLED } = await import("./achievementWatcherService");
+      if (!LIBRARYCACHE_PROCESSING_ENABLED) return;
+
       const meta = await checkAchievementLibraryCacheMetadata({
         appId: Number(appId),
         steamAccountId: state.params.accountId,

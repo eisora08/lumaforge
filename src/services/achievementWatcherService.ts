@@ -56,7 +56,7 @@ export const DEBUG_ACH_WATCHER = false;
  * committed: librarycache processing disabled — binary-stats (usergamestats)
  * is the authoritative source. Re-enable if binary-stats stops working.
  */
-const LIBRARYCACHE_PROCESSING_ENABLED = false;
+export const LIBRARYCACHE_PROCESSING_ENABLED = false;
 
 let _fullScanSkipLogged = false;
 
@@ -298,6 +298,13 @@ class AchievementWatcherService {
     this._platformByAppId.set(appId, platform);
   }
 
+  /** Resolve platform for an appId: in-memory map -> localStorage -> fallback. */
+  private resolvePlatform(appId: string, fallback: string): string {
+    return this._platformByAppId.get(appId)
+      ?? (typeof window !== "undefined" ? localStorage.getItem(`lumaforge-ach-platform-${appId}`) as string | null : null)
+      ?? fallback;
+  }
+
   /** Clear the platform for a specific appId. */
   clearPlatform(appId: string): void {
     this._platformByAppId.delete(appId);
@@ -454,11 +461,11 @@ class AchievementWatcherService {
           this._lastFileMeta.set(path, { size, modified: modified_at });
 
           // Process usergamestats (binary stats), librarycache (Steam achievement data), and crack-ini
-          const isAcceptedSource = source === "usergamestats" || (LIBRARYCACHE_PROCESSING_ENABLED && source === "librarycache") || source === "achievement-progress" || source === "crack-ini" || source === "crack-json";
+          const isAcceptedSource = source === "usergamestats" || (LIBRARYCACHE_PROCESSING_ENABLED && source === "librarycache") || (LIBRARYCACHE_PROCESSING_ENABLED && source === "achievement-progress") || source === "crack-ini" || source === "crack-json";
           console.log(`[ACH][PIPELINE] source_check appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
 
           // Special handling for global achievement_progress.json changes
-          if (source === "achievement-progress") {
+          if (LIBRARYCACHE_PROCESSING_ENABLED && source === "achievement-progress") {
             console.log(`[ACH][PIPELINE] achievement-progress_detected path=${path}`);
             this.processAchievementProgressChange(path, traceId).catch((err) => {
               console.warn(`[ACH][PIPELINE] achievement-progress_error reason=${err}`);
@@ -1093,7 +1100,7 @@ class AchievementWatcherService {
         ...(nameMap.size > 0 ? { nameMap } : {}),
       };
 
-      const result = achievementStore.applyProgressPatch(appId, patch, traceId, this._platformByAppId.get(appId) ?? "steam");
+      const result = achievementStore.applyProgressPatch(appId, patch, traceId, this.resolvePlatform(appId, "steam"));
       console.log(`[ACH][CRACK_INI] appid=${appId} applyResult=${!!result} traceId=${traceId}`);
       return !!result;
     } catch (err) {
@@ -1334,7 +1341,7 @@ class AchievementWatcherService {
       }
 
       const previousUnlocked = currentSummary?.unlocked ?? 0;
-      const result = achievementStore.applyProgressPatch(appId, effectivePatch, traceId, this._platformByAppId.get(appId) ?? "steam");
+      const result = achievementStore.applyProgressPatch(appId, effectivePatch, traceId, this.resolvePlatform(appId, "steam-official"));
       if (DEBUG_ACH_WATCHER) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=apply-result result=${!!result}`);
       console.log(`[ACH][PIPELINE] apply_result appid=${appId} result=${!!result}`);
       if (!result) {
@@ -1437,7 +1444,11 @@ class AchievementWatcherService {
       await sleep(500);
 
       const { resolveSteamAchievements } = await import("./steamAchievementsResolver");
-      const detectedPlatform = this._platformByAppId.get(appId) ?? "steam";
+      const detectedPlatform = this._platformByAppId.get(appId);
+      if (!detectedPlatform) {
+        console.log(`[ACH][RT_RESOLVER_SKIP] appid=${appId} reason=unknown-platform`);
+        return;
+      }
       const summary = await resolveSteamAchievements({
         appId: Number(appId),
         steamPath: this._steamPath,

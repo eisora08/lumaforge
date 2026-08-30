@@ -48,18 +48,18 @@ function delay(ms: number): Promise<void> {
 
 /** Targeted lightweight local-cache achievement refresh for a single appId.
  *  Reads disk cache, compares with store, applies if newer, persists, snaps. */
-async function attemptAchievementRefresh(appId: string): Promise<void> {
+async function attemptAchievementRefresh(appId: string, platform?: string): Promise<void> {
   try {
     const { readAchievementCache, writeAchievementCache } = await import("../services/tauri");
     const { achievementStore } = await import("../services/achievementStore");
-    const cached = await readAchievementCache(Number(appId));
+    const cached = await readAchievementCache(Number(appId), platform);
     if (!cached) {
       console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=false updatedAt=null`);
       return;
     }
     const diskUpdatedAt = cached.summary.updated_at;
     if (ENABLE_VERBOSE_ACH_REFRESH_LOGS) console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=true updatedAt=${diskUpdatedAt}`);
-    const existingSummary = achievementStore.getSummary(appId);
+    const existingSummary = achievementStore.getSummary(appId, platform);
     const storeUpdatedAt = existingSummary?.updatedAt ?? 0;
     if (diskUpdatedAt <= storeUpdatedAt) {
       console.log(`[ACH][SESSION_STOP_REFRESH_SKIP] appid=${appId} reason=no-newer-local-cache`);
@@ -92,12 +92,12 @@ async function attemptAchievementRefresh(appId: string): Promise<void> {
       achievements,
       updatedAt: diskUpdatedAt,
     } as any;
-    achievementStore.setSummary(appId, summary);
-    console.log(`[ACH][SUMMARY_APPLY] appid=${appId} unlocked=${newUnlocked}/${newTotal} reason=session-stop-local-cache`);
+    achievementStore.setSummary(appId, summary, platform);
+    console.log(`[ACH][SUMMARY_APPLY] appid=${appId} unlocked=${newUnlocked}/${newTotal} reason=session-stop-local-cache platform=${platform ?? "none"}`);
     // Phase 4: Persist to disk cache immediately
     try {
-      await writeAchievementCache(Number(appId), cached);
-      console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt}`);
+      await writeAchievementCache(Number(appId), cached, false, platform);
+      console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt} platform=${platform ?? "none"}`);
     } catch (writeErr) {
       console.warn(`[ACH][CACHE_WRITE] failed appid=${appId}`, String(writeErr));
     }
@@ -1851,8 +1851,10 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           console.log(`[PLAYTIME][SESSION_END] appid=${stoppedAppId} seconds=${durationSeconds} threshold=15`);
 
           (async () => {
+            const sessionPlatform = (await import("../services/achievementAutoSyncService")).achievementAutoSyncService.getPlatform(stoppedAppId);
+
             // Attempt 1: immediate read
-            await attemptAchievementRefresh(stoppedAppId);
+            await attemptAchievementRefresh(stoppedAppId, sessionPlatform);
 
             // Phase 6: Schedule snapshot write for playtime changes
             try {
@@ -1868,19 +1870,17 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             } catch (snapErr) {
               console.warn("[PLAYTIME] snapshot schedule failed", String(snapErr));
             }
-          })();
 
-          // Retry 2: after 5 seconds
-          setTimeout(() => {
+            // Retry 2: after 5 seconds
+            await delay(5000);
             console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=5000`);
-            attemptAchievementRefresh(stoppedAppId).catch((err) => console.warn(err));
-          }, 5000);
+            await attemptAchievementRefresh(stoppedAppId, sessionPlatform).catch((err) => console.warn(err));
 
-          // Retry 3: after 20 seconds
-          setTimeout(() => {
+            // Retry 3: after 20 seconds
+            await delay(20000);
             console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=20000`);
-            attemptAchievementRefresh(stoppedAppId).catch((err) => console.warn(err));
-          }, 20000);
+            await attemptAchievementRefresh(stoppedAppId, sessionPlatform).catch((err) => console.warn(err));
+          })();
         } else if (stoppedAppId && durationSeconds < 15) {
           console.log(`[PLAYTIME][SESSION_DURATION_SKIP] appid=${stoppedAppId} seconds=${durationSeconds} threshold=15 lastPlayedKept=true`);
           // Clear session watch even for short sessions
