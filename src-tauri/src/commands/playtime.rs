@@ -341,10 +341,10 @@ pub fn import_external_playtime(
         let mut entry = match db::read_playtime_entry(conn, &input.game_key)? {
             Some(mut e) => {
                 update_external(&mut e, input.external_playtime_seconds, &input.external_source);
-                // Seed last_played_at from Steam data when entry has none
-                if e.last_played_at.is_none() {
-                    if let Some(lp) = input.last_played_at_seconds {
-                        if lp > 0 {
+                // Update last_played_at when incoming value is more recent
+                if let Some(lp) = input.last_played_at_seconds {
+                    if lp > 0 {
+                        if e.last_played_at.map_or(true, |existing| lp > existing) {
                             e.last_played_at = Some(lp);
                         }
                     }
@@ -397,9 +397,9 @@ pub fn batch_import_external_playtime(
             let entry = match db::read_playtime_entry(conn, &input.game_key)? {
                 Some(mut e) => {
                     update_external(&mut e, input.external_playtime_seconds, &input.external_source);
-                    if e.last_played_at.is_none() {
-                        if let Some(lp) = input.last_played_at_seconds {
-                            if lp > 0 {
+                    if let Some(lp) = input.last_played_at_seconds {
+                        if lp > 0 {
+                            if e.last_played_at.map_or(true, |existing| lp > existing) {
                                 e.last_played_at = Some(lp);
                             }
                         }

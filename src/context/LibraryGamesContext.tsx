@@ -1157,12 +1157,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }, [i18n.language]);
 
   // Step 8: Manual refresh must not wipe on failure
-  const refresh = useCallback(async (options?: { force?: boolean }) => {
+  const refresh = useCallback(async (_options?: { force?: boolean }) => {
     const s = settingsRef.current;
     setLoading(true);
     try {
       const result = await resolveLibraryGames(s, {
-        ...(options?.force ? { force: true } : {}),
+        force: true,
         onProgress(source, phase, extra) {
           reportLibraryProgress({
             source,

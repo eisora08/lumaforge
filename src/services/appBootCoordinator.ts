@@ -25,6 +25,7 @@ export type BootTaskId =
   | "enrich-snapshot-titles"
   | "load-local-game-index"
   | "reconcile-lua-games"
+  | "fetch-steam-owned-games"
   | "load-epic-games-from-cache"
   | "load-achievement-summaries"
   | "load-nonsteam-achievements"
@@ -761,6 +762,77 @@ export async function runBootTasks(): Promise<void> {
               console.warn("[BOOT] reconcile lua games failed:", String(err));
             }
             logBoot("reconcile lua games end");
+          });
+
+          // Stage 4.6: Fetch Steam owned games (non-installed) on every boot
+          await track("fetch-steam-owned-games", async () => {
+            logBoot("fetch steam owned games start");
+            try {
+              const settings = _cachedSettings;
+              if (settings?.steamWebApiKey && settings?.steamId64) {
+                if (!isIntegrationScanOnStartup("steam")) {
+                  if (DEBUG_BOOT) console.log("[BOOT][STEAM_OWNED][SKIP] reason=integration-disabled");
+                } else {
+                  const { fetchSteamOwnedGames } = await import("./tauri");
+                  const { getReconciledGames, setReconciledGames } = await import("./gameStore");
+                  const ownedGames = await fetchSteamOwnedGames(settings.steamWebApiKey, settings.steamId64).catch((err) => {
+                    console.warn("[BOOT][STEAM_OWNED] fetch failed:", String(err));
+                    return [];
+                  });
+                  if (ownedGames.length > 0) {
+                    const current = getReconciledGames();
+                    const existingIds = new Set(current.map((g) => g.appId).filter(Boolean));
+                    let added = 0;
+                    let luaMerged = 0;
+                    for (const owned of ownedGames) {
+                      const appIdStr = String(owned.appid);
+                      if (existingIds.has(appIdStr)) continue;
+                      // Merge into existing Lua entry if present
+                      const luaEntry = current.find((g) => g.appId === appIdStr && g.hasLua);
+                      if (luaEntry) {
+                        luaEntry.isInstallable = true;
+                        luaMerged++;
+                        continue;
+                      }
+                      // Create new owned entry
+                      const logoUrl = owned.img_logo_url
+                        ? `https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/${owned.appid}/${owned.img_logo_url}.jpg`
+                        : undefined;
+                      current.push({
+                        id: `steam-${appIdStr}`,
+                        appId: appIdStr,
+                        title: owned.name || `Steam App ${appIdStr}`,
+                        source: "steam",
+                        isPlayable: false,
+                        isInstallable: true,
+                        steamInstalled: false,
+                        imageUrl: logoUrl,
+                        steamPlaytimeMinutes: Math.floor((owned.playtime_forever || 0) / 60),
+                        lastUpdated: owned.last_played ? Math.floor(owned.last_played) : undefined,
+                        luaScripts: [],
+                        hasLua: false,
+                        isLuaActive: false,
+                        isLuaDisabled: false,
+                        hasLuaSource: false,
+                        sources: [],
+                      });
+                      added++;
+                    }
+                    if (added > 0 || luaMerged > 0) {
+                      setReconciledGames(current);
+                      logBoot(`steam owned: added=${added} luaMerged=${luaMerged} total=${current.length}`);
+                    }
+                  } else {
+                    if (DEBUG_BOOT) console.log("[BOOT][STEAM_OWNED] no games returned from API");
+                  }
+                }
+              } else {
+                if (DEBUG_BOOT) console.log("[BOOT][STEAM_OWNED][SKIP] reason=missing-api-key-or-steamid");
+              }
+            } catch (err) {
+              console.warn("[BOOT] steam owned games fetch failed:", String(err));
+            }
+            logBoot("fetch steam owned games end");
           });
 
           // Stage 4.75: Load Epic games from SQLite cache (instant boot)
