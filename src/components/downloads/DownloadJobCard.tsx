@@ -9,6 +9,7 @@ import {
   FileCode2,
   FileText,
   FolderOpen,
+  HardDrive,
   Loader2,
   Package,
   Pause,
@@ -62,6 +63,7 @@ function formatEta(seconds?: number): string {
 
 function getTypeIcon(job: DownloadJob) {
   if (job.type === "steam-install") return DownloadCloud;
+  if (job.type === "steam-depot-download") return HardDrive;
   if (job.type === "debrid-install") return Package;
   if (job.fileType === "zip") return FileArchive;
   if (job.fileType === "lua") return FileCode2;
@@ -71,6 +73,9 @@ function getTypeIcon(job: DownloadJob) {
 function getProviderBadge(job: DownloadJob): { label: string; className: string } {
   if (job.type === "steam-install") {
     return { label: "Steam", className: "bg-blue-500/15 text-blue-300 border-blue-500/20" };
+  }
+  if (job.type === "steam-depot-download") {
+    return { label: "Depot", className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/20" };
   }
   if (job.type === "debrid-install") {
     return { label: "Debrid", className: "bg-cyan-500/15 text-cyan-300 border-cyan-500/20" };
@@ -95,7 +100,8 @@ function canCancel(status: DownloadJob["status"]) {
     status === "downloading" ||
     status === "extracting" ||
     status === "installing" ||
-    status === "paused"
+    status === "paused" ||
+    status === "verifying"
   );
 }
 
@@ -144,14 +150,16 @@ export default function DownloadJobCard({
     }
   }, [job.status, job.id, job.destDir, isDebridInstall]);
 
-  // Pause/Resume only applies to debrid-install jobs (the Rust side checkpoints
-  // HTTP downloads and keeps fastresume for torrents).
-  const canPause = isDebridInstall && canCancel(job.status) && job.status !== "paused";
+  // Pause/Resume applies to debrid-install and steam-depot-download jobs.
+  const isDepotDownload = job.type === "steam-depot-download";
+  const canPause = (isDebridInstall || isDepotDownload) && canCancel(job.status) && job.status !== "paused";
+  // Paused and failed jobs are resumable: debrid keeps .part checkpoints,
+  // depot downloads resume via -validate on existing output directory.
   // Paused and failed debrid jobs are both resumable: paused keeps the on-disk
   // checkpoint (`.part`/`.part.meta` or torrent fastresume), failed jobs after a
   // network interruption retain the same checkpoint, so resume re-invokes the
   // install command which continues from where it stopped.
-  const canResume = isDebridInstall && (job.status === "paused" || job.status === "failed");
+  const canResume = (isDebridInstall || isDepotDownload) && (job.status === "paused" || job.status === "failed");
 
   const snapshotGame = useMemo(() => {
     const snapshot = getBootSnapshot();
@@ -348,12 +356,78 @@ export default function DownloadJobCard({
     );
   }
 
+  /* ── Depot download completed — compact card ── */
+  if (isDepotDownload && job.status === "done") {
+    return (
+      <article className="rounded-2xl border border-(--surface-active-border) bg-(--color-bg)/70 p-4 backdrop-blur-md transition hover:border-(--color-accent)/20">
+        <div className="flex items-start gap-3">
+          {displayArtworkUrl ? (
+            <img
+              src={displayArtworkUrl}
+              alt=""
+              className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-white/5">
+              <TypeIcon className="h-6 w-6 text-(--color-accent)" />
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate font-semibold text-(--color-text)">
+                {displayTitle}
+              </h3>
+              <DownloadStatusBadge status={job.status} />
+            </div>
+
+            <p className="mt-0.5 truncate text-sm text-(--color-muted)">
+              Depot · Descargado · Listo para usar
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onRemove(job.id)}
+            className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            title="Quitar"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenDetails(job.appId)}
+            className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
+          >
+            <Eye className="h-4 w-4" />
+            Ver detalles
+          </button>
+
+          {job.destDir && (
+            <button
+              type="button"
+              onClick={() => { revealItemInDir(job.destDir!); }}
+              className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              Abrir carpeta
+            </button>
+          )}
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article className="rounded-2xl border border-(--surface-active-border) bg-(--color-bg)/70 p-5 backdrop-blur-md transition hover:border-(--color-accent)/20">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="flex min-w-0 items-start gap-4">
           {/* Icon/artwork */}
-          {isSteamInstall && displayArtworkUrl ? (
+          {(isSteamInstall || isDepotDownload) && displayArtworkUrl ? (
             <img
               src={displayArtworkUrl}
               alt=""

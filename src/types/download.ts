@@ -9,6 +9,7 @@ export type DownloadStatus =
   | "extracting"
   | "installing"
   | "paused"
+  | "verifying"
   | "done"
   | "failed"
   | "cancelled";
@@ -23,7 +24,7 @@ export type DownloadJob = {
   downloadUrl?: string;
 
   /** Broad category for display/grouping */
-  type?: "steam-install" | "epic-install" | "lua-package" | "zip" | "manifest" | "media" | "debrid-install" | "other";
+  type?: "steam-install" | "epic-install" | "lua-package" | "zip" | "manifest" | "media" | "debrid-install" | "steam-depot-download" | "other";
   /** Indeterminate when reliable percentage is unavailable */
   progressMode?: "determinate" | "indeterminate";
   speedBytesPerSec?: number;
@@ -55,6 +56,9 @@ export type DownloadJob = {
   /** Peers currently serving data (seeds) for torrent installs */
   seeds?: number;
 
+  /** Depot download: selected depots for this job */
+  depotSelections?: DepotSelection[];
+
   status: DownloadStatus;
   progress: number;
   bytesRead: number;
@@ -80,4 +84,60 @@ export type InstallerNetworkEvent = {
   job_id: string;
   peers: number;
   seeds: number;
+};
+
+// ---------------------------------------------------------------------------
+// Depot Downloader types
+// ---------------------------------------------------------------------------
+
+/** Information about a single depot within a Steam app. */
+export type DepotInfo = {
+  depotId: number;
+  name: string;
+  manifestId?: string;
+  sizeOnDisk?: number;
+  key?: string;
+  manifestPath?: string;
+  encrypted: boolean;
+  /** DLC app ID if this depot belongs to a DLC */
+  dlcAppId?: number;
+  /** Platform: "windows", "macos", "linux", or undefined for all */
+  os?: string;
+  /** Language if depot is language-specific */
+  language?: string;
+  /** Whether this is a shared redistributable (VC++, DirectX, etc.) */
+  isShared: boolean;
+  /** Owning app for shared depots */
+  fromAppId?: number;
+};
+
+/** A depot selected for download. */
+export type DepotSelection = {
+  depotId: number;
+  manifestId: string;
+  manifestPath: string;
+  size: number;
+};
+
+/** A full depot download job request. */
+export type DepotDownloadJob = {
+  /** Frontend-provided job ID so events map to the queue job. */
+  jobId?: string;
+  appId: number;
+  gameName: string;
+  depots: DepotSelection[];
+  outputDir: string;
+};
+
+/** Result from resolving depots for an app. */
+export type DepotResolveResult = {
+  depots: DepotInfo[];
+  gameName: string;
+};
+
+/** Depot downloader tool status. */
+export type DepotDownloaderStatus = {
+  installed: boolean;
+  version?: string;
+  exePath: string;
 };

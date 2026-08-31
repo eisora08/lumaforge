@@ -57,6 +57,11 @@ const statusConfig: Record<DownloadStatus, {
     icon: PauseCircle,
     className: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
   },
+  verifying: {
+    label: "Verificando",
+    icon: Loader2,
+    className: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
+  },
   done: {
     label: "Completado",
     icon: PackageCheck,
@@ -80,7 +85,7 @@ export default function DownloadStatusBadge({
   const config = statusConfig[status];
   const Icon = config.icon;
 
-  const shouldSpin = status === "checking" || status === "downloading";
+  const shouldSpin = status === "checking" || status === "downloading" || status === "verifying";
 
   return (
     <span

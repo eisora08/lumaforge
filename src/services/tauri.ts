@@ -16,6 +16,7 @@ import type { LocalExecutableGame } from "../types/localExecutableGame";
 import type { SyncIndex, SyncIndexItem, SyncCheckResult } from "../types/syncIndex";
 import type { SteamLoginUser } from "../types/steamLoginUser";
 import type { OwnedSteamGame } from "../types/ownedSteamGame";
+import type { DepotDownloadJob, DepotResolveResult, DepotDownloaderStatus } from "../types/download";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -4160,6 +4161,28 @@ export interface RecentGame {
 
 export async function getRecentPlayedGames(): Promise<RecentGame[]> {
   return await invoke<RecentGame[]>("get_recent_played_games");
+}
+
+// ── Depot Downloader ──────────────────────────────────────────────────────
+
+export async function depotDownloaderResolveDepots(appId: number): Promise<DepotResolveResult> {
+  return await invoke<DepotResolveResult>("depot_downloader_resolve_depots", { appId });
+}
+
+export async function depotDownloaderStart(job: DepotDownloadJob): Promise<string> {
+  return await invoke<string>("depot_downloader_start", { job });
+}
+
+export async function depotDownloaderCancel(jobId: string): Promise<void> {
+  return await invoke("depot_downloader_cancel", { jobId });
+}
+
+export async function depotDownloaderPause(jobId: string): Promise<void> {
+  return await invoke("depot_downloader_pause", { jobId });
+}
+
+export async function depotDownloaderStatus(): Promise<DepotDownloaderStatus> {
+  return await invoke<DepotDownloaderStatus>("depot_downloader_status");
 }
 
 // ── Tray menu ─────────────────────────────────────────────────────────────

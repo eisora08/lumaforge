@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileArchive, Languages, Package, Puzzle, Star, ShieldAlert } from "lucide-react";
+import { FileArchive, Languages, Package, Puzzle, Star, ShieldAlert, HardDrive } from "lucide-react";
 
 import type { PackageGame, PackageSource, RepackEntry } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
@@ -18,7 +18,7 @@ import {
   getDebridGameByAppId,
   subscribeDebridGames,
 } from "../../services/debridGameStore";
-import { openSteamLibrary, queryRepackCatalogByAppId } from "../../services/tauri";
+import { openSteamLibrary, queryRepackCatalogByAppId, depotDownloaderStart } from "../../services/tauri";
 import {
   getSteamDbUrl,
   getSteamStoreUrl,
@@ -49,7 +49,7 @@ import { getCachedProviderStatus, subscribeUpdateStatus } from "../../services/p
 import { fetchHubcapAppStatus, checkHubcapAppUpdate, setLocalPackageMetadata, refreshHubcapStatus } from "../../services/hubcapApiService";
 import type { ProviderCheckState } from "./details/StoreGameSummaryPanel";
 
-import { showError, showSuccess, showWarning } from "../toast/GameToast";
+import { showError, showWarning } from "../toast/GameToast";
 import { pickDirectDebridUri, pickMagnetDebridUri, type RepackInstallOptions } from "../../services/debridInstallChoice";
 import PackageInstallSuccessModal from "../common/PackageInstallSuccessModal";
 
@@ -60,6 +60,7 @@ import StoreGameTechnicalSection from "./details/StoreGameTechnicalSection";
 import StoreGameSummaryPanel from "./details/StoreGameSummaryPanel";
 import StoreSourceSelectorModal from "./StoreSourceSelectorModal";
 import StoreRepackCard from "./StoreRepackCard";
+import StoreDepotCard from "./StoreDepotCard";
 import { InfoBlock } from "./details/StoreGameDetailPrimitives";
 
 import StoreMoreLikeThisSection from "./StoreMoreLikeThisSection";
@@ -291,7 +292,7 @@ export default function StoreGameDetailsPage({
 
   // Exclusive aside tab: shows either the package summary card or the repack card.
   // Resets to "package" whenever the selected game changes.
-  const [detailsTab, setDetailsTab] = useState<"package" | "repack">("package");
+  const [detailsTab, setDetailsTab] = useState<"package" | "repack" | "depot">("package");
   useEffect(() => {
     setDetailsTab("package");
   }, [game.appId]);
@@ -301,6 +302,9 @@ export default function StoreGameDetailsPage({
   // package summary card unconditionally.
   const repackTabVisible =
     DEBRID_STORE_ENABLED && (repacksLoading || repackEntries.length > 0);
+
+  // Depot tab: always visible (depot download is available for any game with lua keys)
+  const depotTabVisible = true;
 
   // Whether the current game's repack is already installed (autoExtract). Live-updates
   // via the Debrid game store subscription; falls back to matching repack entry ids
@@ -406,12 +410,34 @@ export default function StoreGameDetailsPage({
         options.method,
         options,
       );
-      showSuccess(t("store.details.install_started", "Install started: {{title}}", { title: entry.title }), { title: t("store.details.debrid", "Debrid") });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       showError(t("store.details.install_failed", "Failed to start install: {{message}}", { message: msg }), { title: t("store.details.debrid", "Debrid") });
     }
   }, [downloadQueue, game.appId, game.imageUrl, metadata?.name, t]);
+
+  const handleDepotDownload = useCallback(async (selections: import("../../types/download").DepotSelection[], outputDir: string) => {
+    const title = getTitle(game, metadata);
+    // Create a queue job so the progress shows in DownloadsModal
+    const jobId = downloadQueue.addDepotDownloadJob(String(game.appId), title, selections, game.imageUrl, outputDir);
+
+    const job = {
+      jobId,
+      appId: Number(game.appId) || 0,
+      gameName: title,
+      depots: selections,
+      outputDir,
+    };
+    try {
+      await depotDownloaderStart(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showError(
+        t("store.details.depot_download_failed", "Depot download failed: {{message}}", { message: msg }),
+        { title: "Depot Download" }
+      );
+    }
+  }, [game.appId, metadata?.name, t, downloadQueue]);
 
   const handleSelectSourceKey = useCallback((sourceKey: string) => {
     onSelectSourceKey?.(sourceKey);
@@ -1264,6 +1290,7 @@ export default function StoreGameDetailsPage({
     isProviderChecking,
     onCheckForUpdates: handleCheckForUpdates,
     repackActive: detailsTab === "repack" && repackTabVisible,
+    depotActive: detailsTab === "depot" && depotTabVisible,
     repackInstalled,
     repackSourceLabels,
   };
@@ -1329,11 +1356,13 @@ export default function StoreGameDetailsPage({
 
           <aside className="space-y-4">
             <StoreGameSummaryPanel section="hero" {...summaryPanelProps} />
-            {repackTabVisible && (
+            {(repackTabVisible || depotTabVisible) && (
               <div
                 role="tablist"
                 aria-label={t("store.details_view", "Vista de detalles")}
-                className="grid grid-cols-2 gap-1 rounded-xl border border-(--surface-active-border) bg-(--color-surface)/60 p-1 backdrop-blur-sm"
+                className={`grid gap-1 rounded-xl border border-(--surface-active-border) bg-(--color-surface)/60 p-1 backdrop-blur-sm ${
+                  repackTabVisible && depotTabVisible ? "grid-cols-3" : "grid-cols-2"
+                }`}
               >
                 <button
                   type="button"
@@ -1349,25 +1378,43 @@ export default function StoreGameDetailsPage({
                   <Package className="h-3.5 w-3.5" />
                   {t("store.package", "Package")}
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={detailsTab === "repack"}
-                  onClick={() => setDetailsTab("repack")}
-                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${
-                    detailsTab === "repack"
-                      ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
-                      : "text-(--color-muted) hover:bg-white/5 hover:text-(--color-text)"
-                  }`}
-                >
-                  <FileArchive className="h-3.5 w-3.5" />
-                  {t("store.repack", "Repack")}
-                  {repackEntries.length > 0 && (
-                    <span className="rounded-full bg-(--color-accent)/20 px-1.5 text-[10px] font-bold leading-4 text-(--color-accent)">
-                      {repackEntries.length}
-                    </span>
-                  )}
-                </button>
+                {repackTabVisible && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={detailsTab === "repack"}
+                    onClick={() => setDetailsTab("repack")}
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                      detailsTab === "repack"
+                        ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
+                        : "text-(--color-muted) hover:bg-white/5 hover:text-(--color-text)"
+                    }`}
+                  >
+                    <FileArchive className="h-3.5 w-3.5" />
+                    {t("store.repack", "Repack")}
+                    {repackEntries.length > 0 && (
+                      <span className="rounded-full bg-(--color-accent)/20 px-1.5 text-[10px] font-bold leading-4 text-(--color-accent)">
+                        {repackEntries.length}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {depotTabVisible && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={detailsTab === "depot"}
+                    onClick={() => setDetailsTab("depot")}
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                      detailsTab === "depot"
+                        ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
+                        : "text-(--color-muted) hover:bg-white/5 hover:text-(--color-text)"
+                    }`}
+                  >
+                    <HardDrive className="h-3.5 w-3.5" />
+                    {t("store.depot", "Depot")}
+                  </button>
+                )}
               </div>
             )}
             {detailsTab === "repack" && repackTabVisible ? (
@@ -1375,6 +1422,21 @@ export default function StoreGameDetailsPage({
                 repackEntries={repackEntries}
                 repacksLoading={repacksLoading}
                 onInstall={handleInstallRepack}
+                onConfirmDownload={(btn) => {
+                  window.dispatchEvent(new CustomEvent("lumaforge-download-fly", {
+                    detail: { startRect: btn.getBoundingClientRect(), openModal: false },
+                  }));
+                }}
+              />
+            ) : detailsTab === "depot" && depotTabVisible ? (
+              <StoreDepotCard
+                appId={Number(game.appId) || 0}
+                onDownload={handleDepotDownload}
+                onDownloadStart={(btn) => {
+                  window.dispatchEvent(new CustomEvent("lumaforge-download-fly", {
+                    detail: { startRect: btn.getBoundingClientRect(), openModal: false },
+                  }));
+                }}
               />
             ) : (
               <StoreGameSummaryPanel section="download" {...summaryPanelProps} />

@@ -109,6 +109,18 @@ const TOOL_DEFS: &[ToolDef] = &[
         install_to_steam_root: true,
         steam_dll_names: &["dwmapi.dll", "xinput1_4.dll", "OpenSteamTool.dll"],
     },
+    ToolDef {
+        id: "depotdownloader",
+        name: "DepotDownloaderMod",
+        description: "Anonymous Steam depot downloader — downloads game files directly from Steam using depot keys and manifests",
+        github_owner: "mendy-tools",
+        github_repo: "DepotDownloaderMod",
+        preferred_asset: Some("DepotDownloaderMod-win-x64.zip"),
+        preferred_asset_contains: None,
+        extra_repos: None,
+        install_to_steam_root: false,
+        steam_dll_names: &[],
+    },
 ];
 
 // ---------------------------------------------------------------------------

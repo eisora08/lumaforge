@@ -92,7 +92,7 @@ export default function DownloadsModal({ open, onClose, onNavigate }: Props) {
   const activeJobs = useMemo(
     () =>
       jobs.filter((job) =>
-        ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(
+        ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused", "verifying"].includes(
           job.status,
         ),
       ),

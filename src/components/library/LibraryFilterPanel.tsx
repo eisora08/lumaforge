@@ -1,5 +1,5 @@
   import { useTranslation } from "react-i18next";
-  import { Search, RotateCcw } from "lucide-react";
+  import { RotateCcw } from "lucide-react";
 
   export type LibraryFilter = "all" | "lua" | "installed" | "disabled" | "epic";
 
@@ -20,12 +20,12 @@
   export default function LibraryFilterPanel({
     filter,
     sort,
-    query,
+    query: _query,
     filteredCount,
     totalCount,
     onFilterChange,
     onSortChange,
-    onQueryChange,
+    onQueryChange: _onQueryChange,
     onReset,
   }: Props) {
     const { t } = useTranslation();
@@ -57,16 +57,6 @@
               <RotateCcw className="h-2.5 w-2.5" />
               {t("library_page.reset", "Reset")}
             </button>
-          </div>
-
-          <div className="relative mb-4">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
-            <input
-              value={query}
-              onChange={(e) => onQueryChange(e.target.value)}
-              placeholder={t("library_page.search_placeholder", "Search library...")}
-              className="w-full rounded-xl border border-(--surface-active-border)/40 bg-white/5 py-1.5 pl-8 pr-2.5 text-[11px] text-(--color-text) outline-none placeholder:text-(--color-muted)/40 focus:border-(--color-accent)/30"
-            />
           </div>
 
           <div className="mb-4">

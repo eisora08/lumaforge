@@ -4,3 +4,7 @@ pub mod archive_utils;
 pub mod install_utils;
 pub mod progress_utils;
 pub mod image_utils;
+pub mod lua_parser;
+pub mod config_vdf_parser;
+pub mod manifest_parser;
+pub mod steamcmd_api;

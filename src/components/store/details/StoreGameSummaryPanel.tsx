@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { useMemo } from "react";
 import AsyncImage from "../../common/AsyncImage";
 import HubcapProviderBadges from "../../settings/HubcapProviderBadges";
 import {
@@ -10,6 +11,7 @@ import {
   FileCode2,
   FileText,
   Gamepad2,
+  Loader2,
   PauseCircle,
   RefreshCw,
   Library,
@@ -21,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { SummaryLine } from "./StoreGameDetailPrimitives";
+import { useDownloadQueueContext } from "../../../context/DownloadQueueContext";
 import type { PackageGame, PackageSource } from "../../../types/package";
 import type { PackageInstallStatus } from "../../../types/packageInstall";
 import type { SourceCheckStatus } from "../../../services/sourceAvailabilityCacheService";
@@ -145,8 +148,14 @@ function getButtonConfig(
   onCheckForUpdates: (() => void) | undefined,
   onOpenSteam: (() => void) | undefined,
   sourceProgress: SourceProgress,
+  isDownloading: boolean,
   t: (key: string, fallback: string, opts?: Record<string, unknown>) => string,
 ): ButtonConfig {
+  // Downloading state — highest priority after lua-installed
+  if (isDownloading) {
+    return { label: t("store.summary.downloading", "Descargando..."), enabled: false, onClick: undefined, reason: "downloading" };
+  }
+
   // Non-installed Lua games (orphaned config/lua files) always show "Install via Steam"
   // regardless of source status. Must be checked before isChecking to prevent
   // "Checking sources..." from short-circuiting the install button.
@@ -274,12 +283,24 @@ export default function StoreGameSummaryPanel({
   repackSourceLabels = [],
 }: StoreGameSummaryPanelProps) {
   const { t } = useTranslation();
+  const { getJobByAppId } = useDownloadQueueContext();
   const isChecking = (sourceStatus === "checking" || sourceStatus === "idle") && !isBackgroundChecking;
   const isReady = sourceStatus === "ready" || availableSources > 0;
   const isNone = sourceStatus === "none" && availableSources === 0;
   const isError = sourceStatus === "error";
   const isTimeout = sourceStatus === "timeout";
   const isNeedsConfig = sourceStatus === "needs-configuration";
+
+  // Check if there's an active download for this game
+  const activeDownload = useMemo(() => {
+    const job = getJobByAppId(game.appId);
+    if (!job) return undefined;
+    const activeStatuses = ["waiting", "downloading", "verifying", "paused", "starting"];
+    if (!activeStatuses.includes(job.status)) return undefined;
+    return job;
+  }, [game.appId, getJobByAppId]);
+
+  const isDownloading = !!activeDownload && activeDownload.status !== "paused";
 
   const summaryBadges = getSummaryBadges(isSteamInstalled, installStatus, luaInstalled, steamOwned, t);
   const canDownload = isReady && !!selectedSource?.available;
@@ -315,6 +336,7 @@ export default function StoreGameSummaryPanel({
     onCheckForUpdates,
     onOpenSteam,
     sourceProgress,
+    isDownloading,
     t,
   );
 
@@ -685,13 +707,32 @@ export default function StoreGameSummaryPanel({
           <button
             type="button"
             disabled={!buttonConfig.enabled}
-            onClick={buttonConfig.onClick}
-            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={(e) => {
+              // Dispatch fly animation event
+              if (buttonConfig.enabled && buttonConfig.reason?.includes("download")) {
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                window.dispatchEvent(new CustomEvent("lumaforge-download-fly", { detail: { startRect: rect, openModal: false } }));
+              }
+              buttonConfig.onClick?.();
+            }}
+            className="relative flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {buttonConfig.reason === "lua-not-installed-install-steam"
-              ? <ExternalLink className="h-4 w-4" />
-              : <Download className="h-4 w-4" />}
-            {buttonConfig.label}
+            {buttonConfig.reason === "downloading" && activeDownload?.progress != null && (
+              <div
+                className="absolute inset-0 bg-white/15"
+                style={{ width: `${Math.round(activeDownload.progress * 100)}%`, transition: "width 500ms ease-out" }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-2">
+              {buttonConfig.reason === "downloading" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : buttonConfig.reason === "lua-not-installed-install-steam" ? (
+                <ExternalLink className="h-4 w-4" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {buttonConfig.label}
+            </span>
           </button>
 
           <button

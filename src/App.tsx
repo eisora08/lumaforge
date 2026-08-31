@@ -467,7 +467,10 @@ function App() {
     <ConfirmProvider>
       <GameSessionProvider>
       <SessionOverlayWrapper />
-      <DebridCompletionModal onNavigateToLibrary={() => handleNavigate("library")} />
+      <DebridCompletionModal onNavigateToLibrary={(_appId) => {
+        // setPendingLibraryFocus is called inside DebridCompletionModal before this
+        handleNavigate("library");
+      }} />
       <AchievementWatcherInit />
       <GameDetailsProvider>
         {settings.gameSessionHudEnabled !== false && <GameSessionHUD onNavigate={handleNavigate} />}
@@ -485,7 +488,7 @@ function App() {
               {/* Keep-alive: Library stays mounted but hidden when navigating away */}
               {libraryMountedRef.current && (
                 <div style={activePage !== "library" ? { display: "none" } : undefined}>
-                  <Library onNavigate={handleNavigate} />
+                  <Library onNavigate={handleNavigate} activePage={activePage} />
                 </div>
               )}
               {/* Render active page (except Library, handled above) */}

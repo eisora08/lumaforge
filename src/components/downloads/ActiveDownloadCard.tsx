@@ -32,6 +32,7 @@ const CANCELLABLE = new Set<DownloadStatus>([
   "extracting",
   "installing",
   "paused",
+  "verifying",
 ]);
 
 const STATUS_LABEL: Record<DownloadStatus, string> = {
@@ -42,6 +43,7 @@ const STATUS_LABEL: Record<DownloadStatus, string> = {
   extracting: "Extrayendo",
   installing: "Instalando",
   paused: "Pausado",
+  verifying: "Verificando",
   done: "Completado",
   failed: "Fallido",
   cancelled: "Cancelado",
@@ -104,10 +106,10 @@ export default function ActiveDownloadCard({
   }, [onCancel, download.id]);
 
   const canPause =
-    download.isDebrid &&
+    (download.isDebrid || download.isDepotDownload) &&
     CANCELLABLE.has(download.status) &&
     download.status !== "paused";
-  const canResume = download.isDebrid && download.status === "paused";
+  const canResume = (download.isDebrid || download.isDepotDownload) && download.status === "paused";
   const canCancel = CANCELLABLE.has(download.status);
   const isPaused = download.status === "paused";
   const indeterminate = download.progressMode !== "determinate";

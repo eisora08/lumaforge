@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import AmbientBackground from "./AmbientBackground";
+import DownloadFlyAnimation from "../common/DownloadFlyAnimation";
 import { SearchProvider } from "../../context/SearchContext";
 import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
 import { GameActivityProvider } from "../../context/GameActivityContext";
@@ -150,6 +151,7 @@ function AppLayoutDesktop({
     >
       <div className="lf-backdrop" />
       <AmbientBackground />
+      <DownloadFlyAnimation />
 
         <GameActivityProvider>
         <StoreTabProvider>

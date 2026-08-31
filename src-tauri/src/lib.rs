@@ -728,6 +728,11 @@ pub fn run() {
             commands::launcher_achievements::write_launcher_achievements,
             commands::launcher_achievements::read_launcher_xp_events,
             commands::launcher_achievements::write_launcher_xp_events,
+            commands::depot_downloader::depot_downloader_resolve_depots,
+            commands::depot_downloader::depot_downloader_start,
+            commands::depot_downloader::depot_downloader_cancel,
+            commands::depot_downloader::depot_downloader_pause,
+            commands::depot_downloader::depot_downloader_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

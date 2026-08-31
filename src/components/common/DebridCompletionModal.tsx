@@ -8,6 +8,7 @@ import {
   subscribeDebridGames,
 } from "../../services/debridGameStore";
 import { setupDebridGame } from "../../services/tauri";
+import { setPendingLibraryFocus } from "../../services/libraryNavigationService";
 import { open } from "@tauri-apps/plugin-dialog";
 import { showError, showSuccess } from "../toast/GameToast";
 
@@ -50,7 +51,9 @@ export default function DebridCompletionModal({ onNavigateToLibrary }: Props) {
         if (selected) {
           updateDebridGame(info.providerGameId, info.installDir, selected);
           showSuccess(t("debrid.exe_set"));
-          onNavigateToLibrary?.(info.appId ?? info.providerGameId);
+          const appId = info.appId ?? info.providerGameId;
+          setPendingLibraryFocus(appId);
+          onNavigateToLibrary?.(appId);
         } else {
           // User cancelled — re-show modal
           setCompletion(info);
@@ -71,7 +74,9 @@ export default function DebridCompletionModal({ onNavigateToLibrary }: Props) {
 
       if (result.success) {
         updateDebridGame(info.providerGameId, info.installDir, result.executablePath ?? undefined);
-        onNavigateToLibrary?.(info.appId ?? info.providerGameId);
+        const appId = info.appId ?? info.providerGameId;
+        setPendingLibraryFocus(appId);
+        onNavigateToLibrary?.(appId);
       } else {
         showError(result.message || t("debrid.setup_failed"));
       }

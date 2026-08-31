@@ -19,6 +19,7 @@ export type ActiveDownload = {
   isTorrent: boolean;
   isSteam: boolean;
   isDebrid: boolean;
+  isDepotDownload: boolean;
   repacker?: string;
   peers?: number;
   seeds?: number;
@@ -44,6 +45,7 @@ const ACTIVE_STATUSES = new Set<DownloadStatus>([
   "extracting",
   "installing",
   "paused",
+  "verifying",
 ]);
 
 export function formatBytes(bytes: number): string {
@@ -94,7 +96,7 @@ function resolveDisplayTitle(job: DownloadJob): string {
 
 function resolveCoverUrl(job: DownloadJob): string | undefined {
   if (job.artworkUrl) return job.artworkUrl;
-  if (job.type === "steam-install") {
+  if (job.type === "steam-install" || job.type === "steam-depot-download") {
     const snapshot = getBootSnapshot();
     const media = snapshot?.library.games.find(
       (g) => g.appId === job.appId || g.appId.endsWith(`-${job.appId}`)
@@ -133,10 +135,26 @@ export function useActiveDownload(job: DownloadJob): ActiveDownload {
 
     const samples = _samplesByJob.get(job.id) ?? [];
     const speeds: number[] = [];
+    const WINDOW_MS = 5000;
+    const EMA_ALPHA = 0.3;
+    let emaSpeed: number | null = null;
     for (let i = 1; i < samples.length; i += 1) {
       const dt = (samples[i].t - samples[i - 1].t) / 1000;
-      const db = samples[i].bytes - samples[i - 1].bytes;
-      if (dt > 0 && db >= 0) speeds.push(db / dt);
+      if (dt <= 0) continue;
+      // Find the sample closest to WINDOW_MS ago
+      const cutoff = samples[i].t - WINDOW_MS;
+      let older = samples[i - 1];
+      for (let j = i - 2; j >= 0; j--) {
+        if (samples[j].t <= cutoff) { older = samples[j]; break; }
+      }
+      const db = samples[i].bytes - older.bytes;
+      const windowDt = (samples[i].t - older.t) / 1000;
+      if (windowDt > 0.3 && db >= 0) {
+        const raw = db / windowDt;
+        // Exponential moving average for smoothness
+        emaSpeed = emaSpeed === null ? raw : EMA_ALPHA * raw + (1 - EMA_ALPHA) * emaSpeed;
+        speeds.push(emaSpeed);
+      }
     }
     const history = speeds.slice(-HISTORY_LEN);
 
@@ -178,6 +196,7 @@ export function useActiveDownload(job: DownloadJob): ActiveDownload {
       isTorrent: job.installMethod === "torrent",
       isSteam: job.type === "steam-install",
       isDebrid: job.type === "debrid-install",
+      isDepotDownload: job.type === "steam-depot-download",
       repacker: job.repacker,
       peers: job.peers,
       seeds: job.seeds,

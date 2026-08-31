@@ -1,23 +1,11 @@
 import { downloadAndInstallPackage } from "../../services/tauri";
 import { saveProviderStatusAfterInstall, saveProviderStatusAuthError, type ProviderStatusOptions } from "../../services/providerStatusService";
 import { getEffectiveProviderAuthHeaders } from "../../services/providerSearch";
-import { showError, showWarning, showSuccess } from "../../components/toast/GameToast";
+import { showError, showWarning } from "../../components/toast/GameToast";
 import type { AppSettings } from "../../types/settings";
 import type { PackageGame, PackageSource } from "../../types/package";
 import type { DownloadJob } from "../../types/download";
 import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabilityCacheService";
-
-/* Toast dedup: one completed job → one success toast */
-const _toastShownJobIds = new Set<string>();
-function shouldShowToast(jobId: string): boolean {
-  if (_toastShownJobIds.has(jobId)) return false;
-  _toastShownJobIds.add(jobId);
-  if (_toastShownJobIds.size > 200) {
-    const first = _toastShownJobIds.values().next().value;
-    if (first) _toastShownJobIds.delete(first);
-  }
-  return true;
-}
 
 export type DownloadFromSourceDeps = {
   settings: AppSettings;
@@ -132,13 +120,6 @@ export async function downloadFromSource(
       bytesRead: result.bytes_read,
       totalBytes: result.total_bytes,
     });
-
-    if (shouldShowToast(job.id)) {
-      showSuccess(result.message, {
-        title: "Paquete instalado",
-        id: `pkg-installed-${job.id}`,
-      });
-    }
 
     // Refresh local installed-scripts state (Store.tsx owns this; GameDetails.tsx skips)
     if (refreshInstalledScripts) {

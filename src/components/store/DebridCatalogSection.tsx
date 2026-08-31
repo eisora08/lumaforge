@@ -21,7 +21,7 @@ import {
   clearPendingSetup,
   updateDebridGame,
 } from "../../services/debridGameStore";
-import { showError, showSuccess, showWarning } from "../toast/GameToast";
+import { showError, showWarning } from "../toast/GameToast";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 import type { RepackInstallOptions } from "../../services/debridInstallChoice";
 import { pickDirectDebridUri, pickMagnetDebridUri } from "../../services/debridInstallChoice";
@@ -373,8 +373,6 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
       options.method,
       options,
     );
-
-    showSuccess(t("debrid.catalog.download_queued", "Download queued. Check the downloads icon in the top bar for progress."));
   }, [game, downloadQueue]);
 
   const handleRunSetup = useCallback(async (e: React.MouseEvent) => {
@@ -446,6 +444,11 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
           configuredProviders={configuredProviders}
           onClose={() => setInstallOpen(false)}
           onConfirm={handleInstallConfirm}
+          onConfirmDownload={(btn) => {
+            window.dispatchEvent(new CustomEvent("lumaforge-download-fly", {
+              detail: { startRect: btn.getBoundingClientRect(), openModal: false },
+            }));
+          }}
         />
       )}
 

@@ -11,6 +11,7 @@ import {
   X,
   HardDrive,
   Code,
+  Download,
 } from "lucide-react";
 
 import {
@@ -36,6 +37,8 @@ function toolIcon(id: string): React.ReactNode {
       return <HardDrive className="h-5 w-5" />;
     case "opensteamtool":
       return <Code className="h-5 w-5" />;
+    case "depotdownloader":
+      return <Download className="h-5 w-5" />;
     default:
       return <HardDrive className="h-5 w-5" />;
   }

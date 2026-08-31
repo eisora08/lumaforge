@@ -8,6 +8,7 @@ import {
   FileText,
   FolderOpen,
   Gamepad2,
+  HardDrive,
   Heart,
   Loader2,
   Play,
@@ -69,6 +70,7 @@ import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtimeService";
 import GameEditDialog from "./GameEditDialog";
 import ToolsModal from "../tools/ToolsModal";
+import DepotPickerModal from "../library/DepotPickerModal";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -169,6 +171,7 @@ function GameLauncherTileInner({
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editInitialTab, setEditInitialTab] = useState<"details" | "media">("details");
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
+  const [depotModalOpen, setDepotModalOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const _favKey = getFavoriteKey(game);
   const favorite = _favKey ? isFavorite(_favKey) : false;
@@ -851,6 +854,13 @@ function GameLauncherTileInner({
                       onClick: () => { setMenuOpen(false); setToolsModalOpen(true); onOverlayToggle?.(true); },
                     }]
                   : []),
+                ...(hasLua
+                  ? [{
+                      label: t("context_menu.depot_download", "Depot Download"),
+                      icon: <HardDrive className="h-3.5 w-3.5" />,
+                      onClick: () => { setMenuOpen(false); setDepotModalOpen(true); onOverlayToggle?.(true); },
+                    }]
+                  : []),
                     ...(game.source === "manual"
                     ? [{
                         label: t("context_menu.delete_manual", "Delete Manual Game"),
@@ -969,6 +979,21 @@ function GameLauncherTileInner({
               game={game}
               onClose={() => { setToolsModalOpen(false); onOverlayToggle?.(false); }}
             />
+
+            {hasLua && (
+              <DepotPickerModal
+                open={depotModalOpen}
+                appId={Number(game.appId) || 0}
+                gameName={game.title || ""}
+                headerImage={game.imageUrl}
+                onClose={() => { setDepotModalOpen(false); onOverlayToggle?.(false); }}
+                onDownloadStart={(btn) => {
+                  window.dispatchEvent(new CustomEvent("lumaforge-download-fly", {
+                    detail: { startRect: btn.getBoundingClientRect(), openModal: false },
+                  }));
+                }}
+              />
+            )}
           </>
         )}
       </div>

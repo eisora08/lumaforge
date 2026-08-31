@@ -45,6 +45,7 @@ type StoreRepackInstallModalProps = {
   configuredProviders: ProviderId[];
   onClose: () => void;
   onConfirm: (options: RepackInstallOptions) => void | Promise<void>;
+  onConfirmDownload?: (buttonEl: HTMLElement) => void;
 };
 
 export default function StoreRepackInstallModal({
@@ -53,6 +54,7 @@ export default function StoreRepackInstallModal({
   configuredProviders,
   onClose,
   onConfirm,
+  onConfirmDownload,
 }: StoreRepackInstallModalProps) {
   const { t } = useTranslation();
   const [method, setMethod] = useState<DebridInstallMethod>("direct");
@@ -148,8 +150,12 @@ export default function StoreRepackInstallModal({
     if (dir) setDestDir(dir);
   }
 
-  async function handleConfirm() {
+  async function handleConfirm(e?: React.MouseEvent) {
     if (!canConfirm || confirming) return;
+    // Dispatch fly animation from the confirm button
+    if (e?.currentTarget) {
+      onConfirmDownload?.(e.currentTarget as HTMLElement);
+    }
     setConfirming(true);
     try {
       await onConfirm({

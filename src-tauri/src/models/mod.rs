@@ -25,3 +25,4 @@ pub mod startup_snapshot;
 pub mod playtime;
 pub mod hubcap;
 pub mod debrid_install_result;
+pub mod depot;

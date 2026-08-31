@@ -75,9 +75,10 @@ const DEBUG_LUA_DELETE = false;
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
+  activePage?: AppPage;
 };
 
-export default function LibraryPage({ onNavigate }: Props) {
+export default function LibraryPage({ onNavigate, activePage }: Props) {
   const { settings } = useSettings();
   const { games, warnings, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
   const session = useGameSession();
@@ -101,6 +102,8 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const queuedMediaRef = useRef<Map<string, number>>(new Map());
   const { confirm } = useConfirm();
@@ -155,7 +158,8 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [focusAppId, setFocusAppId] = useState<string | null>(null);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
 
-  // Consume pending library focus on mount (set by Store after package download)
+  // Consume pending library focus — runs on mount AND when navigating back to library
+  // (Library uses keep-alive so it never unmounts; activePage change is the re-entry signal)
   useEffect(() => {
     const pending = consumePendingLibraryFocus();
     if (pending) {
@@ -164,10 +168,16 @@ export default function LibraryPage({ onNavigate }: Props) {
       // Reset filters so the focus game is visible regardless of prior filter state
       setFilter("all");
       setSort("name");
-      setSearchQuery("");
-      console.log(`[LIBRARY_FOCUS][MOUNT] appid=${pending.appId} title="${pending.title || ""}"`);
+      // Pre-fill search with the game title and open the search input
+      if (pending.title) {
+        setSearchQuery(pending.title);
+        setSearchOpen(true);
+      } else {
+        setSearchQuery("");
+      }
+      console.log(`[LIBRARY_FOCUS] appid=${pending.appId} title="${pending.title || ""}"`);
     }
-  }, []);
+  }, [activePage]);
 
   // Ambient background: keep showing the last library game's details art while
   // the grid is mounted. LibraryGameDetails remembers it before unmounting; the
@@ -620,6 +630,41 @@ export default function LibraryPage({ onNavigate }: Props) {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {/* Expandable search */}
+                      <div className="flex items-center">
+                        {searchOpen ? (
+                          <div className="flex items-center gap-1.5 rounded-xl border border-(--surface-active-border)/40 bg-white/5 pr-1.5 transition-all duration-300">
+                            <Search className="ml-2.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
+                            <input
+                              ref={searchInputRef}
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              onBlur={() => { if (!searchQuery) setSearchOpen(false); }}
+                              onKeyDown={(e) => { if (e.key === "Escape") { setSearchQuery(""); setSearchOpen(false); } }}
+                              placeholder={t("library_page.search_placeholder", "Search...")}
+                              className="w-44 rounded-xl bg-transparent py-1.5 pl-1 pr-2 text-[11px] text-(--color-text) outline-none placeholder:text-(--color-muted)/40"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => { setSearchQuery(""); setSearchOpen(false); }}
+                              className="flex h-5 w-5 items-center justify-center rounded-md text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSearchOpen(true)}
+                            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-white/[0.04] px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) lf-press-effect"
+                            title={t("library_page.search_placeholder", "Search...")}
+                          >
+                            <Search className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+
                       <div className="relative">
                         <div className="flex">
                           <button
@@ -759,6 +804,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                           onClick={() => {
                             setFocusAppId(null);
                             setFocusTitle(null);
+                            setSearchQuery("");
+                            setSearchOpen(false);
                             console.log(`[LIBRARY_FOCUS][CLEAR] reason=user-dismiss`);
                           }}
                           className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"

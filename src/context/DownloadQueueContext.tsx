@@ -6,11 +6,11 @@ import {
   useState,
 } from "react";
 
-import { DownloadJob, DownloadStatus } from "../types/download";
+import { DownloadJob, DownloadStatus, DepotSelection } from "../types/download";
 import { useSteamInstallSync } from "../hooks/useSteamInstallSync";
 import { useEpicInstallSync } from "../hooks/useEpicInstallSync";
 import { useDebridInstallSync, type DebridInstallHandle } from "../hooks/useDebridInstallSync";
-import { cancelDebridDownload, pauseDebridDownload } from "../services/tauri";
+import { cancelDebridDownload, pauseDebridDownload, depotDownloaderCancel, depotDownloaderPause, depotDownloaderStart } from "../services/tauri";
 import type { DebridInstallMethod, RepackInstallOptions } from "../services/debridInstallChoice";
 import type { ProviderId } from "../services/debridProviderService";
 
@@ -48,6 +48,7 @@ type DownloadQueueContextValue = {
   addJob: (input: CreateDownloadJobInput) => DownloadJob;
   addSteamInstallJob: (appId: string, title: string, artworkUrl?: string) => string;
   addDebridInstallJob: (providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string, installMethod?: DebridInstallMethod, options?: RepackInstallOptions) => string;
+  addDepotDownloadJob: (appId: string, title: string, depotSelections: DepotSelection[], artworkUrl?: string, destDir?: string) => string;
   updateJob: (jobId: string, update: UpdateDownloadJobInput) => void;
   cancelJob: (jobId: string) => void;
   pauseJob: (jobId: string) => void;
@@ -67,6 +68,7 @@ const activeStatuses: DownloadStatus[] = [
   "extracting",
   "installing",
   "paused",
+  "verifying",
 ];
 
 const DownloadQueueContext =
@@ -106,11 +108,23 @@ function loadJobs(): DownloadJob[] {
         progressMode: job.progressMode ?? "determinate",
       };
 
-      // App reload while active — mark as failed unless it's a steam-install (can't verify on reload)
+      // App reload while active — mark as failed unless it's a resumable type
       if (activeStatuses.includes(migrated.status)) {
         if (migrated.type === "debrid-install") {
           // Debrid installs resume from their HTTP `.part` checkpoint or torrent
           // fastresume — keep them "paused" for a manual resume instead of failing.
+          return {
+            ...migrated,
+            status: "paused",
+            error: undefined,
+            message: "Download paused",
+            updatedAt: new Date().toISOString(),
+          };
+        }
+
+        if (migrated.type === "steam-depot-download") {
+          // Depot downloads resume via -validate on existing output directory
+          // — keep them "paused" for a manual resume instead of failing.
           return {
             ...migrated,
             status: "paused",
@@ -329,6 +343,42 @@ export function DownloadQueueProvider({
     return jobId;
   }
 
+  function addDepotDownloadJob(appId: string, title: string, depotSelections: DepotSelection[], artworkUrl?: string, destDir?: string): string {
+    const jobId = `depot-download-${appId}-${Date.now()}`;
+    const now = new Date().toISOString();
+
+    const totalBytes = depotSelections.reduce((sum, d) => sum + (d.size || 0), 0);
+
+    const job: DownloadJob = {
+      id: jobId,
+      appId,
+      gameTitle: title,
+      providerId: "steam",
+      providerName: "Steam",
+      fileType: "manifest",
+      type: "steam-depot-download",
+      progressMode: totalBytes > 0 ? "determinate" : "indeterminate",
+      message: "Starting depot download\u2026",
+      artworkUrl,
+      depotSelections,
+      destDir: destDir || "Downloads/LumaForge/Depot",
+
+      status: "queued",
+      progress: 0,
+      bytesRead: 0,
+      totalBytes,
+
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const filtered = jobs.filter((j) => j.appId !== appId || j.type !== "steam-depot-download" || !["done", "failed", "cancelled"].includes(j.status));
+    const nextJobs = [job, ...filtered];
+    commitJobs(nextJobs);
+
+    return jobId;
+  }
+
   function updateJob(jobId: string, update: UpdateDownloadJobInput) {
     setJobs((currentJobs) => {
       const nextJobs = currentJobs.map((job) => {
@@ -356,70 +406,101 @@ export function DownloadQueueProvider({
       status: "cancelled",
       error: "Cancelled by user",
     });
-    // Bug 4 fix: also abort the in-flight Rust download
-    try {
-      await cancelDebridDownload(jobId);
-    } catch (e) {
-      console.warn("[DOWNLOAD][CANCEL] Failed to abort Rust download:", e);
+    // Also abort the in-flight Rust download
+    const job = jobs.find((j) => j.id === jobId);
+    if (job?.type === "steam-depot-download") {
+      try {
+        await depotDownloaderCancel(jobId);
+      } catch (e) {
+        console.warn("[DOWNLOAD][CANCEL] Failed to abort depot download:", e);
+      }
+    } else {
+      try {
+        await cancelDebridDownload(jobId);
+      } catch (e) {
+        console.warn("[DOWNLOAD][CANCEL] Failed to abort Rust download:", e);
+      }
     }
   }
 
-  /** Pause a debrid-install job (HTTP checkpoint or torrent fastresume kept on disk). */
+  /** Pause a download job — debrid uses cooperative flag, depot kills the process. */
   async function pauseJob(jobId: string) {
     const job = jobs.find((j) => j.id === jobId);
-    if (!job || job.type !== "debrid-install") return;
+    if (!job) return;
 
     updateJob(jobId, {
       status: "paused",
       message: "Pausing\u2026",
     });
-    try {
-      await pauseDebridDownload(jobId);
-    } catch (e) {
-      console.warn("[DOWNLOAD][PAUSE] Failed to pause Rust download:", e);
-      // Revert to the pre-pause state — nothing was paused on the Rust side.
-      updateJob(jobId, {
-        status: job.status,
-        message: job.message,
-      });
+
+    if (job.type === "steam-depot-download") {
+      try {
+        await depotDownloaderPause(jobId);
+      } catch (e) {
+        console.warn("[DOWNLOAD][PAUSE] Failed to pause depot download:", e);
+        updateJob(jobId, { status: job.status, message: job.message });
+      }
+    } else if (job.type === "debrid-install") {
+      try {
+        await pauseDebridDownload(jobId);
+      } catch (e) {
+        console.warn("[DOWNLOAD][PAUSE] Failed to pause Rust download:", e);
+        updateJob(jobId, { status: job.status, message: job.message });
+      }
     }
   }
 
-  /** Resume a previously paused debrid-install job (re-invokes the install pipeline). */
+  /** Resume a previously paused download job. */
   async function resumeJob(jobId: string) {
     const job = jobs.find((j) => j.id === jobId);
-    if (!job || job.type !== "debrid-install") return;
-
-    const providerGameId = jobId.replace("debrid-install-", "");
-    if (!providerGameId || !job.downloadUrl) return;
+    if (!job) return;
 
     updateJob(jobId, {
       status: "queued",
       message: "Resuming\u2026",
       error: undefined,
     });
-    // Rebuild the install options from the persisted job so a resumed download
-    // honors the original destination directory and auto-extract/delete flags.
-    const resumeOptions: RepackInstallOptions | undefined =
-      job.destDir || job.autoExtract !== undefined || job.deleteArchive !== undefined
-        ? {
-            method: job.installMethod ?? "debrid",
-            provider: job.debridProviderId as ProviderId | undefined,
-            destDir: job.destDir ?? "",
-            autoExtract: job.autoExtract ?? true,
-            deleteArchive: job.deleteArchive ?? false,
-          }
-        : undefined;
-    await debridInstallRef.current.startInstall(
-      jobId,
-      providerGameId,
-      job.downloadUrl,
-      "zip",
-      job.gameTitle,
-      job.installMethod,
-      resumeOptions,
-      job.appId,
-    );
+
+    if (job.type === "steam-depot-download" && job.depotSelections) {
+      // Re-run depot download — -validate will be auto-passed since output dir has content
+      try {
+        const outputDir = job.destDir || "Downloads/LumaForge/Depot";
+        await depotDownloaderStart({
+          jobId,
+          appId: Number(job.appId) || 0,
+          gameName: job.gameTitle,
+          depots: job.depotSelections,
+          outputDir,
+        });
+      } catch (e) {
+        console.warn("[DOWNLOAD][RESUME] Failed to resume depot download:", e);
+        updateJob(jobId, { status: "failed", error: String(e) });
+      }
+    } else if (job.type === "debrid-install") {
+      const providerGameId = jobId.replace("debrid-install-", "");
+      if (!providerGameId || !job.downloadUrl) return;
+
+      const resumeOptions: RepackInstallOptions | undefined =
+        job.destDir || job.autoExtract !== undefined || job.deleteArchive !== undefined
+          ? {
+              method: job.installMethod ?? "debrid",
+              provider: job.debridProviderId as ProviderId | undefined,
+              destDir: job.destDir ?? "",
+              autoExtract: job.autoExtract ?? true,
+              deleteArchive: job.deleteArchive ?? false,
+            }
+          : undefined;
+      await debridInstallRef.current.startInstall(
+        jobId,
+        providerGameId,
+        job.downloadUrl,
+        "zip",
+        job.gameTitle,
+        job.installMethod,
+        resumeOptions,
+        job.appId,
+      );
+    }
   }
 
   function removeJob(jobId: string) {
@@ -456,6 +537,7 @@ export function DownloadQueueProvider({
       addSteamInstallJob,
       addEpicInstallJob,
       addDebridInstallJob,
+      addDepotDownloadJob,
       updateJob,
       cancelJob,
       pauseJob,

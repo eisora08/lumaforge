@@ -30,6 +30,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   steamless: "DRM unpacker — removes SteamStub protection from game executables for offline use.",
   goldberg_fork: "Goldberg Steam Emu fork — emulates Steam API locally for offline multiplayer and achievements.",
   opensteamtool: "Open-source Steam unlocker with Lua scripting support. Installed to your Steam root directory.",
+  depotdownloader: "Anonymous Steam depot downloader — downloads game files directly from Steam using depot keys and manifests.",
 };
 
 export default function WizardTools({ currentStep, totalSteps, onBack, onContinue, onSkip }: Props) {

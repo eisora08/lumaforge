@@ -15,6 +15,7 @@ import {
   type ProviderId,
 } from "../../services/debridProviderService";
 import { useSettings } from "../../context/SettingsContext";
+import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import StoreRepackInstallModal from "./StoreRepackInstallModal";
 
 function formatBytes(bytes?: number | null): string {
@@ -32,6 +33,7 @@ type StoreRepackCardProps = {
   repackEntries: RepackEntry[];
   repacksLoading: boolean;
   onInstall: (entry: RepackEntry, options: RepackInstallOptions) => void | Promise<void>;
+  onConfirmDownload?: (buttonEl: HTMLElement) => void;
 };
 
 type PopupPos = { left: number; width: number; top?: number; bottom?: number };
@@ -40,13 +42,14 @@ export default function StoreRepackCard({
   repackEntries,
   repacksLoading,
   onInstall,
+  onConfirmDownload,
 }: StoreRepackCardProps) {
   const { settings } = useSettings();
+  const { getJobByAppId } = useDownloadQueueContext();
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [installing, setInstalling] = useState(false);
   const [menuPos, setMenuPos] = useState<PopupPos | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuPortalRef = useRef<HTMLDivElement | null>(null);
@@ -140,14 +143,21 @@ export default function StoreRepackCard({
   const activeEntry =
     groupEntries.find((e) => e.id === selectedEntryId) ?? groupEntries[0] ?? null;
 
+  // Check if there's an active download for this game in the queue
+  const activeJob = useMemo(() => {
+    if (!activeEntry) return undefined;
+    const job = getJobByAppId(String(activeEntry.appId));
+    if (!job) return undefined;
+    const activeStatuses = ["waiting", "downloading", "verifying", "paused", "starting"];
+    if (!activeStatuses.includes(job.status)) return undefined;
+    return job;
+  }, [activeEntry?.appId, getJobByAppId]);
+
+  const isDownloading = !!activeJob && activeJob.status !== "paused";
+
   async function handleConfirm(options: RepackInstallOptions) {
     if (!activeEntry) return;
-    setInstalling(true);
-    try {
-      await onInstall(activeEntry, options);
-    } finally {
-      setInstalling(false);
-    }
+    await onInstall(activeEntry, options);
   }
 
   return (
@@ -288,16 +298,16 @@ export default function StoreRepackCard({
             </p>
             <button
               type="button"
-              disabled={installing}
+              disabled={isDownloading}
               onClick={() => setModalOpen(true)}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-3 py-3 text-sm font-bold text-(--color-accent-text) shadow-lg shadow-(--color-accent)/25 transition duration-150 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {installing ? (
+              {isDownloading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              Descargar
+              {isDownloading ? "Descargando..." : "Descargar"}
             </button>
           </div>
         )}
@@ -311,6 +321,7 @@ export default function StoreRepackCard({
           configuredProviders={configuredProviders}
           onClose={() => setModalOpen(false)}
           onConfirm={handleConfirm}
+          onConfirmDownload={onConfirmDownload}
         />
       )}
     </div>

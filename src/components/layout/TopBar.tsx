@@ -433,6 +433,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
 
         {/* Downloads icon with progress ring */}
         <button
+          id="topbar-download-btn"
           onClick={() => setDownloadsOpen(true)}
           className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 transition hover:bg-white/8"
           title={t("topbar.downloads")}
