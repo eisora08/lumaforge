@@ -102,15 +102,23 @@ type GameLauncherTileProps = {
 function getCardImage(
   mode: "landscape" | "poster",
   canonicalAppInfo: GameAppInfo | null,
+  game?: LibraryGame,
 ): string | undefined {
   const media = canonicalAppInfo?.media;
-  if (!media) return undefined;
-
-  if (mode === "poster") {
-    return media.coverPath || undefined;
+  if (media) {
+    const path = mode === "poster" ? media.coverPath : media.landscapePath;
+    if (path) return path;
   }
 
-  return media.landscapePath || undefined;
+  // Fallback: use local disk paths from games_v2 DB
+  if (game) {
+    const path = mode === "poster"
+      ? (game.coverPath || game.landscapePath)
+      : (game.landscapePath || game.coverPath);
+    if (path) return path;
+  }
+
+  return undefined;
 }
 
 const DEBUG_MANUAL_REMOVE = false;
@@ -250,22 +258,23 @@ function GameLauncherTileInner({
   }
 
   const displayImage = useMemo(
-    () => getCardImage(artworkMode, canonicalInfo),
-    [artworkMode, canonicalInfo]
+    () => getCardImage(artworkMode, canonicalInfo, game),
+    [artworkMode, canonicalInfo, game]
   );
 
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(undefined);
   const DEBUG_MANUAL_COVER = false;
 
-  // Steam games: resolve via appId + canonical appinfo path
+  // Resolve media: try canonical appinfo first, then fall back to game.coverPath/landscapePath from DB
   useEffect(() => {
     if (!game.appId || !displayImage) {
-      // Manual/Epic games: resolve provider-relative path directly
-      if (!game.appId && (game.imageUrl || game.coverPath || game.landscapePath)) {
-        const providerPath = game.imageUrl || (artworkMode === "poster" ? game.coverPath : game.landscapePath);
+      // All games: resolve provider-relative path directly from game.coverPath/landscapePath
+      const providerPath = game.imageUrl || (artworkMode === "poster" ? game.coverPath : game.landscapePath)
+        || game.coverPath || game.landscapePath;
+      if (providerPath) {
         if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_INPUT] title=${game.title} source=${game.source} appId=${game.appId} providerPath=${providerPath} canonicalInfo=${!!canonicalInfo}`);
         let cancelled = false;
-        resolveProviderMediaPreviewUrl(providerPath!)
+        resolveProviderMediaPreviewUrl(providerPath)
           .then((url) => {
             if (!cancelled) {
               if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_RESOLVED] imageUrl=${game.imageUrl} resolvedSrc=${url ?? "null"}`);
@@ -302,14 +311,16 @@ function GameLauncherTileInner({
     return () => { cancelled = true; };
   }, [game.appId, game.imageUrl, game.coverPath, game.landscapePath, displayImage, artworkMode, mediaCacheVersion]);
 
-  // Render-time diagnostics â€” log once on state change, not every render
-  // Disabled by default to reduce log spam. Set DEBUG_MEDIA_GRID=true in dev console to enable.
-  const DEBUG_MEDIA_GRID = false;
+  // Render-time diagnostics: log media path source for each game card
   const renderLogRef = useRef<string | null>(null);
-  const renderStateKey = `${game.appId}|${mediaLoading}|${!!resolvedSrc}|${!!displayImage}`;
-  if (DEBUG_MEDIA_GRID && renderLogRef.current !== renderStateKey) {
+  const renderStateKey = `${game.appId}|${mediaLoading}|${!!resolvedSrc}|${!!displayImage}|${game.coverPath}|${game.landscapePath}`;
+  if (renderLogRef.current !== renderStateKey) {
     renderLogRef.current = renderStateKey;
-    console.log(`[MEDIA][GRID_RENDER] appid=${game.appId} mediaLoading=${mediaLoading} hasResolvedSrc=${!!resolvedSrc} hasDisplayImage=${!!displayImage}`);
+    console.log(`[LIBRARY_CARD] title="${game.title}" source=${game.source} appId=${game.appId}`);
+    console.log(`  [DB] coverPath=${game.coverPath ?? "NULL"} landscapePath=${game.landscapePath ?? "NULL"} backgroundPath=${game.backgroundPath ?? "NULL"} logoPath=${game.logoPath ?? "NULL"}`);
+    console.log(`  [DB] imageUrl=${game.imageUrl ?? "NULL"} isInstalled=${game.isInstalled}`);
+    console.log(`  [appinfo] media=${JSON.stringify(canonicalInfo?.media ?? "NULL")}`);
+    console.log(`  [result] artworkMode=${artworkMode} displayImage=${displayImage ?? "NULL"} resolvedSrc=${resolvedSrc ?? "NULL"}`);
   }
 
   // Raw local path for data URL fallback (only if it's an absolute local file path)
@@ -325,7 +336,7 @@ function GameLauncherTileInner({
   const sessionState = getState(gk);
   const isRunning = sessionState === "running";
   const action = getLauncherGamePrimaryAction(game);
-  const hasLua = game.luaScripts.length > 0;
+  const hasLua = game.hasLua || game.luaScripts.length > 0;
   useInstallTracker(game.appId);
   const { getJobByAppId, removeJob } = useDownloadQueueContext();
   const epicAppName = game.source === "epic" && game.providerGameId
@@ -742,7 +753,7 @@ function GameLauncherTileInner({
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
               onClick={() => { const fk = getFavoriteKey(game); if (fk) toggleFavorite(fk); setMenuOpen(false); }}
             />
-            {game.appId && game.source !== "epic" && game.source !== "debrid" && (
+            {game.appId && game.source !== "epic" && game.source !== "debrid" && game.source !== "lua" && (
               <MenuItem
                 label={t("context_menu.open_steam", "Open in Steam")}
                 icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -910,7 +921,7 @@ function GameLauncherTileInner({
                           }
                         },
                       }]
-                      : game.source !== "manual" && game.source !== "epic"
+                      : game.source !== "manual" && game.source !== "epic" && game.source !== "lua"
                         ? [{
                         label: t("context_menu.uninstall_steam", "Uninstall in Steam"),
                         icon: <ExternalLink className="h-3.5 w-3.5" />,

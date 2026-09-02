@@ -3,7 +3,6 @@ import {
   saveGameAppInfo,
   getStoreDetails,
   saveStoreDetails,
-  updateGameMetadataJson,
   getGameArtwork,
   saveGameArtwork,
   cacheLandscapeImage,
@@ -18,13 +17,13 @@ import {
   readGameMediaDataUrl,
   repairAppinfoMediaPaths,
   repairMediaRoles,
-  writeMediaManifest as writeMediaManifestTauri,
-  readMediaManifest as readMediaManifestTauri,
-  getMediaManifestsBatch,
+  getGameFilesMedia,
+  getGameFile,
+  upsertGameFilesMedia,
   saveGameMediaFile as saveGameMediaFileTauri,
   listProviderMediaFiles,
 } from "./tauri";
-import type { ProviderMediaFileEntry } from "./tauri";
+import type { ProviderMediaFileEntry, GameFile, GameFilesMedia } from "./tauri";
 import { invalidateImageCachesForApp } from "../components/common/AsyncImage";
 import {
   parseProviderMediaComponents,
@@ -46,8 +45,6 @@ import type {
   BackgroundUrls,
   LogoUrls,
   IconUrls,
-  MediaManifest,
-  MediaManifestFiles,
   GameRemoteRefsInput,
   GameMediaSources,
 } from "./tauri";
@@ -100,11 +97,11 @@ async function getSqliteName(appId: string): Promise<string | null> {
   const now = Date.now();
   if (now - _sqliteNameCacheTs > SQLITE_NAME_CACHE_TTL_MS) {
     try {
-      const { readAllGames } = await import("./tauri");
-      const games = await readAllGames();
+      const { getAllGamesV2 } = await import("./tauri");
+      const games = await getAllGamesV2();
       _sqliteNameCache = {};
       for (const g of games) {
-        if (g.title) _sqliteNameCache[g.appId] = g.title;
+        if (g.title) _sqliteNameCache[g.appId ?? g.providerGameId ?? ""] = g.title;
       }
       _sqliteNameCacheTs = now;
     } catch {
@@ -504,12 +501,15 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
     (game.source === "epic" || game.source === "gog" || game.source === "debrid") &&
     game.isInstalled === true;
 
+  const luaInstalled = game.source === "lua" && game.isInstalled === true;
+
   const included = Boolean(
     steamInstalled ||
     localInstalled ||
     explicitInstalledStatus ||
     luaActive ||
-    providerNeutralInstalled
+    providerNeutralInstalled ||
+    luaInstalled
   );
 
   if (DEBUG_SIDEBAR_FILTER && game.appId) {
@@ -567,14 +567,26 @@ export function getSidebarLabel(game: LibraryGame): string {
 export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
   if (games.length <= 1) return games;
   const before = games.length;
-  // Composite key: "appId:source" — entries with same appId but DIFFERENT source
-  // are kept as separate entries (Steam, Debrid, Manual, Epic all coexist).
-  // Merge only happens when both appId AND source match (e.g. Steam + Lua).
+  // Key strategy: "appId:source" for most sources, but "appId:steam" for Lua
+  // entries so they merge with their Steam install. Lua scripts are NOT a
+  // separate copy of the game — they augment the Steam install, so they
+  // must collapse into one UI row.  Debrid/Epic/Manual with the same appId
+  // are genuine separate copies and must stay distinct.
   const byKey = new Map<string, LibraryGame>();
   const noAppId: LibraryGame[] = [];
 
+  function extractAppIdFromId(game: LibraryGame): string | null {
+    // Steam/Lua IDs follow pattern "source-12345" — extract the numeric part
+    const match = game.id?.match(/^(?:steam|lua)-(\d+)$/);
+    return match ? match[1] : null;
+  }
+
   function dedupKey(game: LibraryGame): string {
-    return game.appId ? `${game.appId}:${game.source || "unknown"}` : "";
+    const appId = game.appId || extractAppIdFromId(game);
+    if (!appId) return "";
+    // Lua entries share the key with Steam so they merge
+    if (game.source === "lua") return `${appId}:steam`;
+    return `${appId}:${game.source || "unknown"}`;
   }
 
   for (const game of games) {
@@ -593,6 +605,9 @@ export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
     }
     // Merge happens only for same appId AND same source (Steam + Lua, etc.)
     const merged = { ...existing };
+
+    // Ensure appId is populated (may have been extracted from id)
+    if (!merged.appId) merged.appId = game.appId || extractAppIdFromId(game) || undefined;
 
     // Boolean flags: true wins
     merged.steamInstalled = existing.steamInstalled || game.steamInstalled;
@@ -739,32 +754,32 @@ export function getAllMediaEntries(): MediaIndexEntry[] {
 }
 
 export function seedMediaIndexFromManifests(
-  manifests: Record<string, MediaManifest>,
+  gameFiles: Record<string, GameFile>,
   resolved: Record<string, { coverUrl: string | null; landscapeUrl: string | null; backgroundUrl: string | null; logoUrl: string | null; iconUrl: string | null }>,
 ): void {
   let count = 0;
-  for (const [appId, manifest] of Object.entries(manifests)) {
+  for (const [appId, gf] of Object.entries(gameFiles)) {
     const urls = resolved[appId];
     if (!urls) continue;
     const entry: MediaIndexEntry = {
       provider: "steam",
-      appId: manifest.appid,
-      coverPath: manifest.files.cover.exists ? normalizeMediaPathForIndex(manifest.files.cover.path) : null,
-      coverUrl: manifest.files.cover.exists ? (urls.coverUrl ?? null) : null,
-      hasCover: manifest.files.cover.exists,
-      landscapePath: manifest.files.landscape.exists ? normalizeMediaPathForIndex(manifest.files.landscape.path) : null,
-      landscapeUrl: manifest.files.landscape.exists ? (urls.landscapeUrl ?? null) : null,
-      hasLandscape: manifest.files.landscape.exists,
-      backgroundPath: manifest.files.background.exists ? normalizeMediaPathForIndex(manifest.files.background.path) : null,
-      backgroundUrl: manifest.files.background.exists ? (urls.backgroundUrl ?? null) : null,
-      hasBackground: manifest.files.background.exists,
-      logoPath: manifest.files.logo.exists ? normalizeMediaPathForIndex(manifest.files.logo.path) : null,
-      logoUrl: manifest.files.logo.exists ? (urls.logoUrl ?? null) : null,
-      hasLogo: manifest.files.logo.exists,
-      iconPath: manifest.files.icon.exists ? normalizeMediaPathForIndex(manifest.files.icon.path) : null,
-      iconUrl: manifest.files.icon.exists ? (urls.iconUrl ?? null) : null,
-      hasIcon: manifest.files.icon.exists,
-      updatedAt: manifest.updatedAt,
+      appId: gf.gameId,
+      coverPath: gf.coverPath ? normalizeMediaPathForIndex(gf.coverPath) : null,
+      coverUrl: gf.coverExists ? (urls.coverUrl ?? null) : null,
+      hasCover: gf.coverExists,
+      landscapePath: gf.landscapePath ? normalizeMediaPathForIndex(gf.landscapePath) : null,
+      landscapeUrl: gf.landscapeExists ? (urls.landscapeUrl ?? null) : null,
+      hasLandscape: gf.landscapeExists,
+      backgroundPath: gf.backgroundPath ? normalizeMediaPathForIndex(gf.backgroundPath) : null,
+      backgroundUrl: gf.backgroundExists ? (urls.backgroundUrl ?? null) : null,
+      hasBackground: gf.backgroundExists,
+      logoPath: gf.logoPath ? normalizeMediaPathForIndex(gf.logoPath) : null,
+      logoUrl: gf.logoExists ? (urls.logoUrl ?? null) : null,
+      hasLogo: gf.logoExists,
+      iconPath: gf.iconPath ? normalizeMediaPathForIndex(gf.iconPath) : null,
+      iconUrl: gf.iconExists ? (urls.iconUrl ?? null) : null,
+      hasIcon: gf.iconExists,
+      updatedAt: gf.updatedAt,
     };
     setMediaEntry(entry);
     count++;
@@ -1023,46 +1038,44 @@ export async function loadGameAppInfoWithMediaFallback(appId: string, options?: 
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][REPAIR_ALLOWED] appid=${appId} source=${repairSource ?? "unspecified"}`);
   }
   // Session cache hit — return appinfo with validated paths merged.
-  // If cache has insufficient media (missing background/logo/icon), fall through to repair.
+  // Returns whatever media we have (even partial: landscape/cover without
+  // background/logo/icon). Destroying partial data forces unnecessary disk reads
+  // and loses valid media that was already resolved.
   const cached = getCachedResolvedMedia(appId);
   if (cached !== undefined) {
-    if (cached && !(cached.backgroundPath || cached.logoPath || cached.iconPath)) {
-      clearCachedGameMediaPaths(appId);
-    } else {
-      const appInfo = await getCachedGameAppInfo(appId);
-      if (appInfo) {
-        if (cached) {
-          appInfo.media = cached;
-        }
-        // Resolve relative paths to absolute — cached paths from snapshot seeding
-        // may be "media/landscape.jpg" which consumers cannot use as asset URLs.
-        const hasRelative = cached && Object.values(cached).some(
-          (v) => typeof v === 'string' && (v.startsWith('media/') || v.startsWith('img/'))
-        );
-        if (hasRelative) {
-          const resolved = await resolveMediaPaths(appId, cached);
-          if (resolved) {
-            appInfo.media = resolved;
-            setCachedResolvedMedia(appId, resolved);
-          }
-        }
-        return appInfo;
-      }
+    const appInfo = await getCachedGameAppInfo(appId);
+    if (appInfo) {
       if (cached) {
-        const hasRelative = Object.values(cached).some(
-          (v) => typeof v === 'string' && (v.startsWith('media/') || v.startsWith('img/'))
-        );
-        if (hasRelative) {
-          const resolved = await resolveMediaPaths(appId, cached);
-          if (resolved) {
-            setCachedResolvedMedia(appId, resolved);
-            return { appId, provider: "steam", name: null, updatedAt: null, media: resolved, mediaSources: null, remote: null, userData: null };
-          }
-        }
-        return { appId, provider: "steam", name: null, updatedAt: null, media: cached, mediaSources: null, remote: null, userData: null };
+        appInfo.media = cached;
       }
-      return null;
+      // Resolve relative paths to absolute — cached paths from snapshot seeding
+      // may be "media/landscape.jpg" which consumers cannot use as asset URLs.
+      const hasRelative = cached && Object.values(cached).some(
+        (v) => typeof v === 'string' && (v.startsWith('media/') || v.startsWith('img/'))
+      );
+      if (hasRelative) {
+        const resolved = await resolveMediaPaths(appId, cached);
+        if (resolved) {
+          appInfo.media = resolved;
+          setCachedResolvedMedia(appId, resolved);
+        }
+      }
+      return appInfo;
     }
+    if (cached) {
+      const hasRelative = Object.values(cached).some(
+        (v) => typeof v === 'string' && (v.startsWith('media/') || v.startsWith('img/'))
+      );
+      if (hasRelative) {
+        const resolved = await resolveMediaPaths(appId, cached);
+        if (resolved) {
+          setCachedResolvedMedia(appId, resolved);
+          return { appId, provider: "steam", name: null, updatedAt: null, media: resolved, mediaSources: null, remote: null, userData: null };
+        }
+      }
+      return { appId, provider: "steam", name: null, updatedAt: null, media: cached, mediaSources: null, remote: null, userData: null };
+    }
+    return null;
   }
 
   // Read appinfo.json from disk (session-cached)
@@ -1334,7 +1347,26 @@ export async function persistStoreDetails(appId: string, entry: GameStoreDetails
   await saveStoreDetails(appId, entry);
   if (entry.data) {
     const metadataJson = typeof entry.data === "string" ? entry.data : JSON.stringify(entry.data);
-    updateGameMetadataJson(appId, metadataJson);
+    
+    // Update games_v2 metadata fields
+    try {
+      const { getGameV2, upsertGameV2 } = await import("./tauri");
+      const gameV2 = await getGameV2(`steam-${appId}`);
+      if (gameV2) {
+        const metadata = JSON.parse(metadataJson);
+        await upsertGameV2({
+          ...gameV2,
+          genres: JSON.stringify(metadata.genres ?? []),
+          developers: JSON.stringify(metadata.developer ? [metadata.developer] : []),
+          publishers: JSON.stringify(metadata.publishers ?? []),
+          categories: JSON.stringify(metadata.categories ?? []),
+          features: JSON.stringify(metadata.features ?? []),
+          shortDescription: metadata.short_description,
+          releaseDate: metadata.release_date,
+          updatedAt: Date.now(),
+        });
+      }
+    } catch { /* non-critical */ }
   }
 }
 
@@ -2646,7 +2678,6 @@ export async function generateMediaManifest(
   provider = "steam",
 ): Promise<void> {
   if (!media) return;
-  const now = Math.floor(Date.now() / 1000);
   const { getGameMediaPaths: getPaths } = await import("./tauri");
   let resolved: GameMediaPathsResult | null = null;
   try {
@@ -2657,7 +2688,7 @@ export async function generateMediaManifest(
   if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
     console.log(`[MEDIA][MANIFEST_PROVIDER] appid=${appId} gameProvider=steam artworkSource=${provider} manifestProvider=${provider}`);
   }
-  const entryForRole = (role: string): { path: string; exists: boolean; size: number | null; modifiedAt: number | null } => {
+  const entryForRole = (role: string): { path: string | null; exists: boolean } => {
     const relPath = media[`${role}Path` as keyof typeof media] as string | null;
     const existsKey = `${role}Exists` as keyof GameMediaPathsResult;
     const pathKey = `${role}Path` as keyof GameMediaPathsResult;
@@ -2666,33 +2697,24 @@ export async function generateMediaManifest(
       const resolvedPath = resolved[pathKey] as string | null;
       const bestPath = resolvedPath ?? relPath;
       const normalized = bestPath ? normalizeMediaPathForIndex(bestPath) : null;
-      const manifestPath = normalized ?? `media/${role}.jpg`;
       if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
         const inputRelPath = relPath ?? "(null)";
-        console.log(`[MEDIA][MANIFEST_VALIDATE] appid=${appId} role=${role} relPath=${inputRelPath} resolvedPath=${resolvedPath ?? "(null)"} manifestPath=${manifestPath} exists=${exists}`);
+        console.log(`[MEDIA][MANIFEST_VALIDATE] appid=${appId} role=${role} relPath=${inputRelPath} resolvedPath=${resolvedPath ?? "(null)"} manifestPath=${normalized ?? "(null)"} exists=${exists}`);
       }
-      return { path: manifestPath, exists, size: null, modifiedAt: null };
+      return { path: normalized, exists };
     }
     if (!relPath) {
-      return { path: `media/${role}.jpg`, exists: false, size: null, modifiedAt: null };
+      return { path: null, exists: false };
     }
     const normalized = normalizeMediaPathForIndex(relPath);
-    return { path: normalized ?? `media/${role}.jpg`, exists: false, size: null, modifiedAt: null };
+    return { path: normalized, exists: false };
   };
 
-  const manifest: MediaManifest = {
-    provider,
-    appid: appId,
-    version: 1,
-    updatedAt: now,
-    files: {
-      cover: entryForRole("cover"),
-      landscape: entryForRole("landscape"),
-      background: entryForRole("background"),
-      logo: entryForRole("logo"),
-      icon: entryForRole("icon"),
-    } as MediaManifestFiles,
-  };
+  const cover = entryForRole("cover");
+  const landscape = entryForRole("landscape");
+  const background = entryForRole("background");
+  const logo = entryForRole("logo");
+  const icon = entryForRole("icon");
 
   // Part 2: In-flight dedup — if a write for this appId is already running, await it
   const existingInFlight = _mediaManifestWriteInFlight.get(appId);
@@ -2702,35 +2724,41 @@ export async function generateMediaManifest(
     return;
   }
 
-  // Part 3: Content comparison — read existing manifest and skip if unchanged
-  let existing: MediaManifest | null = null;
+  // Part 3: Content comparison — read existing game_files media and skip if unchanged
+  let existing: GameFilesMedia | null = null;
   try {
-    existing = await readMediaManifestTauri(appId);
+    existing = await getGameFilesMedia(appId);
   } catch {
     existing = null;
   }
   if (existing) {
-    const sameProvider = existing.provider === manifest.provider;
-    const sameCover = existing.files.cover.path === manifest.files.cover.path && existing.files.cover.exists === manifest.files.cover.exists;
-    const sameLandscape = existing.files.landscape.path === manifest.files.landscape.path && existing.files.landscape.exists === manifest.files.landscape.exists;
-    const sameBackground = existing.files.background.path === manifest.files.background.path && existing.files.background.exists === manifest.files.background.exists;
-    const sameLogo = existing.files.logo.path === manifest.files.logo.path && existing.files.logo.exists === manifest.files.logo.exists;
-    const sameIcon = existing.files.icon.path === manifest.files.icon.path && existing.files.icon.exists === manifest.files.icon.exists;
-    if (sameProvider && sameCover && sameLandscape && sameBackground && sameLogo && sameIcon) {
+    const sameCover = existing.cover.path === cover.path && existing.cover.exists === cover.exists;
+    const sameLandscape = existing.landscape.path === landscape.path && existing.landscape.exists === landscape.exists;
+    const sameBackground = existing.background.path === background.path && existing.background.exists === background.exists;
+    const sameLogo = existing.logo.path === logo.path && existing.logo.exists === logo.exists;
+    const sameIcon = existing.icon.path === icon.path && existing.icon.exists === icon.exists;
+    if (sameCover && sameLandscape && sameBackground && sameLogo && sameIcon) {
       if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=no-content-change`);
       return;
     }
   }
 
   // Track in-flight
+  const mediaData: GameFilesMedia = {
+    cover: { path: cover.path, exists: cover.exists, size: null, modifiedAt: null },
+    landscape: { path: landscape.path, exists: landscape.exists, size: null, modifiedAt: null },
+    background: { path: background.path, exists: background.exists, size: null, modifiedAt: null },
+    logo: { path: logo.path, exists: logo.exists, size: null, modifiedAt: null },
+    icon: { path: icon.path, exists: icon.exists, size: null, modifiedAt: null },
+  };
   const writePromise = (async () => {
     try {
-      await writeMediaManifestTauri(appId, manifest);
+      await upsertGameFilesMedia(appId, mediaData);
       if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
-        const roleLog = (r: string, f: { path: string; exists: boolean }) => `role=${r} path=${f.path} exists=${f.exists}`;
-        console.log(`[MEDIA][MANIFEST_WRITE] appid=${appId} ${roleLog("cover", manifest.files.cover)} ${roleLog("landscape", manifest.files.landscape)} ${roleLog("background", manifest.files.background)} ${roleLog("logo", manifest.files.logo)} ${roleLog("icon", manifest.files.icon)}`);
+        const roleLog = (r: string, f: { path: string | null; exists: boolean }) => `role=${r} path=${f.path ?? "(null)"} exists=${f.exists}`;
+        console.log(`[MEDIA][MANIFEST_WRITE] appid=${appId} ${roleLog("cover", cover)} ${roleLog("landscape", landscape)} ${roleLog("background", background)} ${roleLog("logo", logo)} ${roleLog("icon", icon)}`);
       } else {
-        console.log(`[MEDIA][MANIFEST] written appid=${appId} coverPath=${manifest.files.cover.path} landscapePath=${manifest.files.landscape.path} backgroundPath=${manifest.files.background.path} logoPath=${manifest.files.logo.path} iconPath=${manifest.files.icon.path}`);
+        console.log(`[MEDIA][MANIFEST] written appid=${appId} coverPath=${cover.path} landscapePath=${landscape.path} backgroundPath=${background.path} logoPath=${logo.path} iconPath=${icon.path}`);
       }
     } finally {
       _mediaManifestWriteInFlight.delete(appId);
@@ -2748,16 +2776,22 @@ export async function seedMediaIndexFromStartup(
   appIds: string[],
 ): Promise<void> {
   if (appIds.length === 0) return;
-  const manifests = await getMediaManifestsBatch(appIds);
-  if (Object.keys(manifests).length === 0) return;
+  const gameFiles: Record<string, GameFile> = {};
+  for (const appId of appIds) {
+    try {
+      const gf = await getGameFile(appId);
+      if (gf) gameFiles[appId] = gf;
+    } catch { /* skip */ }
+  }
+  if (Object.keys(gameFiles).length === 0) return;
   const resolved: Record<string, { coverUrl: string | null; landscapeUrl: string | null; backgroundUrl: string | null; logoUrl: string | null; iconUrl: string | null }> = {};
-  for (const [appId, manifest] of Object.entries(manifests)) {
+  for (const [appId, gf] of Object.entries(gameFiles)) {
     const resolvedPaths = await resolveMediaPaths(appId, {
-      coverPath: manifest.files.cover.exists ? manifest.files.cover.path : null,
-      landscapePath: manifest.files.landscape.exists ? manifest.files.landscape.path : null,
-      backgroundPath: manifest.files.background.exists ? manifest.files.background.path : null,
-      logoPath: manifest.files.logo.exists ? manifest.files.logo.path : null,
-      iconPath: manifest.files.icon.exists ? manifest.files.icon.path : null,
+      coverPath: gf.coverExists ? gf.coverPath : null,
+      landscapePath: gf.landscapeExists ? gf.landscapePath : null,
+      backgroundPath: gf.backgroundExists ? gf.backgroundPath : null,
+      logoPath: gf.logoExists ? gf.logoPath : null,
+      iconPath: gf.iconExists ? gf.iconPath : null,
     }, "steam");
     resolved[appId] = {
       coverUrl: resolvedPaths?.coverPath ? localPathToUrl(resolvedPaths.coverPath) : null,
@@ -2767,8 +2801,8 @@ export async function seedMediaIndexFromStartup(
       iconUrl: resolvedPaths?.iconPath ? localPathToUrl(resolvedPaths.iconPath) : null,
     };
   }
-  seedMediaIndexFromManifests(manifests, resolved);
-  console.log(`[MEDIA_INDEX] seeded from manifests count=${Object.keys(manifests).length}`);
+  seedMediaIndexFromManifests(gameFiles, resolved);
+  console.log(`[MEDIA_INDEX] seeded from game_files count=${Object.keys(gameFiles).length}`);
 }
 
 // ---------------------------------------------------------------------------

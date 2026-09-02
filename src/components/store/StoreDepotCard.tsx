@@ -15,6 +15,7 @@ import {
 import {
   depotDownloaderResolveDepots,
   depotDownloaderStatus,
+  depotDownloaderDefaultOutputDir,
   pickFolder,
 } from "../../services/tauri";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
@@ -60,11 +61,21 @@ export default function StoreDepotCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDepots, setSelectedDepots] = useState<Set<number>>(new Set());
-  const [outputDir, setOutputDir] = useState(() => {
-    return localStorage.getItem("lumaforge-depot-output-dir") || "Downloads/LumaForge/Depot";
-  });
+  const [outputDir, setOutputDir] = useState("");
   const [expanded, setExpanded] = useState(true);
   const [toolInstalled, setToolInstalled] = useState<boolean | null>(null);
+
+  // Load saved output dir or resolve default from Rust
+  useEffect(() => {
+    const savedDir = localStorage.getItem("lumaforge-depot-output-dir");
+    if (savedDir) {
+      setOutputDir(savedDir);
+    } else {
+      depotDownloaderDefaultOutputDir(appId)
+        .then((dir) => setOutputDir(dir))
+        .catch(() => setOutputDir("Downloads/LumaForge/Depot"));
+    }
+  }, [appId]);
 
   // Check tool status on mount
   useEffect(() => {

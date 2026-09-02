@@ -3,7 +3,6 @@ import type { LibraryGame } from "../types/libraryGame";
 import { dedupeLibraryGames } from "./gameCacheService";
 
 const CACHE_KEY = "lumaforge-library-games-v3";
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 type DetectedGamesCache = {
   savedAt: number;
@@ -13,46 +12,101 @@ type DetectedGamesCache = {
 };
 
 let inMemoryCache: DetectedGamesCache | null = null;
-let loadPromise: Promise<DetectedGamesCache | null> | null = null;
 
-async function readFromSqlite(): Promise<DetectedGamesCache | null> {
-  try {
-    // Rust returns Option<LibraryCacheEntry> = { cache_key, cache_value, saved_at }
-    // We need the inner cache_value string which holds the JSON-serialized DetectedGamesCache.
-    const entry = await invoke<{ cache_key?: string; cache_value?: string; saved_at?: number } | null>(
-      "read_library_cache",
-      { key: CACHE_KEY },
-    );
-    if (!entry) return null;
-    // Handle both snake_case (Rust serde default) and camelCase (renamed)
-    const jsonStr = entry.cache_value ?? (entry as Record<string, unknown>)["cacheValue"] as string | undefined;
-    if (!jsonStr) return null;
-    const parsed: DetectedGamesCache = JSON.parse(jsonStr);
-    if (!Array.isArray(parsed.games) || typeof parsed.savedAt !== "number") {
-      return null;
+const MEDIA_PATH_FIELDS = ["coverPath", "landscapePath", "backgroundPath", "logoPath", "iconPath"] as const;
+const RELATIVE_RE = /^(media|img)\//;
+
+function isRelativeMedia(p: string | null | undefined): p is string {
+  return !!p && RELATIVE_RE.test(p);
+}
+
+async function resolveMediaPathsBatch(games: LibraryGame[]): Promise<void> {
+  const { resolveRelativeMediaPath } = await import("./gameCacheService");
+  const tasks: Promise<void>[] = [];
+  for (const g of games) {
+    for (const field of MEDIA_PATH_FIELDS) {
+      const val = (g as Record<string, unknown>)[field];
+      if (isRelativeMedia(val as string)) {
+        const appId = g.appId ?? "";
+        const provider = g.source === "lua" ? "steam" : g.source;
+        tasks.push(
+          resolveRelativeMediaPath(appId, val as string, provider).then((abs) => {
+            (g as Record<string, unknown>)[field] = abs;
+          }),
+        );
+      }
     }
-    // An empty games list is a poisoned cache (e.g. a scan wrote [] over a real
-    // library). Treat it as a miss so boot falls back to reconciled/snapshot
-    // data and a fresh scan runs to repopulate the cache.
-    if (parsed.games.length === 0) {
-      console.log("[LIBRARY_CACHE][EMPTY_MISS] empty cache ignored — will rescan");
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
+  }
+  if (tasks.length > 0) {
+    await Promise.allSettled(tasks);
   }
 }
 
-export async function loadCachedGames(): Promise<DetectedGamesCache | null> {
+/**
+ * Load ALL games from games_v2 (single source of truth).
+ * Returns a DetectedGamesCache-compatible object for use by LibraryGamesContext.
+ * Steam, Lua, Manual, Epic, Debrid — everything comes from games_v2.
+ *
+ * games_v2 is populated by boot coordinator Stage 4.5 (reconcile) and by each
+ * provider's persist function. If games_v2 is empty, the caller should use
+ * reconciled/snapshot data as fallback.
+ */
+export async function loadCachedGamesFromV2(): Promise<DetectedGamesCache | null> {
   if (inMemoryCache) return inMemoryCache;
-  if (loadPromise) return loadPromise;
-  loadPromise = readFromSqlite().then((cache) => {
-    inMemoryCache = cache;
-    loadPromise = null;
-    return cache;
-  });
-  return loadPromise;
+
+  try {
+    const { getAllGamesV2 } = await import("./tauri");
+    const { gameV2ToLibraryGame } = await import("./gameV2Mapper");
+
+    const allGames = await getAllGamesV2();
+    if (allGames.length > 0) {
+      const libGames = allGames.map((g) => gameV2ToLibraryGame(g));
+
+      // Resolve relative media paths (media/landscape.jpg → absolute) so
+      // desktop components can use them with localPathToUrl / asset:// URLs
+      await resolveMediaPathsBatch(libGames);
+
+      const deduped = dedupeLibraryGames(libGames);
+
+      const cache: DetectedGamesCache = {
+        savedAt: Date.now(),
+        games: deduped,
+      };
+      inMemoryCache = cache;
+      const bySource: Record<string, number> = {};
+      for (const g of deduped) { const s = g.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
+      console.log(`[GAMES_V2][READ] loadCachedGamesFromV2 → ${deduped.length} games bySource=${JSON.stringify(bySource)}`);
+      return cache;
+    }
+    console.log("[GAMES_V2][READ] loadCachedGamesFromV2 → empty (no games in games_v2)");
+  } catch (e) {
+    console.warn("[GAMES_V2] failed to load from games_v2:", e);
+  }
+
+  return null;
+}
+
+/**
+ * Seed games_v2 from library_cache games (one-time migration on boot).
+ * Converts each LibraryGame to GameV2 and upserts into the unified table.
+ * This ensures games_v2 is populated for subsequent boots.
+ */
+async function seedGamesV2FromLibraryCache(games: LibraryGame[]): Promise<void> {
+  try {
+    const { batchUpsertGamesV2 } = await import("./tauri");
+    const { libraryGameToGameV2 } = await import("./gameV2Mapper");
+
+    const entries = games
+      .filter((g) => g.appId || g.libraryId)
+      .map((g) => libraryGameToGameV2(g));
+
+    if (entries.length === 0) return;
+
+    await batchUpsertGamesV2(entries);
+    console.log(`[GAMES_V2] seeded ${entries.length} games into games_v2 from library_cache`);
+  } catch (e) {
+    console.warn("[GAMES_V2] failed to seed games_v2 from library_cache:", e);
+  }
 }
 
 export async function saveCachedGames(
@@ -62,15 +116,16 @@ export async function saveCachedGames(
 ): Promise<void> {
   const deduped = dedupeLibraryGames(games);
   if (deduped.length !== games.length) {
-    console.log(`[LIBRARY_CACHE][DEDUP] before=${games.length} after=${deduped.length}`);
+    console.log(`[GAMES_V2][DEDUP] before=${games.length} after=${deduped.length}`);
   }
-  // Never persist an empty library over a real one — an empty write poisons the
-  // cache (it is memoized as fresh and blocks future scans). Existing in-memory
-  // cache is preserved so reads keep returning real data.
   if (deduped.length === 0) {
-    console.log("[LIBRARY_CACHE][EMPTY_SKIP] refusing to persist empty library");
+    console.log("[GAMES_V2][EMPTY_SKIP] refusing to persist empty library");
     return;
   }
+  const bySource: Record<string, number> = {};
+  for (const g of deduped) { const s = g.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
+  console.log(`[GAMES_V2][WRITE] saveCachedGames → ${deduped.length} games bySource=${JSON.stringify(bySource)}`);
+
   const cache: DetectedGamesCache = {
     savedAt: Date.now(),
     games: deduped,
@@ -78,22 +133,20 @@ export async function saveCachedGames(
     errors,
   };
   inMemoryCache = cache;
+
+  // Write to both: library_cache (transitional) AND games_v2 (unified table)
+  // library_cache is kept for now but not read on boot — games_v2 is authoritative
   try {
-    await invoke("write_library_cache", { key: CACHE_KEY, value: JSON.stringify(cache) });
+    await Promise.all([
+      invoke("write_library_cache", { key: CACHE_KEY, value: JSON.stringify(cache) }).catch(() => {}),
+      seedGamesV2FromLibraryCache(deduped),
+    ]);
   } catch {
     // SQLite unavailable
   }
 }
 
-export function isCacheExpired(cache: DetectedGamesCache): boolean {
-  return Date.now() - cache.savedAt > CACHE_TTL_MS;
-}
-
-export async function clearCachedGames(): Promise<void> {
+/** Invalidate the in-memory cache so next loadCachedGamesFromV2() re-reads from games_v2. */
+export function invalidateGamesV2Cache(): void {
   inMemoryCache = null;
-  try {
-    await invoke("delete_library_cache", { key: CACHE_KEY });
-  } catch {
-    // ignore
-  }
 }

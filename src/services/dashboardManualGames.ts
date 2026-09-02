@@ -15,6 +15,7 @@ import type { SnapshotGame } from "./startupSnapshotService";
 import {
   resolvePlaytimeKey,
   getPlaytimeEntryByGameKey,
+  getPlaytimeEntryByAppId,
 } from "./playtimeService";
 import { resolveProviderMediaPreviewUrl } from "./gameCacheService";
 
@@ -126,17 +127,17 @@ export function snapshotToDisplayGame(
   if (!ptEntry && game.appId && ptKey !== `app-${game.appId}`) {
     ptEntry = getPlaytimeEntryByGameKey(`app-${game.appId}`);
   }
-  // Defense: also check steam-{appId} key and pick the entry with the most recent lastPlayedAt.
-  // enrichWithStats used to write under game.id ("steam-{appId}") while dashboard reads "app-{appId}".
+  // Defense: also check steam-{appId} / lua-{appId} keys — store may have
+  // legacy app-xxx or new steam-xxx/lua-xxx keys depending on writer.
   if (game.appId) {
-    const altKey = `steam-${game.appId}`;
-    const altEntry = getPlaytimeEntryByGameKey(altKey);
-    if (altEntry && altEntry !== ptEntry) {
-      const altLast = altEntry.lastPlayedAt ?? 0;
-      const curLast = ptEntry?.lastPlayedAt ?? 0;
-      if (altLast > curLast) ptEntry = altEntry;
-      // Also merge: if primary has playtime but no lastPlayed, take from alt
-      if (ptEntry && !ptEntry.lastPlayedAt && altEntry.lastPlayedAt) ptEntry = altEntry;
+    for (const altKey of [`steam-${game.appId}`, `lua-${game.appId}`, `lua:${game.appId}`]) {
+      const altEntry = getPlaytimeEntryByGameKey(altKey);
+      if (altEntry && altEntry !== ptEntry) {
+        const altLast = altEntry.lastPlayedAt ?? 0;
+        const curLast = ptEntry?.lastPlayedAt ?? 0;
+        if (altLast > curLast) ptEntry = altEntry;
+        if (ptEntry && !ptEntry.lastPlayedAt && altEntry.lastPlayedAt) ptEntry = altEntry;
+      }
     }
     // Epic/GOG: playtime is stored under game.id (e.g. "epic:ns:catId:app"), not "app-${appId}"
     if (game.source === "epic" || game.source === "gog") {
@@ -201,9 +202,15 @@ export function manualToDisplayGame(
   sourceOverride?: string,
 ): DashboardDisplayGame {
   const ptKey = resolvePlaytimeKey(game);
-  const ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
-  const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? 0;
-  const lastPlayed = ptEntry?.lastPlayedAt ?? null;
+  let ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+  // Fallback to app-xxx alias (store may be keyed by steam-xxx/lua-xxx or app-xxx)
+  if (!ptEntry && game.appId) {
+    ptEntry = getPlaytimeEntryByAppId(game.appId);
+  }
+  const fallbackSeconds = (game.steamPlaytimeMinutes ?? game.localPlaytimeMinutes ?? 0) * 60;
+  const fallbackLastPlayed = game.localLastPlayedAt != null ? Math.floor(game.localLastPlayedAt / 1000) : (game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null);
+  const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? (fallbackSeconds > 0 ? fallbackSeconds : 0);
+  const lastPlayed = ptEntry?.lastPlayedAt ?? fallbackLastPlayed ?? null;
 
   return {
     stableId: game.libraryId || game.id,

@@ -1,6 +1,7 @@
 import type { LibraryGame } from "../types/libraryGame";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { ManualGameEntry } from "./manualGameStore";
+import type { GameV2 } from "../types/gameV2";
 
 const DEBUG_MANUAL_COVER = false;
 
@@ -159,4 +160,111 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
   if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][MAPPER_OUTPUT] id=${game.id} source=${game.source} imageUrl=${game.imageUrl}`);
 
   return game;
+}
+
+/**
+ * Convert a GameV2 (source="manual") directly to a LibraryGame.
+ * This is the preferred path for reading manual games from games_v2.
+ */
+export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
+  const parseJsonArray = (s?: string): string[] => {
+    if (!s) return [];
+    try {
+      const parsed = JSON.parse(s);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const genres = parseJsonArray(game.genres);
+  const tags = parseJsonArray(game.tags);
+  const mergedGenres = [...genres, ...tags.filter((t) => !genres.includes(t))];
+
+  const categories = parseJsonArray(game.categories);
+  const features = parseJsonArray(game.features);
+  const mergedCategories = [...categories, ...features.filter((f) => !categories.includes(f))];
+
+  const developers = parseJsonArray(game.developers);
+  const publishers = parseJsonArray(game.publishers);
+
+  const description = game.description ?? game.shortDescription ?? null;
+  const aboutTheGame = game.description && game.shortDescription
+    ? game.description
+    : null;
+
+  const metadata: SteamAppMetadata = {
+    app_id: 0,
+    name: game.title,
+    developer: developers.length > 0 ? developers.join(", ") : null,
+    short_description: description,
+    about_the_game: aboutTheGame,
+    detailed_description: null,
+    genres: mergedGenres,
+    publishers,
+    release_date: game.releaseDate ?? null,
+    categories: mergedCategories,
+    platforms: [],
+    languages: [],
+    dlc_count: 0,
+    dlc_app_ids: [],
+    screenshots: [],
+    movies: [],
+    resolved: false,
+  };
+
+  const libraryId = game.libraryId ?? game.id;
+
+  const imageUrl =
+    game.coverPath ??
+    game.landscapePath ??
+    game.backgroundPath ??
+    game.iconPath ??
+    undefined;
+
+  const iconPath =
+    game.iconPath ??
+    game.coverPath ??
+    game.landscapePath ??
+    game.backgroundPath ??
+    undefined;
+
+  return {
+    id: game.id,
+    title: game.title,
+    source: "manual",
+    libraryId,
+    providerId: "manual",
+    providerGameId: game.providerGameId ?? game.id.replace("manual:", ""),
+    appId: game.appId ?? game.linkedAppId,
+
+    executablePath: game.exePath,
+    workingDirectory: game.workingDirectory,
+    launchArguments: game.launchArguments,
+    installDir: game.installDir,
+    libraryPath: undefined,
+
+    coverPath: game.coverPath,
+    landscapePath: game.landscapePath,
+    backgroundPath: game.backgroundPath,
+    logoPath: game.logoPath,
+    imageUrl,
+    iconPath,
+
+    metadata,
+
+    isPlayable: isAbsolutePath(game.exePath),
+    isInstallable: false,
+    steamInstalled: false,
+
+    luaScripts: [],
+    hasLua: false,
+    isLuaActive: false,
+    isLuaDisabled: false,
+    hasLuaSource: false,
+    sources: [],
+
+    isFavorite: game.isFavorite,
+    sizeOnDisk: game.installSize,
+  };
 }

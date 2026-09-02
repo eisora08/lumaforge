@@ -47,11 +47,36 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   const toggleFavorite = useCallback((appId: string) => {
     setFavoriteIds((prev) => {
       const next = new Set(prev);
-      if (next.has(appId)) {
-        next.delete(appId);
-      } else {
+      const newState = !next.has(appId);
+      if (newState) {
         next.add(appId);
+      } else {
+        next.delete(appId);
       }
+
+      // Persist to games_v2 DB
+      (async () => {
+        try {
+          const { upsertGameV2, getGameV2 } = await import("../services/tauri");
+          // Try common ID patterns: steam-{appId}, lua-{appId}, or the key itself
+          const candidates = [
+            `steam-${appId}`,
+            `lua-${appId}`,
+            appId,
+          ];
+          for (const id of candidates) {
+            const existing = await getGameV2(id);
+            if (existing) {
+              await upsertGameV2({ ...existing, isFavorite: newState, updatedAt: Date.now() });
+              console.log(`[Favorites] persisted isFavorite=${newState} for ${id}`);
+              break;
+            }
+          }
+        } catch (err) {
+          console.warn("[Favorites] failed to persist to games_v2:", err);
+        }
+      })();
+
       return next;
     });
   }, []);

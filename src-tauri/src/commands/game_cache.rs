@@ -795,41 +795,6 @@ pub struct GameMediaSourcesInput {
 }
 
 // ---------------------------------------------------------------------------
-// Media manifest — per-game fast media index
-// ---------------------------------------------------------------------------
-
-fn get_media_manifest_path(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, String> {
-    Ok(get_game_dir(app_handle, app_id)?.join("media_manifest.json"))
-}
-
-#[tauri::command]
-pub fn read_media_manifest(
-    app_handle: AppHandle,
-    app_id: String,
-    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
-) -> Result<Option<crate::models::game_cache::MediaManifestFile>, String> {
-    Ok(crate::commands::sqlite_cache::media_manifests::read_media_manifest_sqlite(&db, &app_id))
-}
-
-#[tauri::command]
-pub fn write_media_manifest(
-    app_handle: AppHandle,
-    app_id: String,
-    manifest: crate::models::game_cache::MediaManifestFile,
-    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
-) -> Result<(), String> {
-    crate::commands::sqlite_cache::media_manifests::write_media_manifest_sqlite(&db, &manifest)
-}
-
-#[tauri::command]
-pub fn get_media_manifests_batch(
-    app_handle: AppHandle,
-    app_ids: Vec<String>,
-    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
-) -> Result<std::collections::HashMap<String, crate::models::game_cache::MediaManifestFile>, String> {
-    Ok(crate::commands::sqlite_cache::media_manifests::read_media_manifests_batch_sqlite(&db, &app_ids))
-}
-
 // ---------------------------------------------------------------------------
 // Update artwork.json
 // ---------------------------------------------------------------------------

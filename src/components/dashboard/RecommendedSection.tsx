@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Heart, Sparkles } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
-import type { GameEntry } from "../../services/tauri";
+import type { CatalogGameEntry } from "../../services/recommendationService";
 import type { CatalogStatus } from "../../services/globalCatalogService";
 import {
   subscribeCatalogState,
@@ -19,9 +19,9 @@ const DEBUG_DASH_RECOMMEND = false;
 const DEBUG_DASH_RECOMMEND_PER_GAME = false;
 const DEBUG_DASH_SECTION_LOGS = false;
 import { useSettings } from "../../context/SettingsContext";
-import { localPathToUrl, deduplicateByAppId, getFavoriteKey } from "../../services/gameCacheService";
+import { deduplicateByAppId, getFavoriteKey, resolveGameMediaUrl } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
-import { isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
+import { isHttpUrl } from "../../services/libraryLocalCacheService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
@@ -32,11 +32,36 @@ type Props = {
   maxItems?: number;
 };
 
-function resolveImageSrc(src: string | undefined): string | undefined {
-  if (!src) return undefined;
-  if (isHttpUrl(src)) return src;
-  if (isLocalPath(src)) return localPathToUrl(src) ?? undefined;
-  return src;
+const resolvedUrlCache = new Map<string, string | undefined>();
+
+function useResolvedImageSrc(appId: string | undefined, rawSrc: string | undefined): string | undefined {
+  const [resolved, setResolved] = useState<string | undefined>(() => {
+    if (!rawSrc) return undefined;
+    if (isHttpUrl(rawSrc)) return rawSrc;
+    const cacheKey = `${appId ?? ""}:${rawSrc}`;
+    const cached = resolvedUrlCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    return undefined;
+  });
+
+  useEffect(() => {
+    if (!rawSrc) { setResolved(undefined); return; }
+    if (isHttpUrl(rawSrc)) { setResolved(rawSrc); return; }
+    const cacheKey = `${appId ?? ""}:${rawSrc}`;
+    const cached = resolvedUrlCache.get(cacheKey);
+    if (cached !== undefined) { setResolved(cached); return; }
+
+    let cancelled = false;
+    resolveGameMediaUrl(appId ?? "", rawSrc).then((url) => {
+      if (cancelled) return;
+      const result = url ?? undefined;
+      resolvedUrlCache.set(cacheKey, result);
+      setResolved(result);
+    });
+    return () => { cancelled = true; };
+  }, [appId, rawSrc]);
+
+  return resolved;
 }
 
 export default function RecommendedSection({ onNavigate, continuePlayingAppIds, maxItems }: Props) {
@@ -44,7 +69,7 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
-  const [catalogEntries, setCatalogEntries] = useState<GameEntry[]>([]);
+  const [catalogEntries, setCatalogEntries] = useState<CatalogGameEntry[]>([]);
 
   const playtimeStore = useMemo(() => getCachedPlaytimeStore(), []);
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
@@ -65,14 +90,11 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
       const cached = getCachedCatalog();
       if (cancelled) return;
       if (cached.length > 0) {
-        const gameEntries: GameEntry[] = cached.map((e) => ({
+        const gameEntries: CatalogGameEntry[] = cached.map((e) => ({
           appId: e.appId,
           title: e.title,
           installed: false,
-          playtime: 0,
-          lastPlayed: 0,
           metadataJson: e.metadata ? JSON.stringify(e.metadata) : "{}",
-          updatedAt: e.appId ? parseInt(e.appId, 10) || 0 : 0,
         }));
         setCatalogEntries(gameEntries);
         return;
@@ -80,14 +102,11 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
       const { entries } = await loadNormalizedCatalog(1000);
       if (cancelled) return;
       if (entries.length > 0) {
-        const gameEntries: GameEntry[] = entries.map((e) => ({
+        const gameEntries: CatalogGameEntry[] = entries.map((e) => ({
           appId: e.appId,
           title: e.title,
           installed: false,
-          playtime: 0,
-          lastPlayed: 0,
           metadataJson: e.metadata ? JSON.stringify(e.metadata) : "{}",
-          updatedAt: e.appId ? parseInt(e.appId, 10) || 0 : 0,
         }));
         setCatalogEntries(gameEntries);
       }
@@ -192,18 +211,96 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
 
   if (displayGames.length === 0) return null;
 
-  function handleOpen(game: LibraryGame) {
-    // Support both Steam and manual games
-    const libGame = game.appId
-      ? libraryGames.find((g) => g.appId === game.appId)
-      : libraryGames.find((g) => g.id === game.id || g.libraryId === game.libraryId);
-    if (libGame) {
-      setSelectedGame(libGame);
-      onNavigate?.("library-game-detail");
-    } else {
-      onNavigate?.("store");
-    }
+function GameCard({ game, onOpen, favoriteIds, toggleFavorite, cardSize, t }: {
+  game: LibraryGame;
+  onOpen: (g: LibraryGame) => void;
+  favoriteIds: Set<string>;
+  toggleFavorite: (fk: string) => void;
+  cardSize: number;
+  t: (key: string, fallback: string) => string;
+}) {
+  const rawSrc = game.imageUrl || game.metadata?.header_image || game.metadata?.capsule_image || undefined;
+  const imgSrc = useResolvedImageSrc(game.appId, rawSrc);
+
+  return (
+    <div
+      key={"dashboard:recommended:steam:" + game.appId}
+      className="shrink-0 snap-start"
+      style={{ width: `min(75vw, ${cardSize}px)` }}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpen(game)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpen(game);
+          }
+        }}
+        className="lf-dash-card group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
+      >
+        <div className="relative aspect-video overflow-hidden">
+          {imgSrc ? (
+            <AsyncImage
+              src={imgSrc}
+              alt={game.title}
+              className="h-full w-full object-cover"
+              fallback={
+                <div className="flex h-full w-full items-center justify-center bg-white/5">
+                  <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
+                </div>
+              }
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-white/5">
+              <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
+            </div>
+          )}
+          <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const fk = getFavoriteKey(game);
+              if (fk) toggleFavorite(fk);
+            }}
+            className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
+            title={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? t("sidebar.remove_from_favorites", "Remove from favorites") : t("sidebar.add_to_favorites", "Add to favorites")}
+          >
+            <Heart
+              className="h-4 w-4"
+              fill={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? "currentColor" : "none"}
+            />
+          </button>
+        </div>
+
+        <div className="p-3">
+          <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
+            {game.title}
+          </h3>
+          {game.metadata?.genres && game.metadata.genres.length > 0 && (
+            <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
+              {game.metadata.genres.slice(0, 2).join(", ")}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function handleOpenGame(game: LibraryGame, libraryGames: LibraryGame[], setSelectedGame: (g: LibraryGame) => void, onNavigate?: (page: AppPage) => void) {
+  const libGame = game.appId
+    ? libraryGames.find((g) => g.appId === game.appId)
+    : libraryGames.find((g) => g.id === game.id || g.libraryId === game.libraryId);
+  if (libGame) {
+    setSelectedGame(libGame);
+    onNavigate?.("library-game-detail");
+  } else {
+    onNavigate?.("store");
   }
+}
 
   return (
     <section>
@@ -221,78 +318,17 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
       </div>
 
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
-        {deduplicateByAppId(displayGames).map((game) => {
-          const imgSrc = resolveImageSrc(
-            game.imageUrl || game.metadata?.header_image || game.metadata?.capsule_image || undefined,
-          );
-
-          return (
-            <div
-              key={"dashboard:recommended:steam:" + game.appId}
-              className="shrink-0 snap-start"
-              style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
-            >
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => handleOpen(game)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    handleOpen(game);
-                  }
-                }}
-                className="lf-dash-card group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
-              >
-                <div className="relative aspect-video overflow-hidden">
-                  {imgSrc ? (
-                    <AsyncImage
-                      src={imgSrc}
-                      alt={game.title}
-                      className="h-full w-full object-cover"
-                      fallback={
-                        <div className="flex h-full w-full items-center justify-center bg-white/5">
-                          <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
-                        </div>
-                      }
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-white/5">
-                      <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
-                    </div>
-                  )}
-                  <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const fk = getFavoriteKey(game);
-                      if (fk) toggleFavorite(fk);
-                    }}
-                    className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
-                    title={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? t("sidebar.remove_from_favorites", "Remove from favorites") : t("sidebar.add_to_favorites", "Add to favorites")}
-                  >
-                    <Heart
-                      className="h-4 w-4"
-                      fill={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? "currentColor" : "none"}
-                    />
-                  </button>
-                </div>
-
-                <div className="p-3">
-                  <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
-                    {game.title}
-                  </h3>
-                  {game.metadata?.genres && game.metadata.genres.length > 0 && (
-                    <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
-                      {game.metadata.genres.slice(0, 2).join(", ")}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        {deduplicateByAppId(displayGames).map((game) => (
+          <GameCard
+            key={"dashboard:recommended:steam:" + game.appId}
+            game={game}
+            onOpen={(g) => handleOpenGame(g, libraryGames, setSelectedGame, onNavigate)}
+            favoriteIds={favoriteIds}
+            toggleFavorite={toggleFavorite}
+            cardSize={settings.dashboardCardSize}
+            t={t}
+          />
+        ))}
       </DashboardHorizontalRail>
     </section>
   );

@@ -796,14 +796,24 @@ class AchievementStoreImpl {
 
       console.log(`[ACH][CACHE][${tid}] wrote appid=${appId} unlocked=${finalUnlocked}/${summary.total} source=${summary.source}`);
 
-      // SQLite dual-write
+      // SQLite dual-write — V2 API (game_id-based)
       try {
-        const { upsertAchievementSummary, batchUpsertAchievementEntries } = await import("./tauri");
+        const {
+          upsertAchievementSummaryV2,
+          batchUpsertAchievementsV2,
+          upsertAchievementProgressV2,
+          upsertAchievementPercentagesV2,
+        } = await import("./tauri");
+
+        const gameId = `steam-${appId}`;
+        const now = Math.floor(Date.now() / 1000);
+
         await Promise.all([
-          upsertAchievementSummary({
-            appId,
-            source: summary.source || "librarycache",
+          // Summary
+          upsertAchievementSummaryV2({
+            gameId,
             platform: effectivePlatform,
+            source: summary.source || "librarycache",
             unlocked: finalUnlocked,
             total: summary.total,
             inProgress: finalUnlocked,
@@ -811,19 +821,39 @@ class AchievementStoreImpl {
             lastUnlockAt: null,
             updatedAt: now,
           }),
-          batchUpsertAchievementEntries(achievements.map(a => ({
-            appId,
+          // Achievement definitions (name, icons, description — no unlock state)
+          batchUpsertAchievementsV2(achievements.map(a => ({
+            id: `${gameId}:${effectivePlatform}:${a.api_name}`,
+            gameId,
+            platform: effectivePlatform,
             apiName: a.api_name,
             name: a.name,
             description: a.description ?? null,
             iconUrl: a.icon ?? null,
-            iconGrayUrl: a.icon_gray ?? null,
+            iconGray: a.icon_gray ?? null,
             hidden: false,
-            unlocked: a.unlocked,
-            unlockTime: a.unlock_time ?? null,
             globalPct: a.rarity_percent ?? null,
             updatedAt: now,
           }))),
+          // Achievement progress (unlocked state — separate write)
+          ...achievements.map(a =>
+            upsertAchievementProgressV2({
+              id: `${gameId}:${effectivePlatform}:${a.api_name}`,
+              gameId,
+              platform: effectivePlatform,
+              apiName: a.api_name,
+              unlocked: a.unlocked,
+              unlockTime: a.unlock_time ?? null,
+              unlockedAt: null,
+              updatedAt: now,
+            })
+          ),
+          // Percentages
+          upsertAchievementPercentagesV2({
+            gameId,
+            entries: JSON.stringify(finalPercentages),
+            updatedAt: now,
+          }),
         ]);
       } catch (e) {
         console.debug(`[ACH][CACHE][${tid}] SQLite write failed (non-critical):`, e);

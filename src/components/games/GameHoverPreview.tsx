@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey, formatPlaytime, subscribePlaytimeStore } from "../../services/playtimeService";
 
 const POPUP_WIDTH = 300;
 const POPUP_IMAGE_HEIGHT = 170;
@@ -79,16 +79,35 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
     setCurrentIndex(0);
   }, [game.appId]);
 
-  // Playtime
+  // Playtime — provider-aware key first, then appId fallback, then LibraryGame DB fields
+  const [, setPlaytimeVersion] = useState(0);
+  useEffect(() => {
+    const unsub = subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+    return unsub;
+  }, []);
   const playtime = useMemo(() => {
-    const entry = getPlaytimeEntryByAppId(game.appId ?? "");
-    if (!entry) return null;
-    return {
-      total: formatPlaytime(entry.totalPlaytimeSeconds),
-      lastPlayed: formatRelativeTime(entry.lastPlayedAt),
-      lastPlayedAt: entry.lastPlayedAt,
-    };
-  }, [game.appId]);
+    const byKey = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+    const entry = byKey ?? getPlaytimeEntryByAppId(game.appId ?? "");
+    if (entry) {
+      return {
+        total: formatPlaytime(entry.totalPlaytimeSeconds),
+        lastPlayed: formatRelativeTime(entry.lastPlayedAt),
+        lastPlayedAt: entry.lastPlayedAt,
+      };
+    }
+    // Fallback to DB fields already on LibraryGame (from games_v2)
+    const fallbackSeconds = ((game.steamPlaytimeMinutes ?? game.localPlaytimeMinutes ?? 0) * 60);
+    const fallbackLastPlayed = game.localLastPlayedAt ?? game.steamLastPlayedAt ?? null;
+    const fallbackLastPlayedSec = fallbackLastPlayed ? Math.floor(fallbackLastPlayed / 1000) : null;
+    if (fallbackSeconds > 0 || fallbackLastPlayedSec) {
+      return {
+        total: formatPlaytime(fallbackSeconds),
+        lastPlayed: formatRelativeTime(fallbackLastPlayedSec),
+        lastPlayedAt: fallbackLastPlayedSec,
+      };
+    }
+    return null;
+  }, [game.id, game.appId, game.libraryId, game.source, game.steamPlaytimeMinutes, game.localPlaytimeMinutes, game.steamLastPlayedAt, game.localLastPlayedAt]);
 
   // Cover image for fallback — skip unresolved relative paths
   const coverRaw = game.coverPath || game.imageUrl || "";
@@ -238,7 +257,7 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
           {/* Source + repacker badges */}
           <div className="mt-1.5 flex items-center gap-1.5">
             {(() => {
-              const srcBadge = game.hasLua
+              const srcBadge = game.hasLua || game.source === "lua"
                 ? { label: "LUA", cls: "bg-emerald-500/30 text-emerald-300" }
                 : game.source === "epic"
                   ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300" }

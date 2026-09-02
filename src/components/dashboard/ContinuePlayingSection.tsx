@@ -101,9 +101,10 @@ function getContinueDisplayGames(
     return b.totalPlaytimeSeconds - a.totalPlaytimeSeconds;
   });
 
-  // Filter out games without a real lastPlayed timestamp. Games with playtime from
-  // Steam stats but no lastPlayed are placeholder data — not "continue playing".
-  const played = result.filter((g) => g.isRunning || (g.lastPlayedAt != null && g.lastPlayedAt > 0));
+  // Include games that are running, have a real lastPlayed, OR have any playtime.
+  // Steam games may have playtime from localconfig.vdf but no lastPlayed timestamp
+  // on first load — they should still appear in Continue Playing.
+  const played = result.filter((g) => g.isRunning || (g.lastPlayedAt != null && g.lastPlayedAt > 0) || g.totalPlaytimeSeconds > 0);
 
   return played.slice(0, maxItems ?? 10);
 }

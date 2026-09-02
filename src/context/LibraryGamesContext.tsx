@@ -4,7 +4,7 @@ import type { LibraryGame } from "../types/libraryGame";
 import type { AppSettings } from "../types/settings";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
-import { loadCachedGames, isCacheExpired, saveCachedGames } from "../services/gameDetectionCache";
+import { loadCachedGamesFromV2, saveCachedGames, invalidateGamesV2Cache } from "../services/gameDetectionCache";
 import { loadLibraryAppInfo, updateLibraryAppInfo } from "../services/libraryLocalCacheService";
 import type { LibraryAppInfoEntry, LibraryAppInfoMap } from "../services/tauri";
 import {
@@ -13,7 +13,7 @@ import {
   mergeLocalStatsIntoGames,
   setAchievementsSupportedFlag,
 } from "../services/gameStatsService";
-import { importExternalPlaytime, getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../services/playtimeService";
+import { importExternalPlaytime, getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, subscribePlaytimeStore, loadPlaytimeStore } from "../services/playtimeService";
 import { useSettings } from "./SettingsContext";
 import {
   waitForBootSnapshot,
@@ -48,17 +48,16 @@ import {
 } from "../services/perfCounters";
 import { loadManualGames, subscribeManualGames } from "../services/manualGameStore";
 import { manualGameToLibraryGame } from "../services/manualGameLibraryMapper";
-import { EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LIBRARY } from "../services/epicFeatureFlag";
-import { DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_LIBRARY } from "../features/debrid/debridFeatureFlag";
+import { EPIC_LIBRARY_ENABLED } from "../services/epicFeatureFlag";
+import { DEBRID_LIBRARY_ENABLED } from "../features/debrid/debridFeatureFlag";
 import { isIntegrationEnabled, isIntegrationScanOnStartup } from "../services/integrationSettingsService";
 import { filterEnabledGames } from "../services/providerSurfaceFilter";
 import {
-  getAllEpicGames,
-  getAllEpicGamesIncludingOwned,
   subscribeEpicGames,
   refreshEpicGames,
   refreshOwnedGames,
   initOverrideSubscription,
+  getAllEpicGamesIncludingOwned,
 } from "../services/epicGameStore";
 import {
   getAllDebridGames,
@@ -153,27 +152,7 @@ function getManualLibraryGames(): LibraryGame[] {
   }
 }
 
-// â”€â”€ Epic game helpers â”€â”€
-
-/** Sync read from the in-memory Epic store. Returns [] when feature is disabled. */
-function getEpicLibraryGames(): LibraryGame[] {
-  if (!EPIC_LIBRARY_ENABLED) return [];
-  try {
-    return getAllEpicGames();
-  } catch {
-    return [];
-  }
-}
-
-/** Sync read from the in-memory Epic store, including owned (not installed) games. */
-function getEpicLibraryGamesIncludingOwned(): LibraryGame[] {
-  if (!EPIC_LIBRARY_ENABLED) return [];
-  try {
-    return getAllEpicGamesIncludingOwned();
-  } catch {
-    return [];
-  }
-}
+// ── Debrid game helpers ──
 
 /** Sync read from the in-memory Debrid store. Returns [] when feature is disabled.
  *  Returns games that the user has added to their library (downloaded + extracted,
@@ -317,6 +296,37 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     setInstalledAppIds(installed);
   }, [games]);
 
+  // Re-merge playtime from store when it loads after applyGamesSafely — ensures
+  // steam/lua/manual/epic/debrid show lastPlayed/playtime at boot without needing
+  // to enter GameDetails. DB already provides fallback via gameV2ToLibraryGame.
+  useEffect(() => {
+    const unsub = subscribePlaytimeStore(() => {
+      const current = gamesRef.current;
+      if (current.length === 0) return;
+      let changed = false;
+      for (const g of current) {
+        const pt = getPlaytimeEntryByGameKey(g.id) ?? (g.appId ? getPlaytimeEntryByAppId(g.appId) : null);
+        if (!pt) continue;
+        const mins = Math.round(pt.totalPlaytimeSeconds / 60);
+        if (mins > 0 && (g.localPlaytimeMinutes ?? 0) !== mins) {
+          g.localPlaytimeMinutes = mins;
+          g.steamPlaytimeMinutes = mins;
+          changed = true;
+        }
+        if (pt.lastPlayedAt) {
+          const ms = pt.lastPlayedAt * 1000;
+          if ((g.localLastPlayedAt ?? 0) !== ms) {
+            g.localLastPlayedAt = ms;
+            g.steamLastPlayedAt = ms;
+            changed = true;
+          }
+        }
+      }
+      if (changed) setGames([...current]);
+    });
+    return unsub;
+  }, []);
+
   const setSelectedId = useCallback((id: string | null) => {
     setSelectedIdState(id);
     storeSelectedId(id);
@@ -361,22 +371,13 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     options?: { allowReplace?: boolean },
   ): void {
     const current = gamesRef.current;
-    // Append manual games from manualGameStore, Epic games from epicGameStore,
-    // and Debrid games from debridGameStore so they appear in the Library grid.
-    // All three are never written to BootSnapshot, gameStore, SQLite, or appinfo.
-    // dedupeLibraryGames now uses composite key "appId:source", so entries from
-    // different providers with the same appId coexist as separate Library rows.
-    // Manual games with an appId that already exists in the SAME source are duplicates — skip them.
-    // Manual games with an appId from a different source (e.g. Steam) should coexist.
-    const existingKeys = new Set(
-      nextGames
-        .map((g) => (g.appId && g.source) ? `${g.appId}:${g.source}` : null)
-        .filter(Boolean),
-    );
-    const freshManual = getManualLibraryGames().filter(
-      (m) => !m.appId || !existingKeys.has(`${m.appId}:${m.source}`),
-    );
-    const withManual = [...nextGames, ...freshManual, ...getEpicLibraryGamesIncludingOwned(), ...getDebridLibraryGames()];
+    // games_v2 is the canonical source, but stores hold in-memory state that may not
+    // yet be persisted (e.g., fresh DB before persistToDisk fires). Merge as fallback —
+    // the SQLite subscriber will re-read from games_v2 once stores persist.
+    const freshManual = getManualLibraryGames();
+    const freshEpic = getAllEpicGamesIncludingOwned();
+    const freshDebrid = getDebridLibraryGames();
+    const withManual = [...nextGames, ...freshManual, ...freshEpic, ...freshDebrid];
     // Bridge snapshot media into fresh Epic/Debrid/Manual games from stores.
     // These stores create new LibraryGame objects without media paths (mappers don't set them),
     // so without this bridge, they lose media that the snapshot already validated.
@@ -450,20 +451,16 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
 
     // Phase 6: Merge Activity playtime into LibraryGame runtime objects
+    // Read directly from games_v2 cache (keyed by game.id)
     for (const game of deduped) {
-      // Use provider-aware resolvePlaytimeKey FIRST (handles debrid/manual/epic keys),
-      // then fall back to appId-based lookup for Steam games
-      const ptEntry = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game))
+      const ptEntry = getPlaytimeEntryByGameKey(game.id)
         ?? (game.appId ? getPlaytimeEntryByAppId(game.appId) : null);
       if (ptEntry) {
         const totalMinutes = Math.round(ptEntry.totalPlaytimeSeconds / 60);
         if (totalMinutes > 0) {
           game.localPlaytimeMinutes = Math.max(game.localPlaytimeMinutes ?? 0, totalMinutes);
         }
-        const sessionEnd = ptEntry.lastPlayedAt
-          || (ptEntry.sessions.length > 0
-            ? Math.max(...ptEntry.sessions.map(s => s.endedAt ?? s.startedAt))
-            : null);
+        const sessionEnd = ptEntry.lastPlayedAt || null;
         if (sessionEnd) {
           // playtime store stores Unix SECONDS; localLastPlayedAt consumers expect MILLISECONDS
           game.localLastPlayedAt = Math.max(game.localLastPlayedAt ?? 0, sessionEnd * 1000);
@@ -532,6 +529,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
     countLibraryApplied();
     const filtered = filterEnabledGames(stable);
+    const bySource: Record<string, number> = {};
+    for (const g of filtered) { const s = g.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
+    console.log(`[LIBRARY_CONTEXT][UI_STATE] source=${source} total=${filtered.length} bySource=${JSON.stringify(bySource)}`);
     logDebridSidebarDiagnostic(filtered);
     const filteredFp = computeLibraryFingerprint(filtered);
     if (filteredFp !== (currentFp ?? computeLibraryFingerprint(gamesRef.current))) {
@@ -667,6 +667,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         const steamStats = await loadSteamStats(
           settings.steamRoot || undefined,
           appIds,
+          { forceRefresh: true },
         );
         mergeSteamStatsIntoGames(games, steamStats);
 
@@ -684,16 +685,24 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           const batch = playtimeGames.slice(i, i + BATCH_SIZE);
           await Promise.allSettled(
             batch.map((game) => {
-              // Always use app-{appId} as the playtime store key — matches what
-              // snapshotToDisplayGame / getPlaytimeEntryByGameKey reads via resolvePlaytimeKey
-              const gameKey = `app-${game.appId}`;
+              // Use the canonical games_v2 id (steam-xxx / lua-xxx) so the DB row is actually found.
+              // The playtime store is keyed by games_v2.id (see buildStoreFromGamesV2), and
+              // getPlaytimeEntryByAppId has fallback aliases for legacy app-xxx keys.
+              const gameKey = game.id;
+              const stat = steamStats.get(Number(game.appId));
+              // Pass lastPlayed from Steam localconfig.vdf (ms → seconds) so
+              // the DB gets a real timestamp instead of 0/null.
+              const lastPlayedSec = stat?.lastPlayed != null && stat.lastPlayed > 0
+                ? (stat.lastPlayed > 100000000000 ? Math.floor(stat.lastPlayed / 1000) : stat.lastPlayed)
+                : undefined;
               return importExternalPlaytime({
                 gameKey,
                 appId: game.appId!,
-                provider: "steam",
+                provider: game.source === "lua" ? "steam" : "steam",
                 title: game.title,
-                externalPlaytimeSeconds: steamStats.get(Number(game.appId))!.playtimeMinutes! * 60,
+                externalPlaytimeSeconds: stat!.playtimeMinutes! * 60,
                 externalSource: "steam",
+                lastPlayedAtSeconds: lastPlayedSec,
               });
             })
           );
@@ -705,6 +714,23 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     } catch {
       // stats are non-critical
     }
+
+    // Persist playtime/lastPlayed data from mergeSteamStatsIntoGames to games_v2
+    try {
+      const statsEnriched = games.filter((g) =>
+        g.appId && ((g.steamPlaytimeMinutes ?? 0) > 0 || (g.steamLastPlayedAt ?? 0) > 0)
+      );
+      if (statsEnriched.length > 0) {
+        const { batchUpsertGamesV2 } = await import("../services/tauri");
+        const { libraryGameToGameV2 } = await import("../services/gameV2Mapper");
+        const entries = statsEnriched.map((g) => libraryGameToGameV2(g));
+        await batchUpsertGamesV2(entries);
+        console.log(`[LIBRARY_CONTEXT] persisted playtime data for ${entries.length} games to games_v2`);
+      }
+    } catch (err) {
+      console.warn("[LIBRARY_CONTEXT] failed to persist playtime data:", err);
+    }
+
     mergeLocalStatsIntoGames(games);
     setAchievementsSupportedFlag(games);
     return games;
@@ -758,8 +784,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       isInstalled: sg.installed ?? false,
       steamInstalled: sg.installed ?? false,
       isStandalone: isStandaloneById(sg.appId),
-      hasLua: sg.source === "lua",
-      isLuaActive: sg.source === "lua",
+      hasLua: sg.hasLua ?? sg.source === "lua",
+      isLuaActive: sg.hasLua ?? sg.source === "lua",
       isLuaDisabled: false,
       hasLuaSource: false,
       luaScripts: [],
@@ -789,7 +815,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
 
       reportLibraryProgress({ phase: "reading-sqlite", source: "sqlite" });
-      const cached = await loadCachedGames();
+      const cached = await loadCachedGamesFromV2();
       const { getReconciledGames } = await import("../services/gameStore");
       let loadedGames: LibraryGame[] | null = null;
       let loadSource = "";
@@ -905,6 +931,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           }
         }
 
+        // Load the playtime store from games_v2 BEFORE applyGamesSafely so
+        // Phase 6 (playtime merge) can find entries in the in-memory cache.
+        await loadPlaytimeStore();
         const effectiveSource = (loadSource === "snapshot-fallback" && gamesRef.current.length === 0) ? "snapshot" : loadSource;
         applyGamesSafely(loadedGames, effectiveSource, { allowReplace: true });
       }
@@ -923,9 +952,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       reportLibraryProgress({ phase: "done", source: (loadSource === "empty" ? "unknown" : loadSource) as LibraryLoadSource, itemsFound: loadedGames?.length });
 
       // Schedule background Steam scan after main window is visible
-      const needsScan = !cached || isCacheExpired(cached);
-      if (needsScan) {
-        scheduleAfterMain(async () => {
+      // Always scan in background — games_v2 is the source of truth, scan picks up new installs
+      scheduleAfterMain(async () => {
           setLoading(true);
           try {
             const result = await resolveLibraryGames(settings, {
@@ -942,7 +970,31 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             const enriched = await enrichWithStats(result.games);
             reportLibraryProgress({ phase: "updating-cache", source: "unknown" });
             await saveCachedGames(enriched, result.warnings);
-            applyGamesSafely(enriched, "background-scan");
+
+            // Seed games_v2 from the enriched game list so the next boot loads from games_v2 directly.
+            // This is THE write that breaks the cold-start chicken-and-egg.
+            try {
+              const { batchUpsertGamesV2 } = await import("../services/tauri");
+              const { libraryGameToGameV2 } = await import("../services/gameV2Mapper");
+              const { dedupeLibraryGames } = await import("../services/gameCacheService");
+              const deduped = dedupeLibraryGames(enriched);
+              const entries = deduped
+                .filter((g) => g.appId || g.id)
+                .map((g) => libraryGameToGameV2(g));
+              if (entries.length > 0) {
+                await batchUpsertGamesV2(entries);
+                console.log(`[LIBRARY_CONTEXT][SEED_GAMES_V2] seeded ${entries.length} games to games_v2 (from ${enriched.length} enriched)`);
+              }
+            } catch (err) {
+              console.warn("[LIBRARY_CONTEXT] seed games_v2 failed:", err);
+            }
+
+            // Re-read ALL games from games_v2 (not just Steam) to avoid wiping Epic/Debrid/Manual
+            const { getAllGamesV2 } = await import("../services/tauri");
+            const { gameV2ToLibraryGame: g2l } = await import("../services/gameV2Mapper");
+            const allV2 = await getAllGamesV2();
+            const allLib = allV2.map((g) => g2l(g));
+            applyGamesSafely(allLib.length > 0 ? allLib : enriched, "background-scan");
             setWarnings(result.warnings);
             reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
           } catch (error) {
@@ -952,7 +1004,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             setLoading(false);
           }
         }, 3000);
-      }
     } catch (error) {
       console.error("[LibraryGamesContext] load error:", error);
       reportLibraryProgress({ phase: "error", source: "unknown", errors: [String(error)] });
@@ -1013,28 +1064,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
     }
     return subscribeManualGames(() => {
-      const current = gamesRef.current;
-      if (current.length === 0) return; // not loaded yet
-      // Strip manual games — applyGamesSafely re-adds fresh ones from store at line 222.
-      // This avoids stale manual objects surviving through mergeGames.
-      const nonManual = current.filter((g) => g.source !== "manual");
+      // Manual store wrote to games_v2 — the SQLite subscriber handles re-reading.
+      // No need to strip/merge from in-memory store.
       const freshManual = getManualLibraryGames();
-      // Delete-only reconcile: if a manual game gained a Steam appId, drop the
-      // duplicate numeric-appId favorite key when the canonical libraryId is also favorited.
       if (reconcileManualFavoriteKeys(freshManual)) {
         console.log(`[FAVORITES][RECONCILE] manualGames=${freshManual.length} duplicateAppIdKeysRemoved=true`);
       }
-      if (DEBUG_MANUAL_REMOVE) {
-        const prevManual = current.filter((g) => g.source === "manual");
-        const removedIds = prevManual.filter((pg) => !freshManual.some((fm) => fm.id === pg.id)).map((g) => g.id);
-        if (removedIds.length > 0) {
-          console.log(`[MANUAL_REMOVE][LIBRARY_SUB] prevManual=${prevManual.length} freshManual=${freshManual.length} removed=${removedIds.join(",")}`);
-        }
-      }
-      if (DEBUG_MANUAL_COVER) {
-        console.log(`[MANUAL_COVER][LIBRARY_MANUAL_UPDATE] manualCount=${freshManual.length} prevManualCount=${current.filter((g) => g.source === "manual").length} incomingImageUrls=${freshManual.map((g) => g.imageUrl).join(",")} prevImageUrls=${current.filter((g) => g.source === "manual").map((g) => g.imageUrl).join(",")}`);
-      }
-      applyGamesSafely(nonManual, "manual-update");
     });
   }, []);
 
@@ -1053,15 +1088,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     initOverrideSubscription();
 
     return subscribeEpicGames(() => {
-      const current = gamesRef.current;
-      // Strip Epic games — applyGamesSafely re-adds fresh ones from store.
-      const nonEpic = current.filter((g) => g.source !== "epic");
-      if (DEBUG_EPIC_LIBRARY) {
-        const prevEpicCount = current.filter((g) => g.source === "epic").length;
-        const freshEpicCount = getEpicLibraryGames().length;
-        console.log(`[EPIC_STORE][LIBRARY_SUB] prevEpic=${prevEpicCount} freshEpic=${freshEpicCount} prevTotal=${current.length} nonEpic=${nonEpic.length}`);
-      }
-      applyGamesSafely(nonEpic, "epic-update");
+      // Epic store wrote to games_v2 — the SQLite subscriber handles re-reading.
+      // No need to strip/merge from in-memory store.
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1088,15 +1116,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
 
     return subscribeDebridGames(() => {
-      const current = gamesRef.current;
-      // Strip Debrid games — applyGamesSafely re-adds fresh ones from store.
-      const nonDebrid = current.filter((g) => g.source !== "debrid");
-      if (DEBUG_DEBRID_LIBRARY) {
-        const prevDebridCount = current.filter((g) => g.source === "debrid").length;
-        const freshDebridCount = getDebridLibraryGames().length;
-        console.log(`[DEBRID_STORE][LIBRARY_SUB] prevDebrid=${prevDebridCount} freshDebrid=${freshDebridCount} prevTotal=${current.length} nonDebrid=${nonDebrid.length}`);
-      }
-      applyGamesSafely(nonDebrid, "debrid-update");
+      // Debrid store wrote to games_v2 — the SQLite subscriber handles re-reading.
+      // No need to strip/merge from in-memory store.
       syncDebridTitlesNow();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1299,7 +1320,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         return;
       }
       await saveCachedGames(enriched, result.warnings);
-      applyGamesSafely(enriched, "manual-refresh", { allowReplace: true });
+      // Re-read ALL games from games_v2 (not just Steam) to avoid wiping Epic/Debrid/Manual
+      const { getAllGamesV2 } = await import("../services/tauri");
+      const { gameV2ToLibraryGame: g2l } = await import("../services/gameV2Mapper");
+      const allV2 = await getAllGamesV2();
+      const allLib = allV2.map((g) => g2l(g));
+      applyGamesSafely(allLib.length > 0 ? allLib : enriched, "manual-refresh", { allowReplace: true });
       setWarnings(result.warnings);
       await updateAppInfoFromGames(enriched).catch((err) => console.warn(err));
       reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
@@ -1311,7 +1337,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
-  // Subscribe to SQLite data changes — read directly from SQLite (no re-scan)
+  // Subscribe to SQLite data changes — read directly from games_v2 (no re-scan)
   useEffect(() => {
     let lastRefresh = 0;
     const unsub = subscribeDataChanges(async (type, detail) => {
@@ -1320,19 +1346,21 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         if (now - lastRefresh > 3000) {
           lastRefresh = now;
           try {
-            const { readAllGames } = await import("../services/tauri");
-            const { loadSteamGameIndex, indexEntryToLibraryGame } = await import("../services/fullSteamGameIndex");
-            const entries = await readAllGames();
+            const { getAllGamesV2 } = await import("../services/tauri");
+            const { gameV2ToLibraryGame } = await import("../services/gameV2Mapper");
+            const entries = await getAllGamesV2();
             if (entries.length === 0) return;
-            const index = await loadSteamGameIndex();
+            
             // Build Lua overlay from current games (preserve existing Lua state)
             const currentByAppId = new Map<string, LibraryGame>();
             for (const g of gamesRef.current) {
               if (g.appId) currentByAppId.set(g.appId, g);
             }
-            const games = index.map((entry) => {
-              const existing = currentByAppId.get(entry.appId);
-              const libGame = indexEntryToLibraryGame(entry, {});
+            
+            const games = entries.map((gameV2) => {
+              const libGame = gameV2ToLibraryGame(gameV2);
+              const existing = currentByAppId.get(libGame.appId ?? "");
+              
               // Preserve Lua state and metadata from existing games
               if (existing) {
                 libGame.hasLua = existing.hasLua;
@@ -1347,15 +1375,15 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 libGame.sizeOnDisk = existing.sizeOnDisk;
                 libGame.executablePath = existing.executablePath;
                 libGame.installDir = existing.installDir;
-                // Preserve media paths — indexEntryToLibraryGame never populates these
-                libGame.landscapePath = existing.landscapePath;
-                libGame.coverPath = existing.coverPath;
-                libGame.backgroundPath = existing.backgroundPath;
-                libGame.logoPath = existing.logoPath;
-                libGame.iconPath = existing.iconPath;
+                // Preserve media paths — gameV2ToLibraryGame populates from games_v2
+                libGame.landscapePath = existing.landscapePath ?? libGame.landscapePath;
+                libGame.coverPath = existing.coverPath ?? libGame.coverPath;
+                libGame.backgroundPath = existing.backgroundPath ?? libGame.backgroundPath;
+                libGame.logoPath = existing.logoPath ?? libGame.logoPath;
+                libGame.iconPath = existing.iconPath ?? libGame.iconPath;
                 // Preserve user-set completion status
                 libGame.completionStatus = existing.completionStatus;
-                // Preserve playtime fields — indexEntryToLibraryGame reads lastPlayed=0 from SQLite
+                // Preserve playtime fields
                 libGame.steamLastPlayedAt = existing.steamLastPlayedAt;
                 libGame.steamPlaytimeMinutes = existing.steamPlaytimeMinutes;
                 libGame.localLastPlayedAt = existing.localLastPlayedAt;
@@ -1364,6 +1392,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
               return libGame;
             });
             applyGamesSafely(games, "sqlite-refresh");
+            // Invalidate the in-memory cache so loadCachedGamesFromV2() re-reads fresh data
+            invalidateGamesV2Cache();
             console.log(`[LIBRARY_CONTEXT][SQLITE_REFRESH] games=${games.length}`);
           } catch (err) {
             console.warn("[LIBRARY_CONTEXT] sqlite refresh failed:", err);

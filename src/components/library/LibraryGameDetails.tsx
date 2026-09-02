@@ -1,7 +1,6 @@
 ﻿// Debug flag for achievement-related details logs (noisy per-navigation logs)
 const DEBUG_ACH_DETAILS = false;
 const DEBUG_LAUNCH_BUTTON_RENDER = false;
-const DEBUG_MANUAL_REMOVE = false;
 // Debug flag for hero layer composition (blur backdrop vs sharp foreground)
 const DEBUG_HERO_LAYERS = false;
 const SHOW_ACH_DEBUG_BUTTONS = false;
@@ -62,6 +61,7 @@ import { setAmbientSource, clearAmbientSource, rememberLibraryDetails } from "..
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { showInfo, showSuccess, showError } from "../toast/GameToast";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import UninstallGameDialog from "../games/UninstallGameDialog";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -280,6 +280,7 @@ export default function LibraryGameDetails({
   const [loadedHeroUrl, setLoadedHeroUrl] = useState<string | undefined>(undefined);
   const [placeholderUrl, setPlaceholderUrl] = useState<string | undefined>(undefined);
   const [backdropLayers, setBackdropLayers] = useState<string[]>([]);
+  const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const favoriteId = getFavoriteKey(game) ?? game.id;
   const favorite = isFavorite(favoriteId);
@@ -1563,7 +1564,7 @@ export default function LibraryGameDetails({
 
         {/* Floating developer + source badge — raised above action row */}
         {canonicalLoaded && (game.metadata?.developer || (canonicalAppInfo?.userData?.developers as string | undefined) || (localDetailsData as any)?.developer || (() => {
-          const b = game.hasLua ? "LUA" : game.source === "epic" ? "EPIC" : game.source === "debrid" ? "DEBRID" : game.source === "manual" ? "MANUAL" : game.source === "steam" ? "STEAM" : null;
+          const b = game.hasLua || game.source === "lua" ? "LUA" : game.source === "epic" ? "EPIC" : game.source === "debrid" ? "DEBRID" : game.source === "manual" ? "MANUAL" : game.source === "steam" ? "STEAM" : null;
           return b;
         })()) && (
             <div className="absolute bottom-20 right-0 z-30 pointer-events-none px-5 text-right lg:px-8">
@@ -1574,7 +1575,7 @@ export default function LibraryGameDetails({
                   </span>
                 )}
                 {(() => {
-                  const srcBadge = game.hasLua
+                  const srcBadge = game.hasLua || game.source === "lua"
                     ? { label: "LUA", cls: "bg-emerald-500/15 text-emerald-400 ring-emerald-500/25" }
                     : game.source === "epic"
                       ? { label: "EPIC", cls: "bg-purple-500/15 text-purple-400 ring-purple-500/25" }
@@ -2892,7 +2893,7 @@ export default function LibraryGameDetails({
                   showError(t("library_details.toast.couldNotRemove"));
                 }
               }} />
-            ) : game.steamInstalled && game.source !== "epic" ? (
+            ) : game.steamInstalled && game.source !== "epic" && game.source !== "lua" ? (
               <DropdownItem label={t("library_details.actions.uninstallInSteam")} onClick={async () => {
                 setShowActions(false);
                 const appIdNum = Number(game.appId);
@@ -2901,11 +2902,11 @@ export default function LibraryGameDetails({
                 try { await uninstallSteamApp(appIdNum); } catch { try { await openSteamStoreApp(appIdNum); } catch { await openExternalUrl(getSteamStoreUrl(appIdNum)); } }
               }} />
             ) : null}
-            {script && onDeleteScript && (
+            {(script || game.hasLua) && onDeleteScript && (
               <DropdownItem label={t("library_details.actions.deleteLua")} onClick={() => { setShowActions(false); onDeleteScript(game); }} />
             )}
-            {(!script || !onDeleteScript) && (
-              <DropdownItem label={t("library_details.actions.deleteLua")} disabled={!script} subtitle={!script ? t("library_details.noLuaScript") : undefined} />
+            {(!(script || game.hasLua) || !onDeleteScript) && (
+              <DropdownItem label={t("library_details.actions.deleteLua")} disabled={!(script || game.hasLua)} subtitle={!(script || game.hasLua) ? t("library_details.noLuaScript") : undefined} />
             )}
             <div className="border-t border-(--surface-active-border) my-1" />
             {game.source === "manual" && (
@@ -2914,13 +2915,7 @@ export default function LibraryGameDetails({
                 onClick={() => {
                   if (isManualRunning) return;
                   setShowActions(false);
-                  const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
-                  if (rawId && window.confirm(t("library_details.confirm.removeGame", { title: game.title }))) {
-                    if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][DETAILS] rawId=${rawId} title="${game.title}"`);
-                    removeManualGame(rawId);
-                    showInfo(t("library_details.toast.removedFromLibrary", { title: game.title ?? rawId }));
-                    onBack();
-                  }
+                  setUninstallDialogOpen(true);
                 }} />
             )}
             <DropdownItem label={t("library_details.actions.editGameDetails")} onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
@@ -2941,6 +2936,20 @@ export default function LibraryGameDetails({
         </>,
         document.body
       )}
+
+      <UninstallGameDialog
+        open={uninstallDialogOpen}
+        onClose={() => setUninstallDialogOpen(false)}
+        gameId={game.id}
+        gameTitle={game.title ?? ""}
+        appId={game.appId}
+        onDeleted={() => {
+          const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+          if (rawId) removeManualGame(rawId);
+          showInfo(t("library_details.toast.removedFromLibrary", { title: game.title ?? rawId }));
+          onBack();
+        }}
+      />
     </div>
   );
 }

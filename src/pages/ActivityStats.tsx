@@ -20,10 +20,9 @@ import {
   computeAvgSessionLength,
   computeTimeOfDay,
 } from "../features/activity/stats/statsService";
-import type { TimeOfDayBucket } from "../features/activity/stats/statsService";
+import type { LibraryStats, PlayActivityDay, StreakInfo, TopGame, SessionHistoryEntry, WeeklyComparison, TimeOfDayBucket, MasteryTierResult } from "../features/activity/stats/statsService";
 import { getPlayerProfile, subscribeAchievementStore } from "../features/activity/achievements/achievementStore";
-import { subscribePlaytimeStore } from "../services/playtimeService";
-import { subscribeSessionHistory } from "../services/gameSessionHistory";
+import { subscribePlaytimeStore, loadPlaytimeStore } from "../services/playtimeService";
 import { resolveGameMediaUrl } from "../services/gameCacheService";
 import { scanAchievementFolders, type FolderAchievementSummary } from "../services/tauri";
 import type { PlayerProfile, StatsTimeFilter } from "../features/activity/types";
@@ -35,6 +34,7 @@ import GrowBar from "../components/common/GrowBar";
 import { useGrowOnMount } from "../hooks/useGrowOnMount";
 
 const TIME_FILTERS: Array<{ value: StatsTimeFilter; labelKey: string }> = [
+  { value: "today", labelKey: "activity_stats.today" },
   { value: "week", labelKey: "activity_stats.this_week" },
   { value: "month", labelKey: "activity_stats.this_month" },
   { value: "30days", labelKey: "activity_stats.last_30_days" },
@@ -106,35 +106,78 @@ function SectionTitle({ children, icon: Icon }: { children: React.ReactNode; ico
 
 export default function ActivityStats() {
   const { t } = useTranslation();
-  const { games } = useLibraryGames();
-  const [timeFilter, setTimeFilter] = useState<StatsTimeFilter>("all");
+  const { games, initialLoading } = useLibraryGames();
+  const [timeFilter, setTimeFilter] = useState<StatsTimeFilter>("today");
   const [profile, setProfile] = useState<PlayerProfile>(getPlayerProfile);
-  const [, forceRender] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     return subscribeAchievementStore(() => setProfile(getPlayerProfile()));
   }, []);
 
-  // Live refresh: recompute when playtime or session history changes
-  const bump = useCallback(() => forceRender(n => n + 1), []);
+  // Live refresh: recompute when playtime changes
+  const bump = useCallback(() => setRefreshKey(n => n + 1), []);
   useEffect(() => {
-    const unsub1 = subscribePlaytimeStore(bump);
-    const unsub2 = subscribeSessionHistory(bump);
-    return () => { unsub1(); unsub2(); };
+    const unsub = subscribePlaytimeStore(bump);
+    return () => unsub();
   }, [bump]);
 
-  const stats = useMemo(() => computeLibraryStats(games), [games]);
-  const filteredPlaytime = useMemo(() => computeFilteredPlaytime(games, timeFilter), [games, timeFilter]);
-  const activityByDay = useMemo(() => computePlayActivityByDay(games, 90), [games]);
-  const streaks = useMemo(() => computeStreaks(games), [games]);
-  const heatmapData = useMemo(() => computeHeatmapData(games, 90), [games]);
-  const topGames = useMemo(() => computeTopGames(games, 10), [games]);
-  const sessionHistory = useMemo(() => computeSessionHistory(games, 20), [games]);
+  // Async state for computed stats
+  const [stats, setStats] = useState<LibraryStats>({ totalHours: 0, totalSessions: 0, gamesPlayed: 0, gamesUnplayed: 0, mostPlayedTitle: "", mostPlayedHours: 0 });
+  const [filteredPlaytime, setFilteredPlaytime] = useState<{ totalSeconds: number; gamesPlayed: number; sessions: SessionHistoryEntry[] }>({ totalSeconds: 0, gamesPlayed: 0, sessions: [] });
+  const [activityByDay, setActivityByDay] = useState<PlayActivityDay[]>([]);
+  const [streaks, setStreaks] = useState<StreakInfo>({ currentStreak: 0, longestStreak: 0, streakStarted: null, totalDaysPlayed: 0 });
+  const [heatmapData, setHeatmapData] = useState<{ date: string; value: number }[]>([]);
+  const [topGames, setTopGames] = useState<TopGame[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<SessionHistoryEntry[]>([]);
+  const [masteryTiers, setMasteryTiers] = useState<MasteryTierResult[]>([]);
+  const [weeklyComparison, setWeeklyComparison] = useState<WeeklyComparison>({ thisWeekSeconds: 0, lastWeekSeconds: 0, percentChange: null });
+  const [avgSessionLength, setAvgSessionLength] = useState<number | null>(null);
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDayBucket[]>([]);
+
+  // Recompute all async stats
+  useEffect(() => {
+    if (initialLoading || games.length === 0) return;
+    let cancelled = false;
+    async function recompute() {
+      try {
+        // Ensure the playtime store is loaded from games_v2 before computing stats
+        await loadPlaytimeStore();
+        const [s, fp, abd, st, ht, tg, sh, mt, wc, asl, tod] = await Promise.all([
+          computeLibraryStats(games),
+          computeFilteredPlaytime(games, timeFilter),
+          computePlayActivityByDay(games, 90),
+          computeStreaks(games),
+          computeHeatmapData(games, 90),
+          computeTopGames(games, 10),
+          computeSessionHistory(games, 20),
+          computeMasteryTiers(games),
+          computeWeeklyComparison(games),
+          computeAvgSessionLength(games),
+          computeTimeOfDay(games),
+        ]);
+        if (!cancelled) {
+          setStats(s);
+          setFilteredPlaytime(fp);
+          setActivityByDay(abd);
+          setStreaks(st);
+          setHeatmapData(ht);
+          setTopGames(tg);
+          setSessionHistory(sh);
+          setMasteryTiers(mt);
+          setWeeklyComparison(wc);
+          setAvgSessionLength(asl);
+          setTimeOfDay(tod);
+        }
+      } catch (err) {
+        console.error("[ACTIVITY_STATS] recompute failed:", err);
+      }
+    }
+    recompute();
+    return () => { cancelled = true; };
+  }, [games, timeFilter, refreshKey, initialLoading]);
+
   const totalLaunches = useMemo(() => getTotalLaunchCount(games), [games]);
-  const masteryTiers = useMemo(() => computeMasteryTiers(games), [games]);
-  const weeklyComparison = useMemo(() => computeWeeklyComparison(games), [games]);
-  const avgSessionLength = useMemo(() => computeAvgSessionLength(games), [games]);
-  const timeOfDay = useMemo(() => computeTimeOfDay(games), [games]);
 
   const maxDaySeconds = useMemo(() => Math.max(1, ...activityByDay.map((d) => d.seconds)), [activityByDay]);
   const hasAnyPlaytime = stats.totalHours > 0;
@@ -533,7 +576,8 @@ function TopGameRow({ game, index }: { game: { title: string; appId: string; tot
 }
 
 const TIME_ICONS = [Sunrise, Sun, Sunset, Moon] as const;
-const TIME_COLORS = ["text-amber-400", "text-yellow-300", "text-orange-400", "text-indigo-400"] as const;
+const TIME_FG = ["text-amber-400", "text-yellow-300", "text-orange-400", "text-indigo-400"] as const;
+const TIME_BG = ["bg-amber-400", "bg-yellow-300", "bg-orange-400", "bg-indigo-400"] as const;
 
 function TimeOfDayChart({ buckets }: { buckets: TimeOfDayBucket[] }) {
   const grow = useGrowOnMount();
@@ -548,14 +592,14 @@ function TimeOfDayChart({ buckets }: { buckets: TimeOfDayBucket[] }) {
           <div key={b.label}>
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-1.5">
-                <Icon className={`h-3 w-3 ${TIME_COLORS[i]}`} />
+                <Icon className={`h-3 w-3 ${TIME_FG[i]}`} />
                 <span className="text-xs text-(--color-text)">{b.label}</span>
               </div>
               <span className="text-[10px] text-(--color-muted)">{b.percent}%</span>
             </div>
             <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ease-out ${TIME_COLORS[i].replace("text-", "bg-")}`}
+                className={`h-full rounded-full transition-all duration-500 ease-out ${TIME_BG[i]}`}
                 style={{ width: grow ? `${barWidth}%` : "0%" }}
               />
             </div>

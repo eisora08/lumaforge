@@ -140,58 +140,52 @@ async function enrichDebridTitles(games: LibraryGame[]): Promise<number> {
 // ── Disk persistence ──
 
 /**
- * Read `debrid-games.json` from disk and populate in-memory state.
- * Must be called once on boot before refreshDebridGames().
+ * Load Debrid games from games_v2 (GameV2[]) into memory on boot.
+ * This replaces the old loadDebridGamesFromDisk() which read from the debrid_games blob.
  */
-export async function loadDebridGamesFromDisk(): Promise<DebridGameEntryJson[]> {
-  if (_loadedFromDisk) return await toDiskEntries();
+export async function loadDebridGamesFromV2(): Promise<void> {
+  if (_loadedFromDisk) return;
 
   try {
-    const { readDebridGames } = await import("./tauri");
-    const entries = await readDebridGames();
+    const { getGamesV2BySource } = await import("./tauri");
 
-    _diskEntryById = new Map(entries.map((e) => [e.id, e]));
+    const gamesV2 = await getGamesV2BySource("debrid");
 
-    for (const entry of entries) {
-      if (entry.installDir || entry.executablePath) {
-        _launchMetadataByProviderGameId.set(entry.id, {
-          installDir: entry.installDir ?? "",
-          executablePath: entry.executablePath ?? undefined,
-          workingDirectory: entry.workingDirectory ?? undefined,
-          launchArguments: entry.launchArguments?.join(" ") || undefined,
+    for (const g of gamesV2) {
+      // Populate in-memory state maps from games_v2 fields
+      if (g.exePath || g.installDir) {
+        _launchMetadataByProviderGameId.set(g.providerGameId!, {
+          installDir: g.installDir ?? "",
+          executablePath: g.exePath ?? undefined,
+          workingDirectory: g.workingDirectory ?? undefined,
+          launchArguments: g.launchArguments ?? undefined,
         });
       }
-      _userLibraryAppIds.add(entry.id);
-      // Remember the persisted title so refreshDebridGames can re-apply
-      // user edits (disk title differs from the catalog title when edited).
-      _diskTitleByProviderGameId.set(entry.id, entry.title || "");
-      // Restore user-overridden appIds so the override loop survives a restart.
-      // The disk `appId` field is authoritative (written from the override map).
-      if (entry.appId) {
-        _debridAppIdOverrides.set(entry.id, String(entry.appId));
+      _userLibraryAppIds.add(g.providerGameId!);
+      _diskTitleByProviderGameId.set(g.providerGameId!, g.title || "");
+      if (g.appId) {
+        _debridAppIdOverrides.set(g.providerGameId!, g.appId);
       }
-      // Restore status — preserve needs-setup, default to "ready" for installed entries
-      const preservedStatus = entry.status === "needs-setup" ? "needs-setup" : null;
+      // Derive status from installed state
+      const isInstalled = !!(g.installDir || g.exePath);
       _debridGameStatuses.set(
-        entry.id,
-        preservedStatus ?? (entry.installDir ? "ready" : (entry.installerPath ? "ready" : (entry.status === "downloading" ? "downloading" : "not-downloaded")))
+        g.providerGameId!,
+        isInstalled ? "ready" : "not-downloaded",
       );
     }
 
-    // Mark loaded only after a successful read — a transient failure must not
-    // freeze the in-memory state as empty for the rest of the session.
     _loadedFromDisk = true;
+
+    const installedCount = [..._debridGameStatuses.values()].filter(s => s === "ready").length;
+    console.log(`[DEBRID_STORE][GAMES_V2] loadDebridGamesFromV2 → ${gamesV2.length} games loaded (installed=${installedCount} inLibrary=${_userLibraryAppIds.size})`);
 
     if (DEBUG_DEBRID_LIBRARY) {
       console.log(
-        `[DEBRID_STORE] loaded ${entries.length} entries from disk (installed=${_launchMetadataByProviderGameId.size} inLibrary=${_userLibraryAppIds.size})`,
+        `[DEBRID_STORE] loaded ${gamesV2.length} entries from games_v2 (installed=${_launchMetadataByProviderGameId.size} inLibrary=${_userLibraryAppIds.size})`,
       );
     }
-
-    return entries;
   } catch (e) {
-    console.error("[DEBRID_STORE] failed to load from disk:", e);
-    return [];
+    console.error("[DEBRID_STORE] failed to load from games_v2:", e);
   }
 }
 
@@ -270,15 +264,36 @@ let _persistChain: Promise<void> = Promise.resolve();
 function persistToDisk(): Promise<void> {
   _persistChain = _persistChain
     .then(async () => {
-      const { writeDebridGames, upsertGameCatalogBlob, CATALOG_KEYS } = await import("./tauri");
+      const { batchUpsertGamesV2 } = await import("./tauri");
+      const { debridGameToGameV2 } = await import("./gameV2Mapper");
+      
+      // Write to games_v2 (single source of truth)
       const entries = toDiskEntries();
-      await writeDebridGames(entries);
-      // Dual-write: also persist to SQLite for fast boot reads
-      try {
-        await upsertGameCatalogBlob(CATALOG_KEYS.debridGames, JSON.stringify(entries));
-      } catch { /* non-critical */ }
+      const gamesV2 = entries
+        .filter((e) => e.id && e.title)
+        .map((e) => debridGameToGameV2({
+          id: e.id,
+          title: e.title,
+          appId: e.appId,
+          installSize: e.installSize,
+          repacker: e.repacker,
+          fileSize: e.fileSize,
+          updatedAt: e.updatedAt,
+          // Install state
+          installDir: e.installDir,
+          executablePath: e.executablePath,
+          workingDirectory: e.workingDirectory,
+          launchArguments: e.launchArguments,
+        }));
+      if (gamesV2.length > 0) {
+        console.log(`[DEBRID_STORE][GAMES_V2] persist: ${gamesV2.length} games written to games_v2`);
+        await batchUpsertGamesV2(gamesV2).catch((e) => console.warn("[DEBRID_STORE][GAMES_V2] persist FAILED:", e));
+      } else {
+        console.log(`[DEBRID_STORE][GAMES_V2] persist: 0 games to write`);
+      }
+      
       if (DEBUG_DEBRID_LIBRARY) {
-        console.log(`[DEBRID_STORE] persisted ${entries.length} entries to disk`);
+        console.log(`[DEBRID_STORE] persisted ${gamesV2.length} games to games_v2`);
       }
     })
     .catch((e) => {
@@ -319,7 +334,9 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
     // Load persisted install state FIRST so the restore loop below can
     // re-attach installDir/executablePath. Idempotent via _loadedFromDisk,
     // so both boot orders (Stage 3.35 loader first vs refresh first) converge.
-    await loadDebridGamesFromDisk();
+    if (!_loadedFromDisk) {
+      await loadDebridGamesFromV2();
+    }
 
     const { getAllRepackEntries, ensureRepackCatalogImported } = await import("./repackCatalogService");
 

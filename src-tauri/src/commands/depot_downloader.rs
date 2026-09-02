@@ -837,3 +837,42 @@ fn free_disk_space(path: &Path) -> Result<u64, String> {
     // TODO: Use proper disk space detection
     Ok(u64::MAX)
 }
+
+/// Get the default output directory for depot downloads: {app_data_dir}/games/depot/{app_id}/
+#[tauri::command]
+pub fn depot_downloader_default_output_dir(
+    app_handle: AppHandle,
+    app_id: u64,
+) -> Result<String, String> {
+    let dir = get_app_data_dir(&app_handle)?
+        .join("games")
+        .join("depot")
+        .join(app_id.to_string());
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Parse the .lua file for an app and return depot manifest IDs.
+/// Returns a map of depot_id (string) -> manifest_id for update detection.
+#[tauri::command]
+pub fn depot_downloader_parse_lua_manifests(
+    app_id: u64,
+) -> Result<HashMap<String, String>, String> {
+    let lua_dir = PathBuf::from(crate::utils::path_utils::detect_steam_paths()
+        .ok_or("Steam not found")?
+        .lua_path);
+    let lua_path = lua_dir.join(format!("{}.lua", app_id));
+
+    if !lua_path.exists() {
+        return Err(format!("Lua file not found: {}", lua_path.display()));
+    }
+
+    let entries = lua_parser::parse_lua_file(&lua_path)?;
+
+    let manifests: HashMap<String, String> = entries
+        .into_iter()
+        .filter(|e| e.manifest_id.is_some() && e.is_active)
+        .map(|e| (e.depot_id.to_string(), e.manifest_id.unwrap()))
+        .collect();
+
+    Ok(manifests)
+}

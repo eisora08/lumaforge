@@ -572,7 +572,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   const handleScanAdd = useCallback((programs: ScannedProgram[]) => {
     for (const p of programs) {
       const entry: ManualGameEntry = {
-        id: `manual:${crypto.randomUUID()}`,
+        id: crypto.randomUUID(),
         name: p.name,
         executablePath: p.exePath || undefined,
         installDir: p.installPath || undefined,

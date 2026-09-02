@@ -7,7 +7,7 @@ const DEBUG_LUA_ACTIONS = false;
 export type PrimaryAction = "play" | "install" | "uninstalling" | "missing-path" | "details" | "open-steam" | "open-lua-folder" | "installing" | "select-exe";
 
 export function getLauncherGamePrimaryAction(game: LibraryGame): PrimaryAction {
-  const hasLuaScripts = game.luaScripts && game.luaScripts.length > 0;
+  const hasLuaScripts = game.hasLua || (game.luaScripts && game.luaScripts.length > 0);
   const isEpicLaunchable = game.source === "epic" && EPIC_LAUNCH_ENABLED && EPIC_LIBRARY_ENABLED;
 
   // Debrid-specific status handling — standalone entries (no longer merged into Steam).
@@ -37,7 +37,7 @@ export function getLauncherGamePrimaryAction(game: LibraryGame): PrimaryAction {
     action = "play";
   } else if (game.isInstallable && game.appId) {
     action = "install";
-  } else if (game.appId && !game.isPlayable && !game.steamInstalled) {
+  } else if (game.appId && !game.isPlayable && !game.steamInstalled && !game.isInstalled) {
     action = "install";
   } else if (hasLuaScripts && !game.appId && !game.executablePath && !game.isPlayable) {
     action = "open-lua-folder";

@@ -11,7 +11,7 @@ import {
   subscribeAchievementStore,
 } from "../features/activity/achievements/achievementStore";
 import { evaluateAchievements } from "../features/activity/achievements/achievementEngine";
-import { buildEvalContext } from "../features/activity/stats/statsService";
+import { buildEvalContext, type EvaluationContextInput } from "../features/activity/stats/statsService";
 import { scanAchievementFolders, type FolderAchievementSummary } from "../services/tauri";
 import type {
   AchievementCategory,
@@ -24,7 +24,6 @@ import ActivityEmptyState from "../components/activity/ActivityEmptyState";
 import AchievementDetailModal from "../components/activity/AchievementDetailModal";
 import LevelRing from "../components/activity/LevelRing";
 import GrowBar from "../components/common/GrowBar";
-import type { EvaluationContextInput } from "../features/activity/stats/statsService";
 
 const CATEGORIES: Array<{ value: AchievementCategory | "all"; labelKey: string; icon?: React.ComponentType<{ className?: string }> }> = [
   { value: "all", labelKey: "launcher_achievements.all_categories" },
@@ -162,8 +161,7 @@ export default function LauncherAchievements() {
 
   useEffect(() => {
     if (games.length === 0) return;
-    const ctx = buildEvalContext(games, folderMap);
-    evaluateAchievements(ctx);
+    buildEvalContext(games, folderMap).then(ctx => evaluateAchievements(ctx));
   }, [games, folderMap]);
 
   const achievements = useMemo<AchievementWithState[]>(() => {
@@ -201,9 +199,14 @@ export default function LauncherAchievements() {
 
   const completionPercent = profile.totalCount > 0 ? Math.round((profile.unlockedCount / profile.totalCount) * 100) : 0;
 
-  const evalCtx = useMemo(() => {
-    if (games.length === 0) return null;
-    return buildEvalContext(games, folderMap);
+  const [evalCtx, setEvalCtx] = useState<EvaluationContextInput | null>(null);
+  useEffect(() => {
+    if (games.length === 0) return;
+    let cancelled = false;
+    buildEvalContext(games, folderMap).then(ctx => {
+      if (!cancelled) setEvalCtx(ctx);
+    });
+    return () => { cancelled = true; };
   }, [games, folderMap]);
 
   const selectedProgress = useMemo<ProgressInfo>(() => {

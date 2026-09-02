@@ -60,10 +60,10 @@ import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import UninstallGameDialog from "../games/UninstallGameDialog";
 import { useConfirm } from "../../services/confirmService";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
-const DEBUG_MANUAL_REMOVE = false;
 const DEBUG_LUA_DELETE = false;
 
 type Props = {
@@ -171,6 +171,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
+  const [uninstallTarget, setUninstallTarget] = useState<LibraryGame | null>(null);
   const { isFavorite, toggleFavorite } = useFavorites();
   const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -752,7 +754,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const mState = getState(mgk);
           const isRunning = mState === "running";
           const mAction = getLauncherGamePrimaryAction(menuGame);
-          const mHasLua = menuGame.luaScripts.length > 0;
+          const mHasLua = menuGame.hasLua || menuGame.luaScripts.length > 0;
           const mPendingUninstall = menuGame.appId ? isPendingUninstall(menuGame.appId) : false;
           if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) console.log(`[SIDEBAR_ACTION_RENDER] appid=${menuGame.appId} uninstallPending=${mPendingUninstall} action=${mPendingUninstall ? "uninstalling" : mAction}`);
           const _sfk = getFavoriteKey(menuGame);
@@ -813,7 +815,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   handleMenuClose();
                 }}
               />
-              {menuGame.appId && menuGame.source !== "epic" && menuGame.source !== "debrid" && (
+              {menuGame.appId && menuGame.source !== "epic" && menuGame.source !== "debrid" && menuGame.source !== "lua" && (
                 <MenuItem
                   label={t("context_menu.open_steam")}
                   icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -925,17 +927,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                               return;
                             }
                             handleMenuClose();
-                            const rawId = normalizeManualGameId(menuGame.providerGameId || menuGame.id || "");
-                            if (rawId) {
-                              try {
-                                if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][SIDEBAR] rawId=${rawId} title="${menuGame.title}"`);
-                                removeManualGame(rawId);
-                                showSuccess(t("sidebar.deleted", { title: menuGame.title ?? t("sidebar.manual_game") }));
-                                refresh();
-                              } catch (e) {
-                                showError(t("sidebar.failed_delete", { error: e }));
-                              }
-                            }
+                            setUninstallTarget(menuGame);
+                            setUninstallDialogOpen(true);
                           },
                         },
                       ]
@@ -968,7 +961,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                           }
                         },
                       }]
-                    : menuGame.source !== "manual" && menuGame.source !== "epic"
+                    : menuGame.source !== "manual" && menuGame.source !== "epic" && menuGame.source !== "lua"
                       ? [{
                         label: t("context_menu.uninstall_steam"),
                         icon: <ExternalLink className="h-3.5 w-3.5" />,
@@ -1020,7 +1013,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     const handleScanAdd = (programs: ScannedProgram[]) => {
       for (const p of programs) {
         const entry: ManualGameEntry = {
-          id: `manual:${crypto.randomUUID()}`,
+          id: crypto.randomUUID(),
           name: p.name,
           executablePath: p.exePath || undefined,
           installDir: p.installPath || undefined,
@@ -1197,6 +1190,21 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
             }}
           />
       )}
+
+      <UninstallGameDialog
+        open={uninstallDialogOpen}
+        onClose={() => { setUninstallDialogOpen(false); setUninstallTarget(null); }}
+        gameId={uninstallTarget?.id ?? ""}
+        gameTitle={uninstallTarget?.title ?? ""}
+        appId={uninstallTarget?.appId}
+        onDeleted={() => {
+          if (uninstallTarget) {
+            const rawId = normalizeManualGameId(uninstallTarget.providerGameId || uninstallTarget.id || "");
+            if (rawId) removeManualGame(rawId);
+            refresh();
+          }
+        }}
+      />
     </div>
   );
 }

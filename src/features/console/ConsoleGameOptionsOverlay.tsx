@@ -14,13 +14,13 @@ import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import UninstallGameDialog from "../../components/games/UninstallGameDialog";
 import { getFavoriteKey } from "../../services/gameCacheService";
 import {
   getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel,
 } from "./consoleGameActions";
 
 const FADE_DURATION = 180;
-const DEBUG_MANUAL_REMOVE = false;
 
 type Props = {
   game: LibraryGame;
@@ -54,6 +54,7 @@ export default function ConsoleGameOptionsOverlay({
   const [visible, setVisible] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── Enter animation ── */
@@ -299,31 +300,12 @@ export default function ConsoleGameOptionsOverlay({
     }
 
     if (game.source === "manual" && !isRunning) {
-      if (confirmDelete) {
-        list.push({
-          id: "confirm-remove",
-          label: "Confirm Remove",
-          icon: Trash2,
-          action: () => {
-            const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
-            if (rawId) {
-              if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][CONSOLE] rawId=${rawId} title="${game.title}"`);
-              removeManualGame(rawId);
-              showSuccess(`"${game.title ?? rawId}" removed from library`);
-            }
-            onRemoveManual?.(game);
-            onClose();
-          },
-          highlight: true,
-        });
-      } else {
-        list.push({
-          id: "remove-manual",
-          label: "Remove from Library",
-          icon: Trash2,
-          action: () => { setConfirmDelete(true); },
-        });
-      }
+      list.push({
+        id: "remove-manual",
+        label: "Remove from Library",
+        icon: Trash2,
+        action: () => { setUninstallDialogOpen(true); },
+      });
     }
 
     list.push({
@@ -512,6 +494,21 @@ export default function ConsoleGameOptionsOverlay({
           }}
         />
       )}
+
+      <UninstallGameDialog
+        open={uninstallDialogOpen}
+        onClose={() => setUninstallDialogOpen(false)}
+        gameId={game.id}
+        gameTitle={game.title ?? ""}
+        appId={game.appId}
+        onDeleted={() => {
+          const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+          if (rawId) removeManualGame(rawId);
+          showSuccess(`"${game.title ?? rawId}" removed from library`);
+          onRemoveManual?.(game);
+          onClose();
+        }}
+      />
     </div>
   );
 }

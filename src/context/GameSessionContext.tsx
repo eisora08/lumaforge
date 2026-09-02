@@ -1,15 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { isProcessRunning, terminateProcess, terminateProcessTree, launchSteamApp, launchExecutable, listProcesses } from "../services/tauri";
+import { isProcessRunning, terminateProcess, terminateProcessTree, launchSteamApp, launchExecutable, listProcesses, upsertGameSession } from "../services/tauri";
 import { findGameProcess, findGameProcesses, findCandidates, pickBestCandidate, resolveExecutablePath, extractExeName } from "../utils/gameProcessDetection";
 import { startPlaySession, endPlaySession, getCachedPlaytimeStore } from "../services/playtimeService";
 import { setActivePlayedSession, clearActivePlayedSession } from "../services/achievementAutoSyncService";
-import { createSessionRecord, addSession } from "../services/gameSessionHistory";
 import { pushActivityEvent } from "./GameActivityContext";
 import { dispatchProviderLaunch } from "../utils/providerLaunchAdapter";
 import { loadSettings } from "../context/SettingsContext";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
-import type { ProcessInfo } from "../services/tauri";
+import type { ProcessInfo, GameSession } from "../services/tauri";
 import { setInstalledGameEntry, discoverAndRegister } from "../services/installedGamesRegistry";
 import { showError } from "../components/toast/GameToast";
 
@@ -24,7 +23,7 @@ async function evaluateLauncherAchievements(): Promise<void> {
     const manualGames = getAllManualGames().map(manualGameToLibraryGame);
     const games = [...steamGames, ...manualGames];
     if (games.length === 0) return;
-    const ctx = buildEvalContext(games);
+    const ctx = await buildEvalContext(games);
     const result = evaluateAchievements(ctx);
     if (result.newlyUnlocked.length > 0) {
       console.log(`[LAUNCHER_ACH] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
@@ -1792,37 +1791,39 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             const sessionAppId = (prevSession.source === "steam" && prevSession.appId)
               ? `app-${prevSession.appId}`
               : (prevSession.gameKey || key);
-            const sessionRecord = createSessionRecord({
-              appId: sessionAppId,
-              title: prevSession.title || "Unknown Game",
+            // Reuse the session ID from record_play_session_start so ON CONFLICT updates the existing row.
+            // sessionId was captured at line 1773 before the ref was deleted.
+            const sessionRecord: GameSession = {
+              sessionId: sessionId || crypto.randomUUID(),
+              gameId: sessionAppId,
+              startedAt: Math.floor(prevSession.launchedAt / 1000),
+              endedAt: Math.floor(Date.now() / 1000),
+              durationSeconds,
+              exitReason,
               source: activitySource,
-              startedAt: prevSession.launchedAt,
-              endedAt: Date.now(),
-              exitReason: exitReason as "normal" | "stopped" | "crashed" | "unknown",
-            });
-            if (sessionRecord) {
-              const added = addSession(sessionRecord);
-              if (added) {
-                console.log(`[SESSION_HISTORY] recorded appid=${prevSession.appId} duration=${durationSeconds}s id=${sessionRecord.id}`);
+            };
+            // Persist session record to SQLite (fire-and-forget)
+            upsertGameSession(sessionRecord).then(() => {
+              console.log(`[SESSION_HISTORY] recorded appid=${prevSession.appId} duration=${durationSeconds}s id=${sessionRecord.sessionId}`);
+            }).catch(() => {});
+            console.log(`[SESSION_HISTORY] queued appid=${prevSession.appId} duration=${durationSeconds}s id=${sessionRecord.sessionId}`);
 
-                // Emit activity feed event (works from any page, not just GameDetails)
-                const durStr = durationSeconds >= 3600
-                  ? `${Math.floor(durationSeconds / 3600)}h ${Math.floor((durationSeconds % 3600) / 60)}m`
-                  : durationSeconds >= 60
-                    ? `${Math.floor(durationSeconds / 60)}m`
-                    : `${durationSeconds}s`;
-                const exitLabel = exitReason === "stopped" ? "Stopped" : "Process exited";
-                pushActivityEvent({
-                  gameId: prevSession.appId || key,
-                  appId: prevSession.appId,
-                  kind: "game-closed",
-                  title: prevSession.title || "Unknown Game",
-                  description: `Played for ${durStr} · ${exitLabel}`,
-                  source: activitySource,
-                  severity: "info",
-                });
-              }
-          }
+            // Emit activity feed event (works from any page, not just GameDetails)
+            const durStr = durationSeconds >= 3600
+              ? `${Math.floor(durationSeconds / 3600)}h ${Math.floor((durationSeconds % 3600) / 60)}m`
+              : durationSeconds >= 60
+                ? `${Math.floor(durationSeconds / 60)}m`
+                : `${durationSeconds}s`;
+            const exitLabel = exitReason === "stopped" ? "Stopped" : "Process exited";
+            pushActivityEvent({
+              gameId: prevSession.appId || key,
+              appId: prevSession.appId,
+              kind: "game-closed",
+              title: prevSession.title || "Unknown Game",
+              description: `Played for ${durStr} · ${exitLabel}`,
+              source: activitySource,
+              severity: "info",
+            });
         } else {
             console.debug("[Playtime] skipped end — duration below 15s", { gameKey: key, durationSeconds });
           }

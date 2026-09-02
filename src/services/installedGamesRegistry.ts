@@ -1,4 +1,5 @@
-import { readInstalledGamesRegistry, writeInstalledGamesRegistry, insertMetadataCacheSqlite, getMetadataCacheSqlite } from "./tauri";
+import { readInstalledGamesRegistry, writeInstalledGamesRegistry, getGameV2, upsertGameV2 } from "./tauri";
+import type { GameV2 } from "../types/gameV2";
 import { discoverExecutables } from "./tauri";
 
 const LOCALSTORAGE_LEGACY_KEY = "lumaforge-installed-games-v1";
@@ -110,20 +111,52 @@ export async function getExePathFromEntry(gameId: string): Promise<string | unde
 
 async function syncToDb(entry: InstalledGameEntry): Promise<void> {
   try {
-    const existing = await getMetadataCacheSqlite(entry.gameId);
-    await insertMetadataCacheSqlite({
-      gameId: entry.gameId,
-      title: existing?.title || null,
-      provider: entry.provider,
-      installed: true,
-      lastPlayed: existing?.lastPlayed || 0,
-      playtime: existing?.playtime || 0,
-      updatedAt: Date.now(),
+    // Ensure ID has source prefix to match what steamGameToGameV2 creates
+    const prefixedId = entry.gameId.startsWith(`${entry.provider}-`) || entry.gameId.startsWith("epic:") || entry.gameId.startsWith("lua-") || entry.gameId.startsWith("debrid:") || entry.gameId.startsWith("manual:")
+      ? entry.gameId
+      : `${entry.provider}-${entry.gameId}`;
+    const existing = await getGameV2(prefixedId);
+    const now = Date.now();
+    // Extract appId from prefixed ID (e.g., "steam-3768760" → "3768760")
+    const appIdMatch = prefixedId.match(/^(?:steam|lua)-(\d+)$/);
+    const appId = existing?.appId || appIdMatch?.[1] || entry.gameId;
+
+    // Check if ANY entry exists with this appId (lua, manual, debrid, steam)
+    // to avoid creating ghost steam entries for games from other sources.
+    let targetId = prefixedId;
+    let targetExisting = existing;
+    if (!existing && appId !== entry.gameId) {
+      const { getGameV2ByAppId } = await import("./tauri");
+      const matchByAppId = await getGameV2ByAppId(appId);
+      if (matchByAppId) {
+        targetId = matchByAppId.id;
+        targetExisting = matchByAppId;
+      }
+    }
+
+    const game: GameV2 = {
+      id: targetId,
+      title: targetExisting?.title || "",
+      source: targetExisting?.source || entry.provider,
+      appId,
+      providerGameId: targetExisting?.providerGameId || appId,
+      libraryId: targetExisting?.libraryId || targetId,
+      isInstalled: targetExisting?.isInstalled ?? (entry.provider === "steam"),
+      lastPlayedAt: targetExisting?.lastPlayedAt,
+      playtimeSeconds: targetExisting?.playtimeSeconds ?? 0,
+      playCount: targetExisting?.playCount ?? 0,
+      isFavorite: targetExisting?.isFavorite ?? false,
+      isHidden: targetExisting?.isHidden ?? false,
+      standalone: targetExisting?.standalone ?? false,
+      hasLua: targetExisting?.hasLua ?? false,
       exePath: entry.exePath,
       exeName: entry.exeName,
       installDir: entry.installDir,
-    });
-    console.debug("[Registry] synced to DB", { gameId: entry.gameId });
+      createdAt: targetExisting?.createdAt ?? now,
+      updatedAt: now,
+    };
+    await upsertGameV2(game);
+    console.debug("[Registry] synced to DB", { gameId: entry.gameId, targetId });
   } catch (err) {
     console.warn("[Registry] DB sync failed", err);
   }

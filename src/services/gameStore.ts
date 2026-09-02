@@ -46,7 +46,7 @@ export function clearReconciledGames(): void {
  * and the full resolver returned no games, but snapshot data exists.
  */
 export function setReconciledGamesFromSnapshot(
-  snapshotGames: Array<{ appId: string; title: string; source: string; playable?: boolean; installed?: boolean; lastPlayed?: number | null; playtime?: number | null }>,
+  snapshotGames: Array<{ appId: string; title: string; source: string; playable?: boolean; installed?: boolean; hasLua?: boolean; lastPlayed?: number | null; playtime?: number | null }>,
 ): void {
   const games: LibraryGame[] = snapshotGames.map((sg) => ({
     id: `snapshot-${sg.appId}`,
@@ -56,8 +56,8 @@ export function setReconciledGamesFromSnapshot(
     isPlayable: sg.playable ?? false,
     isInstallable: !sg.playable,
     steamInstalled: sg.installed ?? false,
-    hasLua: sg.source === "lua",
-    isLuaActive: sg.source === "lua",
+    hasLua: sg.hasLua ?? sg.source === "lua",
+    isLuaActive: sg.hasLua ?? sg.source === "lua",
     isLuaDisabled: false,
     hasLuaSource: false,
     luaScripts: [],
@@ -98,7 +98,7 @@ export async function validateLibraryIndexHealth(
 
   // Count Lua-defined games
   const luaAppIds = new Set<string>();
-  const { scanInstalledLuaScripts, readAllGames } = await import("./tauri");
+  const { scanInstalledLuaScripts } = await import("./tauri");
   const { getCachedSettings } = await import("./appBootCoordinator");
   const settings = getCachedSettings();
   if (settings?.luaPath) {
@@ -108,10 +108,14 @@ export async function validateLibraryIndexHealth(
     } catch { /* ignore */ }
   }
 
-  // Count SQLite games
+  // Count SQLite games from games_v2
   let sqliteEntries: { appId: string }[] = [];
   try {
-    sqliteEntries = await readAllGames();
+    const { getAllGamesV2 } = await import("./tauri");
+    const gamesV2 = await getAllGamesV2();
+    sqliteEntries = gamesV2
+      .filter((g) => g.source === "steam")
+      .map((g) => ({ appId: g.appId ?? g.providerGameId ?? "" }));
   } catch { /* ignore */ }
 
   const sqliteAppIds = new Set(sqliteEntries.map((e) => e.appId));
@@ -355,8 +359,8 @@ export async function validateStartupCacheHealth(): Promise<{
   } catch { /* ignore */ }
 
   try {
-    const { readAllGames } = await import("./tauri");
-    const all = await readAllGames();
+    const { getAllGamesV2 } = await import("./tauri");
+    const all = await getAllGamesV2();
     sqliteGames = all.length;
   } catch { /* ignore */ }
 
@@ -515,7 +519,7 @@ export async function rebuildLibraryIndex(
   console.log("[LIBRARY][REBUILD] started");
   const { resolveLibraryGames } = await import("./libraryGameResolver");
   const { saveCachedGames } = await import("./gameDetectionCache");
-  const { batchUpsertGames, readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
+  const { batchUpsertGamesV2, readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
   const { updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
 
   const result = await resolveLibraryGames(settings);
@@ -566,20 +570,14 @@ export async function rebuildLibraryIndex(
   // Persist enriched list to SQLite cache
   await saveCachedGames(games, result.warnings);
 
-  // Upsert into games table
+  // Upsert into games_v2 table — use libraryGameToGameV2 to preserve
+  // source-specific IDs (steam-<appId>, lua-<appId>, etc.)
   const luaGameCount = games.filter((g) => g.source === "lua").length;
+  const { libraryGameToGameV2 } = await import("./gameV2Mapper");
   const gameEntries = games
-    .filter((g) => g.appId)
-    .map((g) => ({
-      appId: g.appId!,
-      title: g.title,
-      installed: g.steamInstalled,
-      playtime: g.steamPlaytimeMinutes ?? 0,
-      lastPlayed: g.steamLastPlayedAt ?? 0,
-      metadataJson: JSON.stringify(g.metadata ?? {}),
-      updatedAt: Math.floor(Date.now() / 1000),
-    }));
-  await batchUpsertGames(gameEntries).catch(() => {});
+    .filter((g) => g.appId || g.id)
+    .map((g) => libraryGameToGameV2(g));
+  await batchUpsertGamesV2(gameEntries).catch(() => {});
 
   setReconciledGames(games);
   console.log(`[LIBRARY][REBUILD] complete upserted=${games.length}`);

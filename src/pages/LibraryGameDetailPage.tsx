@@ -19,7 +19,7 @@ import {
   getMediaCacheForAppId,
   getLibraryGameDetails,
 } from "../services/libraryLocalCacheService";
-import { readMediaManifest, type GameMediaCacheEntry, type GameMediaPaths, type MediaManifest } from "../services/tauri";
+import { getGameFile, type GameMediaCacheEntry, type GameMediaPaths, type GameFile } from "../services/tauri";
 import type { GameAppInfo } from "../services/gameCacheService";
 import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle, resolveProviderMediaPreviewUrl } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
@@ -375,7 +375,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     // because the manifest is the authoritative record of what files actually exist on disk.
     Promise.all([
       loadGameAppInfoWithMediaFallback(appId),
-      readMediaManifest(appId).catch(() => null as MediaManifest | null),
+      getGameFile(appId).catch(() => null as GameFile | null),
     ]).then(async ([info, manifest]) => {
       if (cancelled) return;
 
@@ -388,11 +388,11 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       let mergedInfo = info;
       if (info?.media && manifest) {
         const manifestMedia: GameMediaPaths = {
-          coverPath: manifest.files.cover.exists ? manifest.files.cover.path : null,
-          landscapePath: manifest.files.landscape.exists ? manifest.files.landscape.path : null,
-          backgroundPath: manifest.files.background.exists ? manifest.files.background.path : null,
-          logoPath: manifest.files.logo.exists ? manifest.files.logo.path : null,
-          iconPath: manifest.files.icon.exists ? manifest.files.icon.path : null,
+          coverPath: manifest.coverExists ? manifest.coverPath : null,
+          landscapePath: manifest.landscapeExists ? manifest.landscapePath : null,
+          backgroundPath: manifest.backgroundExists ? manifest.backgroundPath : null,
+          logoPath: manifest.logoExists ? manifest.logoPath : null,
+          iconPath: manifest.iconExists ? manifest.iconPath : null,
         };
         const resolvedManifestPaths = await resolveMediaPaths(appId, manifestMedia, "steam");
         if (cancelled) return;

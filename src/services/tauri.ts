@@ -1585,21 +1585,6 @@ export type DebridGameEntryJson = {
   updatedAt: number;
 };
 
-/** Read all installed Debrid game entries from `games/debrid/debrid-games.json`. */
-export async function readDebridGames(): Promise<DebridGameEntryJson[]> {
-  return await invoke<DebridGameEntryJson[]>("read_debrid_games");
-}
-
-/** Atomically write the full Debrid games array to `games/debrid/debrid-games.json`. */
-export async function writeDebridGames(entries: DebridGameEntryJson[]): Promise<void> {
-  return await invoke<void>("write_debrid_games", { entries });
-}
-
-/** Create a timestamped backup of `debrid-games.json`. Returns backup filename. */
-export async function backupDebridGames(): Promise<string> {
-  return await invoke<string>("backup_debrid_games");
-}
-
 // --- Epic games SQLite cache (dedicated table, kept isolated from Steam) ---
 
 /** SQLite row shape for an Epic game (dedicated `epic_games` blob table). */
@@ -1617,22 +1602,6 @@ export type EpicGameEntryJson = {
   executablePath?: string;
   sizeOnDisk?: number;
 };
-
-/** Read all Epic game entries from the dedicated `epic_games` SQLite blob. */
-export async function readEpicGames(): Promise<EpicGameEntryJson[]> {
-  return await invoke<EpicGameEntryJson[]>("read_epic_games");
-}
-
-/** Atomically write the full Epic games array to the `epic_games` SQLite blob. */
-export async function writeEpicGames(entries: EpicGameEntryJson[]): Promise<void> {
-  return await invoke<void>("write_epic_games", { entries });
-}
-
-/** Create a timestamped backup of the Epic games cache. Returns backup filename. */
-export async function backupEpicGames(): Promise<string> {
-  return await invoke<string>("backup_epic_games");
-}
-
 
 // --- Launcher achievements (meta-achievement system) ---
 
@@ -2315,51 +2284,6 @@ export async function migrateGameMediaToRelative(): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// Media Manifest — per-game fast media index
-// ---------------------------------------------------------------------------
-
-export type MediaManifestEntry = {
-  path: string;
-  exists: boolean;
-  size?: number | null;
-  modifiedAt?: number | null;
-};
-
-export type MediaManifestFiles = {
-  cover: MediaManifestEntry;
-  landscape: MediaManifestEntry;
-  background: MediaManifestEntry;
-  logo: MediaManifestEntry;
-  icon: MediaManifestEntry;
-};
-
-export type FileFingerprints = {
-  lua?: string | null;
-  appinfo?: string | null;
-  dashboard?: string | null;
-};
-
-export type MediaManifest = {
-  provider: string;
-  appid: string;
-  version: number;
-  updatedAt: number;
-  files: MediaManifestFiles;
-  fingerprints?: FileFingerprints | null;
-};
-
-export async function readMediaManifest(appId: string): Promise<MediaManifest | null> {
-  return await invoke<MediaManifest | null>("read_media_manifest", { appId });
-}
-
-export async function writeMediaManifest(appId: string, manifest: MediaManifest): Promise<void> {
-  return await invoke<void>("write_media_manifest", { appId, manifest });
-}
-
-export async function getMediaManifestsBatch(appIds: string[]): Promise<Record<string, MediaManifest>> {
-  return await invoke<Record<string, MediaManifest>>("get_media_manifests_batch", { appIds });
-}
-
 // ---------------------------------------------------------------------------
 // Media cache stats and compaction
 // ---------------------------------------------------------------------------
@@ -2391,50 +2315,6 @@ export async function compactMediaCache(profile?: MediaCacheProfile): Promise<Me
 
 export async function readGameMediaDataUrl(path: string): Promise<string> {
   return await invoke<string>("read_game_media_data_url", { path });
-}
-
-// ---------------------------------------------------------------------------
-// SQLite cache (Phase 1+ — read-only for now)
-// ---------------------------------------------------------------------------
-
-export type SqliteMediaCacheEntry = {
-  gameId: string;
-  provider: string;
-  basePath: string;
-  hasCover: boolean;
-  hasBackground: boolean;
-  hasLogo: boolean;
-  hasLandscape: boolean;
-  updatedAt: number;
-};
-
-export type SqliteMetadataCacheEntry = {
-  gameId: string;
-  title: string | null;
-  provider: string;
-  installed: boolean;
-  lastPlayed: number;
-  playtime: number;
-  updatedAt: number;
-  exePath?: string;
-  exeName?: string;
-  installDir?: string;
-};
-
-export async function getMediaCacheSqlite(gameId: string): Promise<SqliteMediaCacheEntry | null> {
-  try {
-    return await invoke<SqliteMediaCacheEntry | null>("get_media_cache", { gameId });
-  } catch {
-    return null;
-  }
-}
-
-export async function getMetadataCacheSqlite(gameId: string): Promise<SqliteMetadataCacheEntry | null> {
-  try {
-    return await invoke<SqliteMetadataCacheEntry | null>("get_metadata_cache", { gameId });
-  } catch {
-    return null;
-  }
 }
 
 // ── Backup Archive ──
@@ -2814,60 +2694,177 @@ export async function checkSqliteHealth(): Promise<boolean> {
   }
 }
 
-// Write commands (write-through caching, Phase 2)
-export async function insertMediaCacheSqlite(entry: SqliteMediaCacheEntry): Promise<void> {
-  try {
-    await invoke("insert_media_cache", { entry });
-  } catch {
-    // silent — best-effort only
-  }
-}
-
-export async function insertMetadataCacheSqlite(entry: SqliteMetadataCacheEntry): Promise<void> {
-  try {
-    await invoke("insert_metadata_cache", { entry });
-  } catch {
-    // silent — best-effort only
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Games table — full Steam dataset (Phase 3)
+// games_v2 — unified game table (migration v5+)
 // ---------------------------------------------------------------------------
 
-export type GameEntry = {
-  appId: string;
-  title: string;
-  installed: boolean;
-  playtime: number;
-  lastPlayed: number;
-  metadataJson: string;
-  updatedAt: number;
-  provider?: string;
-  mediaJson?: string;
-};
+import type { GameV2 } from "../types/gameV2";
 
-export async function batchUpsertGames(entries: GameEntry[]): Promise<void> {
+export async function upsertGameV2(game: GameV2): Promise<void> {
   try {
-    await invoke("batch_upsert_games", { entries });
-  } catch {
-    // silent — best-effort only
+    console.log(`[GAMES_V2][WRITE] upsert id=${game.id} source=${game.source} title="${game.title}" app_id=${game.appId ?? "null"} isInstalled=${game.isInstalled}`);
+    await invoke("upsert_game_v2", { game });
+  } catch (e) {
+    console.warn(`[GAMES_V2][WRITE] upsert FAILED id=${game.id} source=${game.source}:`, e);
   }
 }
 
-export async function readAllGames(): Promise<GameEntry[]> {
+export async function batchUpsertGamesV2(games: GameV2[]): Promise<void> {
   try {
-    return await invoke<GameEntry[]>("read_all_games");
+    const bySource: Record<string, number> = {};
+    for (const g of games) { const s = g.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
+    console.log(`[GAMES_V2][WRITE] batch_upsert count=${games.length} bySource=${JSON.stringify(bySource)}`);
+    await invoke("batch_upsert_games_v2", { games });
+    console.log(`[GAMES_V2][WRITE] batch_upsert OK count=${games.length}`);
+  } catch (e) {
+    console.warn(`[GAMES_V2][WRITE] batch_upsert FAILED count=${games.length}:`, e);
+  }
+}
+
+export async function getGameV2(gameId: string): Promise<GameV2 | null> {
+  try {
+    const result = await invoke<GameV2 | null>("get_game_v2", { gameId });
+    console.log(`[GAMES_V2][READ] get_game_v2 id=${gameId} found=${!!result} source=${result?.source ?? "n/a"}`);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+export async function getGameV2ByAppId(appId: string): Promise<GameV2 | null> {
+  try {
+    const result = await invoke<GameV2 | null>("get_game_v2_by_app_id", { appId });
+    console.log(`[GAMES_V2][READ] get_game_v2_by_app_id appId=${appId} found=${!!result} id=${result?.id ?? "n/a"} source=${result?.source ?? "n/a"}`);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAllGamesV2(): Promise<GameV2[]> {
+  try {
+    const result = await invoke<GameV2[]>("get_all_games_v2");
+    const bySource: Record<string, number> = {};
+    for (const g of result) { const s = g.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
+    console.log(`[GAMES_V2][READ] get_all_games_v2 count=${result.length} bySource=${JSON.stringify(bySource)}`);
+    return result;
+  } catch (e) {
+    console.warn("[GAMES_V2][READ] get_all_games_v2 FAILED:", e);
+    return [];
+  }
+}
+
+export async function getGamesV2BySource(source: string): Promise<GameV2[]> {
+  try {
+    const result = await invoke<GameV2[]>("get_games_v2_by_source", { source });
+    console.log(`[GAMES_V2][READ] get_games_v2_by_source source=${source} count=${result.length}`);
+    return result;
+  } catch (e) {
+    console.warn(`[GAMES_V2][READ] get_games_v2_by_source source=${source} FAILED:`, e);
+    return [];
+  }
+}
+
+export async function searchGamesV2(query: string): Promise<GameV2[]> {
+  try {
+    return await invoke<GameV2[]>("search_games_v2", { query });
   } catch {
     return [];
   }
 }
 
-export async function updateGameMetadataJson(appId: string, metadataJson: string): Promise<void> {
+export async function deleteGameV2(gameId: string): Promise<void> {
   try {
-    await invoke("update_game_metadata_json", { appId, metadataJson });
+    await invoke("delete_game_v2", { gameId });
   } catch {
     // silent — best-effort sync
+  }
+}
+
+/**
+ * Unified game deletion.
+ * 1. Deletes from games_v2 (CASCADE removes all child table rows)
+ * 2. Cleans up per-game localStorage keys
+ *
+ * @param gameId - The internal game ID (e.g. "steam-480", "manual:uuid")
+ * @param appId - The identifier used in localStorage keys (e.g. "480" for Steam,
+ *                "manual:uuid" for manual games). If omitted, derived from gameId.
+ */
+export async function deleteGameCompletely(
+  gameId: string,
+  appId?: string
+): Promise<void> {
+  // 1. SQLite CASCADE delete
+  await deleteGameV2(gameId);
+
+  // 2. Derive the localStorage key identifier
+  const storageKey = appId ?? gameId;
+
+  // 3. Clean up per-game localStorage keys
+  try {
+    // Achievement platform selection
+    localStorage.removeItem(`lumaforge-ach-platform-${storageKey}`);
+
+    // Standalone mode — filter out this game from the array
+    const standaloneRaw = localStorage.getItem("lumaforge-standalone-appids");
+    if (standaloneRaw) {
+      const arr = JSON.parse(standaloneRaw);
+      if (Array.isArray(arr)) {
+        const filtered = arr.filter((id: string) => id !== storageKey);
+        localStorage.setItem("lumaforge-standalone-appids", JSON.stringify(filtered));
+      }
+    }
+
+    // Favorites — filter out this game from the array
+    const favRaw = localStorage.getItem("lumaforge-favorites-v1");
+    if (favRaw) {
+      const arr = JSON.parse(favRaw);
+      if (Array.isArray(arr)) {
+        const filtered = arr.filter((id: string) => id !== storageKey);
+        localStorage.setItem("lumaforge-favorites-v1", JSON.stringify(filtered));
+      }
+    }
+  } catch {
+    // non-critical — localStorage cleanup is best-effort
+  }
+}
+
+export async function getGameV2Count(): Promise<number> {
+  try {
+    return await invoke<number>("get_game_v2_count");
+  } catch {
+    return 0;
+  }
+}
+
+export async function updatePlaytimeV2(
+  gameId: string,
+  seconds: number,
+  lastPlayed: number
+): Promise<void> {
+  try {
+    await invoke("update_playtime_v2", { gameId, seconds, lastPlayed });
+  } catch {
+    // silent
+  }
+}
+
+export async function incrementPlayCountV2(gameId: string): Promise<number> {
+  try {
+    return await invoke<number>("increment_play_count_v2", { gameId });
+  } catch {
+    return 0;
+  }
+}
+
+export async function addPlaytimeV2(
+  gameId: string,
+  deltaSeconds: number
+): Promise<number> {
+  try {
+    return await invoke<number>("add_playtime_v2", { gameId, deltaSeconds });
+  } catch {
+    return 0;
   }
 }
 
@@ -2999,6 +2996,141 @@ export async function getAchievementPercentagesFromDb(appId: string): Promise<Ac
 }
 
 // ---------------------------------------------------------------------------
+// New Achievement API — game_id-based (v9+)
+// ---------------------------------------------------------------------------
+
+export type AchievementSummaryV2 = {
+  gameId: string;
+  platform: string;
+  source: string;
+  unlocked: number;
+  total: number;
+  inProgress: number;
+  completionTime?: number | null;
+  lastUnlockAt?: number | null;
+  updatedAt: number;
+};
+
+export type AchievementV2 = {
+  id: string;
+  gameId: string;
+  platform: string;
+  apiName: string;
+  name?: string | null;
+  description?: string | null;
+  iconUrl?: string | null;
+  iconGray?: string | null;
+  hidden: boolean;
+  globalPct?: number | null;
+  updatedAt: number;
+};
+
+export type AchievementProgressV2 = {
+  id: string;
+  gameId: string;
+  platform: string;
+  apiName: string;
+  unlocked: boolean;
+  unlockTime?: number | null;
+  unlockedAt?: number | null;
+  updatedAt: number;
+};
+
+export type AchievementPercentagesV2 = {
+  gameId: string;
+  entries: string;
+  updatedAt: number;
+};
+
+export async function upsertAchievementSummaryV2(row: AchievementSummaryV2): Promise<void> {
+  try {
+    await invoke("upsert_achievement_summary", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementSummaryV2(gameId: string): Promise<AchievementSummaryV2 | null> {
+  try {
+    return await invoke<AchievementSummaryV2 | null>("get_achievement_summary", { gameId });
+  } catch {
+    return null;
+  }
+}
+
+export async function getAllAchievementSummariesV2(): Promise<AchievementSummaryV2[]> {
+  try {
+    return await invoke<AchievementSummaryV2[]>("get_all_achievement_summaries");
+  } catch {
+    return [];
+  }
+}
+
+export async function upsertAchievementV2(achievement: AchievementV2): Promise<void> {
+  try {
+    await invoke("upsert_achievement", { achievement });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function batchUpsertAchievementsV2(achievements: AchievementV2[]): Promise<void> {
+  try {
+    await invoke("batch_upsert_achievements", { achievements });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementsForGameV2(gameId: string): Promise<AchievementV2[]> {
+  try {
+    return await invoke<AchievementV2[]>("get_achievements_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function deleteAchievementsForGameV2(gameId: string): Promise<void> {
+  try {
+    await invoke("delete_achievements_for_game", { gameId });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function upsertAchievementProgressV2(progress: AchievementProgressV2): Promise<void> {
+  try {
+    await invoke("upsert_achievement_progress", { progress });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementProgressForGameV2(gameId: string): Promise<AchievementProgressV2[]> {
+  try {
+    return await invoke<AchievementProgressV2[]>("get_achievement_progress_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function upsertAchievementPercentagesV2(percentages: AchievementPercentagesV2): Promise<void> {
+  try {
+    await invoke("upsert_achievement_percentages", { percentages });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementPercentagesV2(gameId: string): Promise<AchievementPercentagesV2 | null> {
+  try {
+    return await invoke<AchievementPercentagesV2 | null>("get_achievement_percentages", { gameId });
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Achievement read with SQLite-first fallback
 // ---------------------------------------------------------------------------
 
@@ -3054,6 +3186,534 @@ export async function readAchievementCacheWithFallback(appId: number): Promise<A
 
   // Fallback: read from JSON files
   return readAchievementCache(appId);
+}
+
+// ---------------------------------------------------------------------------
+// Game sessions — unified session tracking (v10+)
+// ---------------------------------------------------------------------------
+
+export type GameSession = {
+  sessionId: string;
+  gameId: string;
+  startedAt: number;
+  endedAt?: number | null;
+  durationSeconds?: number | null;
+  exitReason?: string | null;
+  source: string;
+};
+
+export async function upsertGameSession(session: GameSession): Promise<void> {
+  try {
+    await invoke("upsert_game_session", { session });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getGameSessionsForGame(gameId: string): Promise<GameSession[]> {
+  try {
+    return await invoke<GameSession[]>("get_game_sessions_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllGameSessions(limit?: number): Promise<GameSession[]> {
+  try {
+    return await invoke<GameSession[]>("get_all_game_sessions", { limit });
+  } catch {
+    return [];
+  }
+}
+
+export async function deleteGameSessionsForGame(gameId: string): Promise<void> {
+  try {
+    await invoke("delete_game_sessions_for_game", { gameId });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function updateGameSessionEnd(
+  sessionId: string,
+  endedAt: number,
+  durationSeconds: number,
+  exitReason: string
+): Promise<void> {
+  try {
+    await invoke("update_game_session_end", { sessionId, endedAt, durationSeconds, exitReason });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getRecentGameSessions(limit: number): Promise<GameSession[]> {
+  try {
+    return await invoke<GameSession[]>("get_recent_game_sessions", { limit });
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Game files — unified file registry per game (v12+)
+// ---------------------------------------------------------------------------
+
+export type MediaInfo = {
+  path: string | null;
+  exists: boolean;
+  size: number | null;
+  modifiedAt: number | null;
+};
+
+export type GameFilesMedia = {
+  cover: MediaInfo;
+  landscape: MediaInfo;
+  background: MediaInfo;
+  logo: MediaInfo;
+  icon: MediaInfo;
+};
+
+export type GameFile = {
+  gameId: string;
+  installDir: string | null;
+  exePath: string | null;
+  exeName: string | null;
+  installed: boolean;
+  lastValidated: number;
+  coverPath: string | null;
+  coverExists: boolean;
+  coverSize: number | null;
+  coverModifiedAt: number | null;
+  landscapePath: string | null;
+  landscapeExists: boolean;
+  landscapeSize: number | null;
+  landscapeModifiedAt: number | null;
+  backgroundPath: string | null;
+  backgroundExists: boolean;
+  backgroundSize: number | null;
+  backgroundModifiedAt: number | null;
+  logoPath: string | null;
+  logoExists: boolean;
+  logoSize: number | null;
+  logoModifiedAt: number | null;
+  iconPath: string | null;
+  iconExists: boolean;
+  iconSize: number | null;
+  iconModifiedAt: number | null;
+  depotManifests: string | null;
+  destDir: string | null;
+  downloadedAt: number | null;
+  fingerprints: string | null;
+  updatedAt: number;
+};
+
+export async function upsertGameFile(
+  gameId: string,
+  installDir?: string | null,
+  exePath?: string | null,
+  exeName?: string | null,
+  installed?: boolean
+): Promise<void> {
+  try {
+    await invoke("upsert_game_file_cmd", { gameId, installDir, exePath, exeName, installed: installed ?? false });
+  } catch {
+    // silent
+  }
+}
+
+export async function upsertGameFilesMedia(gameId: string, media: GameFilesMedia): Promise<void> {
+  try {
+    await invoke("upsert_game_files_media_cmd", { gameId, media });
+  } catch {
+    // silent
+  }
+}
+
+export async function upsertGameFilesDepot(
+  gameId: string,
+  depotManifests?: string | null,
+  destDir?: string | null,
+  downloadedAt?: number | null
+): Promise<void> {
+  try {
+    await invoke("upsert_game_files_depot_cmd", { gameId, depotManifests, destDir, downloadedAt });
+  } catch {
+    // silent
+  }
+}
+
+export async function upsertGameFilesFingerprints(
+  gameId: string,
+  fingerprints?: string | null
+): Promise<void> {
+  try {
+    await invoke("upsert_game_files_fingerprints_cmd", { gameId, fingerprints });
+  } catch {
+    // silent
+  }
+}
+
+export async function getGameFile(gameId: string): Promise<GameFile | null> {
+  try {
+    return await invoke<GameFile | null>("get_game_file_cmd", { gameId });
+  } catch {
+    return null;
+  }
+}
+
+export async function getGameFilesMedia(gameId: string): Promise<GameFilesMedia | null> {
+  try {
+    return await invoke<GameFilesMedia | null>("get_game_files_media_cmd", { gameId });
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteGameFile(gameId: string): Promise<void> {
+  try {
+    await invoke("delete_game_file_cmd", { gameId });
+  } catch {
+    // silent
+  }
+}
+
+export async function getInstalledGameFiles(): Promise<GameFile[]> {
+  try {
+    return await invoke<GameFile[]>("get_installed_game_files_cmd");
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Import exclusions — games/folders to skip on scan (v13+)
+// ---------------------------------------------------------------------------
+
+export type ImportExclusion = {
+  id: number;
+  gameId: string | null;
+  folder: string | null;
+  title: string | null;
+  reason: string | null;
+  createdAt: number;
+};
+
+export async function addImportExclusion(
+  gameId?: string | null,
+  folder?: string | null,
+  title?: string | null,
+  reason?: string | null
+): Promise<number> {
+  try {
+    return await invoke<number>("add_import_exclusion_cmd", { gameId, folder, title, reason });
+  } catch {
+    return 0;
+  }
+}
+
+export async function getImportExclusions(): Promise<ImportExclusion[]> {
+  try {
+    return await invoke<ImportExclusion[]>("get_import_exclusions_cmd");
+  } catch {
+    return [];
+  }
+}
+
+export async function isGameExcluded(gameId: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>("is_game_excluded_cmd", { gameId });
+  } catch {
+    return false;
+  }
+}
+
+export async function isFolderExcluded(folder: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>("is_folder_excluded_cmd", { folder });
+  } catch {
+    return false;
+  }
+}
+
+export async function removeImportExclusion(id: number): Promise<void> {
+  try {
+    await invoke("remove_import_exclusion_cmd", { id });
+  } catch {
+    // silent
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Game actions — custom actions per game (v14+)
+// ---------------------------------------------------------------------------
+
+export type GameAction = {
+  id: number;
+  gameId: string;
+  actionType: string;
+  label: string;
+  command: string;
+  arguments: string | null;
+  icon: string | null;
+  sortOrder: number;
+  createdAt: number;
+};
+
+export async function addGameAction(
+  gameId: string,
+  actionType: string,
+  label: string,
+  command: string,
+  args?: string | null,
+  icon?: string | null,
+  sortOrder?: number | null
+): Promise<number> {
+  try {
+    return await invoke<number>("add_game_action_cmd", {
+      gameId, actionType, label, command, arguments: args, icon, sortOrder: sortOrder ?? 0
+    });
+  } catch {
+    return 0;
+  }
+}
+
+export async function getGameActions(gameId: string): Promise<GameAction[]> {
+  try {
+    return await invoke<GameAction[]>("get_game_actions_cmd", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllGameActions(): Promise<GameAction[]> {
+  try {
+    return await invoke<GameAction[]>("get_all_game_actions_cmd");
+  } catch {
+    return [];
+  }
+}
+
+export async function updateGameAction(
+  id: number,
+  label?: string | null,
+  command?: string | null,
+  args?: string | null,
+  icon?: string | null,
+  sortOrder?: number | null
+): Promise<void> {
+  try {
+    await invoke("update_game_action_cmd", { id, label, command, arguments: args, icon, sortOrder });
+  } catch {
+    // silent
+  }
+}
+
+export async function deleteGameAction(id: number): Promise<void> {
+  try {
+    await invoke("delete_game_action_cmd", { id });
+  } catch {
+    // silent
+  }
+}
+
+export async function deleteGameActionsForGame(gameId: string): Promise<void> {
+  try {
+    await invoke("delete_game_actions_for_game_cmd", { gameId });
+  } catch {
+    // silent
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Normalized entities — genres, companies, categories, features, tags (v11+)
+// ---------------------------------------------------------------------------
+
+export type Entity = {
+  id: number;
+  name: string;
+};
+
+// Genres
+export async function getAllGenres(): Promise<Entity[]> {
+  try {
+    return await invoke<Entity[]>("get_all_genres");
+  } catch {
+    return [];
+  }
+}
+
+export async function getGenresForGame(gameId: string): Promise<string[]> {
+  try {
+    return await invoke<string[]>("get_genres_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function getGenreCounts(): Promise<Array<[Entity, number]>> {
+  try {
+    return await invoke<Array<[Entity, number]>>("get_genre_counts");
+  } catch {
+    return [];
+  }
+}
+
+export async function setGameGenres(gameId: string, genreNames: string[]): Promise<void> {
+  try {
+    await invoke("set_game_genres", { gameId, genreNames });
+  } catch {
+    // silent
+  }
+}
+
+// Developers
+export async function getAllDevelopers(): Promise<Entity[]> {
+  try {
+    return await invoke<Entity[]>("get_all_developers");
+  } catch {
+    return [];
+  }
+}
+
+export async function getDevelopersForGame(gameId: string): Promise<string[]> {
+  try {
+    return await invoke<string[]>("get_developers_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function setGameDevelopers(gameId: string, companyNames: string[]): Promise<void> {
+  try {
+    await invoke("set_game_developers", { gameId, companyNames });
+  } catch {
+    // silent
+  }
+}
+
+// Publishers
+export async function getPublishersForGame(gameId: string): Promise<string[]> {
+  try {
+    return await invoke<string[]>("get_publishers_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function setGamePublishers(gameId: string, companyNames: string[]): Promise<void> {
+  try {
+    await invoke("set_game_publishers", { gameId, companyNames });
+  } catch {
+    // silent
+  }
+}
+
+// Categories
+export async function getAllCategories(): Promise<Entity[]> {
+  try {
+    return await invoke<Entity[]>("get_all_categories");
+  } catch {
+    return [];
+  }
+}
+
+export async function getCategoriesForGame(gameId: string): Promise<string[]> {
+  try {
+    return await invoke<string[]>("get_categories_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function setGameCategories(gameId: string, categoryNames: string[]): Promise<void> {
+  try {
+    await invoke("set_game_categories", { gameId, categoryNames });
+  } catch {
+    // silent
+  }
+}
+
+// Features
+export async function getAllFeatures(): Promise<Entity[]> {
+  try {
+    return await invoke<Entity[]>("get_all_features");
+  } catch {
+    return [];
+  }
+}
+
+export async function getFeaturesForGame(gameId: string): Promise<string[]> {
+  try {
+    return await invoke<string[]>("get_features_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function setGameFeatures(gameId: string, featureNames: string[]): Promise<void> {
+  try {
+    await invoke("set_game_features", { gameId, featureNames });
+  } catch {
+    // silent
+  }
+}
+
+// Tags
+export async function getAllTags(): Promise<Entity[]> {
+  try {
+    return await invoke<Entity[]>("get_all_tags");
+  } catch {
+    return [];
+  }
+}
+
+export async function getTagsForGame(gameId: string): Promise<string[]> {
+  try {
+    return await invoke<string[]>("get_tags_for_game", { gameId });
+  } catch {
+    return [];
+  }
+}
+
+export async function setGameTags(gameId: string, tagNames: string[]): Promise<void> {
+  try {
+    await invoke("set_game_tags", { gameId, tagNames });
+  } catch {
+    // silent
+  }
+}
+
+// Bulk migration + combined view
+export async function migrateGameEntitiesFromJson(
+  gameId: string,
+  genres?: string,
+  developers?: string,
+  publishers?: string,
+  categories?: string,
+  features?: string,
+  tags?: string,
+): Promise<void> {
+  try {
+    await invoke("migrate_game_entities_from_json", { gameId, genres, developers, publishers, categories, features, tags });
+  } catch {
+    // silent
+  }
+}
+
+export async function getAllGameEntities(gameId: string): Promise<{
+  genres: string[];
+  developers: string[];
+  publishers: string[];
+  categories: string[];
+  features: string[];
+  tags: string[];
+}> {
+  try {
+    return await invoke("get_all_game_entities", { gameId });
+  } catch {
+    return { genres: [], developers: [], publishers: [], categories: [], features: [], tags: [] };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3577,21 +4237,6 @@ export type ManualGameEntryJson = {
   createdAt: number;
   updatedAt: number;
 };
-
-/** Read all manual game entries from `games/manual/manual-games.json`. */
-export async function readManualGames(): Promise<ManualGameEntryJson[]> {
-  return await invoke<ManualGameEntryJson[]>("read_manual_games");
-}
-
-/** Atomically write the full manual games array to `games/manual/manual-games.json`. */
-export async function writeManualGames(entries: ManualGameEntryJson[]): Promise<void> {
-  return await invoke<void>("write_manual_games", { entries });
-}
-
-/** Create a timestamped backup of `manual-games.json`. Returns backup filename. */
-export async function backupManualGames(): Promise<string> {
-  return await invoke<string>("backup_manual_games");
-}
 
 // ─── Epic Games Store Scanner (Phase 1A) ─────────────────────────────────
 
@@ -4183,6 +4828,14 @@ export async function depotDownloaderPause(jobId: string): Promise<void> {
 
 export async function depotDownloaderStatus(): Promise<DepotDownloaderStatus> {
   return await invoke<DepotDownloaderStatus>("depot_downloader_status");
+}
+
+export async function depotDownloaderDefaultOutputDir(appId: number): Promise<string> {
+  return await invoke<string>("depot_downloader_default_output_dir", { appId });
+}
+
+export async function depotDownloaderParseLuaManifests(appId: number): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("depot_downloader_parse_lua_manifests", { appId });
 }
 
 // ── Tray menu ─────────────────────────────────────────────────────────────

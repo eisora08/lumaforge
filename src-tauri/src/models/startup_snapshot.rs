@@ -50,6 +50,8 @@ pub struct SnapshotGame {
     pub hidden: Option<bool>,
     #[serde(rename = "achievementSummary", default)]
     pub achievement_summary: Option<SnapshotAchievementSummary>,
+    #[serde(rename = "completionStatus", default)]
+    pub completion_status: Option<String>,
     #[serde(rename = "updatedAt", default)]
     pub updated_at: Option<u64>,
 }

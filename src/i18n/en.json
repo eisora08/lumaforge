@@ -1342,6 +1342,7 @@
     "more_actions": "More actions"
   },
   "activity_stats": {
+    "today": "Today",
     "this_week": "This week",
     "this_month": "This month",
     "last_30_days": "Last 30 days",

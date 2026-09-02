@@ -1,7 +1,14 @@
 import type { LibraryGame } from "../types/libraryGame";
 import type { PlaytimeStore } from "./playtimeService";
-import type { GameEntry } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
+
+/** Minimal shape used by the recommendation engine for catalog fill. */
+export type CatalogGameEntry = {
+  appId: string;
+  title: string;
+  installed: boolean;
+  metadataJson: string;
+};
 
 type UserProfile = {
   genres: Set<string>;
@@ -155,7 +162,7 @@ function getFallbackRecommendations(
 // ---------------------------------------------------------------------------
 export function getRecommendedWithGlobalFill(
   games: LibraryGame[],
-  catalogEntries: GameEntry[],
+  catalogEntries: CatalogGameEntry[],
   favoriteIds: Set<string>,
   playtimeStore: PlaytimeStore | null,
   continuePlayingAppIds: Set<string>,

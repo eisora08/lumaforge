@@ -23,6 +23,7 @@ import {
   depotDownloaderResolveDepots,
   depotDownloaderStart,
   depotDownloaderStatus,
+  depotDownloaderDefaultOutputDir,
 } from "../../services/tauri";
 import type { DepotInfo, DepotSelection } from "../../types/download";
 import { showError } from "../toast/GameToast";
@@ -87,10 +88,6 @@ export default function DepotPickerModal({
   const [toolInstalled, setToolInstalled] = useState<boolean | null>(null);
   const [gameNameFromApi, setGameNameFromApi] = useState("");
 
-  const defaultOutputDir = useMemo(() => {
-    return "Downloads/LumaForge/Depot";
-  }, []);
-
   const resolvedImage = headerImage || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
 
   // Check tool status and resolve depots when opened
@@ -102,9 +99,15 @@ export default function DepotPickerModal({
     setSelectedDepots(new Set());
     setGameNameFromApi("");
 
-    // Load saved output dir or use default
+    // Load saved output dir or resolve default from Rust
     const savedDir = localStorage.getItem("lumaforge-depot-output-dir");
-    setOutputDir(savedDir || defaultOutputDir);
+    if (savedDir) {
+      setOutputDir(savedDir);
+    } else {
+      depotDownloaderDefaultOutputDir(appId)
+        .then((dir) => setOutputDir(dir))
+        .catch(() => setOutputDir("Downloads/LumaForge/Depot"));
+    }
 
     depotDownloaderStatus()
       .then((status) => {
@@ -129,7 +132,7 @@ export default function DepotPickerModal({
         setError(typeof err === "string" ? err : "Failed to resolve depots");
       })
       .finally(() => setLoading(false));
-  }, [open, appId, defaultOutputDir]);
+  }, [open, appId]);
 
   // Escape to close
   useEffect(() => {
@@ -486,7 +489,7 @@ export default function DepotPickerModal({
                   type="text"
                   value={outputDir}
                   onChange={(e) => handleOutputDirChange(e.target.value)}
-                  placeholder="Downloads/LumaForge/Depot"
+                  placeholder="Select output directory..."
                   className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder:text-white/20 focus:border-(--color-accent)/50 focus:outline-none"
                 />
                 <button

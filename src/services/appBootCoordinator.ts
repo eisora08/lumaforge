@@ -312,7 +312,7 @@ export async function runBootTasks(): Promise<void> {
             logBoot("load manual games end");
           });
 
-          // Stage 3.35: Load Debrid games install state from disk
+          // Stage 3.35: Load Debrid games from games_v2 (single source of truth)
           await track("load-debrid-games", async () => {
             if (!DEBRID_LIBRARY_ENABLED) {
               logBoot("debrid games skip: feature disabled");
@@ -320,9 +320,9 @@ export async function runBootTasks(): Promise<void> {
             }
             logBoot("load debrid games start");
             try {
-              const { loadDebridGamesFromDisk } = await import("./debridGameStore");
-              const entries = await loadDebridGamesFromDisk();
-              logBoot(`debrid games loaded: ${entries.length} entries from JSON`);
+              const { loadDebridGamesFromV2 } = await import("./debridGameStore");
+              await loadDebridGamesFromV2();
+              logBoot("debrid games loaded from games_v2");
             } catch (e) {
               console.error("[BOOT][DEBRID_GAMES] load failed:", e);
             }
@@ -430,7 +430,7 @@ export async function runBootTasks(): Promise<void> {
               if (settings) {
                 const { setReconciledGames } = await import("./gameStore");
                 const { scanInstalledLuaScripts, scanSteamInstalledGames } = await import("./tauri");
-                const { loadCachedGames } = await import("./gameDetectionCache");
+                const { loadCachedGamesFromV2 } = await import("./gameDetectionCache");
                 const { checkSteamScanAllowed, markSteamScanComplete } = await import("./libraryGameResolver");
 
                 // Use TTL-guarded steam scan to avoid repeated scans on boot re-runs
@@ -453,7 +453,7 @@ export async function runBootTasks(): Promise<void> {
                   (settings.luaPath && isIntegrationScanOnStartup("lua"))
                     ? scanInstalledLuaScripts(settings.luaPath).catch(() => [])
                     : Promise.resolve([]),
-                  loadCachedGames().catch(() => null),
+                  loadCachedGamesFromV2().catch(() => null),
                 ]);
 
                 const sqliteAppIds = new Set<string>();
@@ -502,30 +502,25 @@ export async function runBootTasks(): Promise<void> {
                   reconciledGames = result.games;
                   logBoot(`reconciled games count=${result.games.length}`);
 
-                  // Persist reconciled list to SQLite cache so next boot is instant
+                  // Persist reconciled list to SQLite cache AND games_v2 (unified table)
+                  // saveCachedGames now writes to both library_cache and games_v2,
+                  // so games_v2 is populated for subsequent boots.
                   if (result.games.length > 0) {
                     const { saveCachedGames } = await import("./gameDetectionCache");
                     await saveCachedGames(result.games, result.warnings).catch((err) => console.warn(err));
-                    logBoot(`saved reconciled games to cache`);
+                    logBoot(`saved reconciled games to cache + games_v2`);
 
-                    // Also queue background SQLite upsert for the games table
+                    // Resolve media paths for the upserted games (background, non-blocking)
                     scheduleAfterMain(async () => {
                       try {
-                        const { batchUpsertGames } = await import("./tauri");
+                        const { libraryGameToGameV2 } = await import("./gameV2Mapper");
                         const entries = result.games
-                          .filter((g) => g.appId)
-                          .map((g) => ({
-                            appId: g.appId!,
-                            title: g.title || "",
-                            installed: g.steamInstalled || false,
-                            playtime: g.steamPlaytimeMinutes ?? 0,
-                            lastPlayed: g.steamLastPlayedAt ?? 0,
-                            metadataJson: JSON.stringify(g.metadata ?? {}),
-                            updatedAt: Math.floor(Date.now() / 1000),
-                          }));
+                          .filter((g) => g.appId || g.id)
+                          .map((g) => libraryGameToGameV2(g));
                         if (entries.length > 0) {
-                          await batchUpsertGames(entries).catch((err) => console.warn(err));
-                          logBoot(`sqlite upserted ${entries.length} games in background`);
+                          // Resolve media paths for the upserted games
+                          const { resolveAndStoreMedia } = await import("./gameMediaResolver");
+                          resolveAndStoreMedia(entries).catch(() => {}); // Fire-and-forget
                         }
                       } catch { /* non-critical */ }
                     }, 5000);
@@ -835,23 +830,19 @@ export async function runBootTasks(): Promise<void> {
             logBoot("fetch steam owned games end");
           });
 
-          // Stage 4.75: Load Epic games from SQLite cache (instant boot)
+          // Stage 4.75: Load Epic games from games_v2 (single source of truth)
           await track("load-epic-games-from-cache", async () => {
-            logBoot("load epic games from cache start");
+            logBoot("load epic games from games_v2 start");
             try {
               if (isIntegrationEnabled("epic")) {
-                const { readEpicGames } = await import("./tauri");
-                const { loadEpicGamesFromCache } = await import("./epicGameStore");
-                const epicGames = await readEpicGames();
-                if (epicGames.length > 0) {
-                  loadEpicGamesFromCache(epicGames);
-                  if (DEBUG_BOOT) console.log(`[BOOT][EPIC_CACHE] loaded ${epicGames.length} Epic games from SQLite`);
-                }
+                const { loadEpicGamesFromV2 } = await import("./epicGameStore");
+                await loadEpicGamesFromV2();
+                if (DEBUG_BOOT) console.log("[BOOT][EPIC_V2] loaded Epic games from games_v2");
               }
             } catch (err) {
-              console.warn("[BOOT] load epic games from cache failed:", String(err));
+              console.warn("[BOOT] load epic games from games_v2 failed:", String(err));
             }
-            logBoot("load epic games from cache end");
+            logBoot("load epic games from games_v2 end");
           });
 
           // Stage 5: Load ALL cached achievement summaries into store from SQLite
@@ -1125,14 +1116,15 @@ export async function runBootTasks(): Promise<void> {
                           const manualGames = getAllManualGames().map(manualGameToLibraryGame);
                           const games = [...steamGames, ...manualGames];
                           if (games.length > 0) {
-                            const ctx = buildEvalContext(games);
-                            const result = evaluateAchievements(ctx);
-                            if (result.newlyUnlocked.length > 0) {
-                              if (DEBUG_BOOT) console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
-                              import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
-                                showAchievementToasts(result.newlyUnlocked);
-                              });
-                            }
+                            buildEvalContext(games).then(ctx => {
+                              const result = evaluateAchievements(ctx);
+                              if (result.newlyUnlocked.length > 0) {
+                                if (DEBUG_BOOT) console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
+                                import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
+                                  showAchievementToasts(result.newlyUnlocked);
+                                });
+                              }
+                            });
                           }
                         });
                       });

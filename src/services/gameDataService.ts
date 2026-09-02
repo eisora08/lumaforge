@@ -14,14 +14,14 @@ import {
 import {
   resolveGameMediaImageSrc,
 } from "./localImageSrc";
-import { resolveGameMediaPaths, getMediaCacheSqlite, getMetadataCacheSqlite, checkSqliteHealth, insertMediaCacheSqlite, insertMetadataCacheSqlite } from "./tauri";
+import { resolveGameMediaPaths, getGameFilesMedia, getGameV2, checkSqliteHealth, upsertGameFilesMedia } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
+import type { GameV2 } from "../types/gameV2";
 import type {
   StoreAppInfoEntry,
   GameStoreDetails,
   StoreReviewEntry,
-  SqliteMediaCacheEntry,
-  SqliteMetadataCacheEntry,
+  GameFilesMedia,
 } from "./tauri";
 
 // ---------------------------------------------------------------------------
@@ -208,35 +208,47 @@ function isExpired(updatedAt: number, ttl: number): boolean {
 // SQLite write helpers (fire-and-forget, silent failure)
 // ---------------------------------------------------------------------------
 
-function extractMediaBasePath(media: GameMediaPaths | null): string {
-  if (!media) return "";
-  const sample = media.landscapePath || media.coverPath || media.backgroundPath || media.logoPath;
-  if (!sample) return "";
-  const lastSep = Math.max(sample.lastIndexOf("\\"), sample.lastIndexOf("/"));
-  if (lastSep < 0) return "";
-  return sample.substring(0, lastSep);
-}
-
-function writeMediaToSqlite(appId: string, media: GameMediaPaths | null, provider: string, force = false): void {
+function writeMediaToSqlite(appId: string, media: GameMediaPaths | null, _provider: string, force = false): void {
   if (!_sqliteAvailable) return;
   if (!force && _writtenMediaIds.has(appId)) return;
   if (!media?.coverPath && !media?.landscapePath && !media?.backgroundPath && !media?.logoPath) return;
 
   _writtenMediaIds.add(appId);
 
-  const now = Date.now();
-  const entry: SqliteMediaCacheEntry = {
-    gameId: appId,
-    provider: provider || "steam",
-    basePath: extractMediaBasePath(media),
-    hasCover: !!media?.coverPath,
-    hasBackground: !!media?.backgroundPath,
-    hasLogo: !!media?.logoPath,
-    hasLandscape: !!media?.landscapePath,
-    updatedAt: now,
+  const mediaData: GameFilesMedia = {
+    cover: {
+      path: media?.coverPath ?? null,
+      exists: !!media?.coverPath,
+      size: null,
+      modifiedAt: null,
+    },
+    landscape: {
+      path: media?.landscapePath ?? null,
+      exists: !!media?.landscapePath,
+      size: null,
+      modifiedAt: null,
+    },
+    background: {
+      path: media?.backgroundPath ?? null,
+      exists: !!media?.backgroundPath,
+      size: null,
+      modifiedAt: null,
+    },
+    logo: {
+      path: media?.logoPath ?? null,
+      exists: !!media?.logoPath,
+      size: null,
+      modifiedAt: null,
+    },
+    icon: {
+      path: media?.iconPath ?? null,
+      exists: !!media?.iconPath,
+      size: null,
+      modifiedAt: null,
+    },
   };
 
-  void insertMediaCacheSqlite(entry);
+  void upsertGameFilesMedia(appId, mediaData);
 }
 
 function writeMetadataToSqlite(appId: string, metadata: NormalizedGameMetadata, force = false): void {
@@ -247,17 +259,37 @@ function writeMetadataToSqlite(appId: string, metadata: NormalizedGameMetadata, 
   _writtenMetadataIds.add(appId);
 
   const now = Date.now();
-  const entry: SqliteMetadataCacheEntry = {
-    gameId: appId,
-    title: metadata.title || metadata.name,
-    provider: metadata.provider,
-    installed: metadata.installed ?? false,
-    lastPlayed: metadata.lastPlayed ?? 0,
-    playtime: 0,
-    updatedAt: now,
-  };
 
-  void insertMetadataCacheSqlite(entry);
+  // Fire-and-forget: find the existing entry by appId (any source) and only update
+  // metadata fields. NEVER create new entries — each import path creates its own.
+  (async () => {
+    try {
+      const { getGameV2ByAppId, upsertGameV2 } = await import("./tauri");
+      const existing = await getGameV2ByAppId(appId);
+      if (!existing) {
+        // No entry exists for this appId — the game hasn't been imported yet.
+        // Do NOT create a steam-{appId} ghost entry.
+        return;
+      }
+      // Only update metadata fields, NEVER touch source/id/isInstalled/playtime/etc.
+      const raw = metadata.rawMetadata;
+      const game: GameV2 = {
+        ...existing,
+        title: metadata.title || metadata.name || existing.title,
+        description: raw?.detailed_description || raw?.about_the_game || existing.description,
+        shortDescription: raw?.short_description || existing.shortDescription,
+        genres: raw?.genres?.length ? JSON.stringify(raw.genres) : existing.genres,
+        developers: raw?.developer ? JSON.stringify([raw.developer]) : existing.developers,
+        publishers: raw?.publishers?.length ? JSON.stringify(raw.publishers) : existing.publishers,
+        categories: raw?.categories?.length ? JSON.stringify(raw.categories) : existing.categories,
+        releaseDate: raw?.release_date || existing.releaseDate,
+        updatedAt: now,
+      };
+      void upsertGameV2(game);
+    } catch {
+      // silent
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------
@@ -268,8 +300,9 @@ async function trySqliteMetadata(appId: string): Promise<{ data: NormalizedGameM
   if (!(await ensureSqliteAvailable())) return null;
 
   try {
-    const entry = await getMetadataCacheSqlite(appId);
-    if (!entry) return null;
+    let game = await getGameV2(appId);
+    if (!game) game = await getGameV2(`steam-${appId}`);
+    if (!game) return null;
 
     if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
       console.log(`[GameDataService] metadata hit SQLite for ${appId}`);
@@ -277,16 +310,16 @@ async function trySqliteMetadata(appId: string): Promise<{ data: NormalizedGameM
 
     return {
       data: {
-        id: entry.gameId,
-        title: entry.title,
-        provider: entry.provider,
-        installed: entry.installed,
-        lastPlayed: entry.lastPlayed > 0 ? entry.lastPlayed : null,
-        name: entry.title,
+        id: game.id,
+        title: game.title,
+        provider: game.source,
+        installed: game.isInstalled,
+        lastPlayed: game.lastPlayedAt ? game.lastPlayedAt : null,
+        name: game.title,
         media: { cover: null, background: null, landscape: null, logo: null, icon: null },
         rawMetadata: null,
       },
-      updatedAt: entry.updatedAt ?? 0,
+      updatedAt: game.updatedAt ?? 0,
     };
   } catch {
     _sqliteAvailable = false;
@@ -298,31 +331,30 @@ async function trySqliteMediaPaths(appId: string): Promise<{ data: MediaPathsRes
   if (!(await ensureSqliteAvailable())) return null;
 
   try {
-    const entry = await getMediaCacheSqlite(appId);
-    if (!entry) return null;
+    const media = await getGameFilesMedia(appId);
+    if (!media) return null;
 
     if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
       console.log(`[GameDataService] media hit SQLite for ${appId}`);
     }
 
-    const base = entry.basePath;
-    const cover = entry.hasCover && base ? convertMediaPath(`${base}/cover.jpg`) : null;
-    const background = entry.hasBackground && base ? convertMediaPath(`${base}/background.jpg`) : null;
-    const landscape = entry.hasLandscape && base ? convertMediaPath(`${base}/landscape.jpg`) : null;
-    const logo = entry.hasLogo && base ? convertMediaPath(`${base}/logo.png`) : null;
-    const icon = null;
+    const cover = media.cover.path ? convertMediaPath(media.cover.path) : null;
+    const background = media.background.path ? convertMediaPath(media.background.path) : null;
+    const landscape = media.landscape.path ? convertMediaPath(media.landscape.path) : null;
+    const logo = media.logo.path ? convertMediaPath(media.logo.path) : null;
+    const icon = media.icon.path ? convertMediaPath(media.icon.path) : null;
 
     const rawPaths: GameMediaPaths = {
-      coverPath: entry.hasCover && base ? `${base}/cover.jpg` : null,
-      backgroundPath: entry.hasBackground && base ? `${base}/background.jpg` : null,
-      landscapePath: entry.hasLandscape && base ? `${base}/landscape.jpg` : null,
-      logoPath: entry.hasLogo && base ? `${base}/logo.png` : null,
-      iconPath: null,
+      coverPath: media.cover.path ?? null,
+      backgroundPath: media.background.path ?? null,
+      landscapePath: media.landscape.path ?? null,
+      logoPath: media.logo.path ?? null,
+      iconPath: media.icon.path ?? null,
     };
 
     return {
       data: { cover, background, landscape, logo, icon, rawPaths },
-      updatedAt: entry.updatedAt ?? 0,
+      updatedAt: 0, // game_files doesn't track updatedAt for media, use 0 to indicate "always valid"
     };
   } catch {
     _sqliteAvailable = false;

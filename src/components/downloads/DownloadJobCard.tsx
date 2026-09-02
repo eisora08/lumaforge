@@ -383,7 +383,7 @@ export default function DownloadJobCard({
             </div>
 
             <p className="mt-0.5 truncate text-sm text-(--color-muted)">
-              Depot · Descargado · Listo para usar
+              Depot · Standalone · Listo para usar
             </p>
           </div>
 
@@ -404,7 +404,7 @@ export default function DownloadJobCard({
             className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <Eye className="h-4 w-4" />
-            Ver detalles
+            Ver en Library
           </button>
 
           {job.destDir && (

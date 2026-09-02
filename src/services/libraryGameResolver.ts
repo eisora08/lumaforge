@@ -31,7 +31,7 @@ function buildFromSteam(
   const meta = metadata[steam.appId];
   const metaName = meta?.resolved ? meta.name : undefined;
   return {
-    id: stableIdFromString("steam", String(steam.appId)),
+    id: `steam-${steam.appId}`,
     appId: String(steam.appId),
     title: steam.name || metaName || "",
     source: "steam",
@@ -39,6 +39,7 @@ function buildFromSteam(
     libraryPath: steam.libraryPath,
     imageUrl: getImageUrl(meta),
     metadata: meta,
+    isInstalled: steam.isInstalled,
     isPlayable: steam.isInstalled,
     isInstallable: !steam.isInstalled,
     steamInstalled: steam.isInstalled,
@@ -86,6 +87,7 @@ function buildFromLua(
   scripts: InstalledLuaScript[],
   sources: Set<string>,
   metadata: Record<number, SteamAppMetadata>,
+  steamInstalled: boolean = false,
 ): LibraryGame {
   const meta = metadata[Number(appId)];
   const metaName = meta?.resolved ? meta.name : undefined;
@@ -94,9 +96,11 @@ function buildFromLua(
     appId,
     title: metaName || "",
     source: "lua",
-    isPlayable: false,
+    isInstalled: steamInstalled,
+    isPlayable: scripts.some((s) => !s.is_disabled),
     isInstallable: false,
     steamInstalled: false,
+    imageUrl: getImageUrl(meta),
     luaScripts: scripts,
     hasLua: true,
     isLuaActive: scripts.some((s) => !s.is_disabled),
@@ -124,6 +128,8 @@ function buildFromOwned(
     steamInstalled: false,
     imageUrl: logoUrl,
     steamPlaytimeMinutes: Math.floor((owned.playtime_forever || 0) / 60),
+    steamLastPlayedAt: owned.last_played ? owned.last_played * 1000 : undefined,
+    localLastPlayedAt: owned.last_played ? owned.last_played * 1000 : undefined,
     lastUpdated: owned.last_played ? Math.floor(owned.last_played) : undefined,
     luaScripts: [],
     hasLua: false,
@@ -302,8 +308,9 @@ export async function resolveLibraryGames(
       mergeLuaIntoGame(existingGame, true, scripts, sourceAppIds);
       console.log(`[LUA][MERGE_AFTER] appId=${appIdStr} hasLua=${existingGame.hasLua} luaScripts=${existingGame.luaScripts.length} isPlayable=${existingGame.isPlayable} isInstallable=${existingGame.isInstallable} steamInstalled=${existingGame.steamInstalled}`);
     } else {
-      console.log(`[LUA][ENTRY] appId=${appIdStr} scripts=${scripts.length} disabled=${scripts.every(s => s.is_disabled)}`);
-      const game = buildFromLua(appIdStr, scripts, sourceAppIds, metadata);
+      const isInSteam = steamByAppId.has(appIdStr);
+      console.log(`[LUA][ENTRY] appId=${appIdStr} scripts=${scripts.length} disabled=${scripts.every(s => s.is_disabled)} isInSteam=${isInSteam}`);
+      const game = buildFromLua(appIdStr, scripts, sourceAppIds, metadata, isInSteam);
       gamesMap.set(game.id, game);
     }
   }

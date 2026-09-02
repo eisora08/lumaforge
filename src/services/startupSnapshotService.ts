@@ -772,6 +772,7 @@ export type SnapshotGame = {
   favorite?: boolean;
   hidden?: boolean;
   source: string;
+  hasLua?: boolean;
   installPath: string | null;
   media: SnapshotGameMedia;
   lastPlayed: number | null;
@@ -1277,8 +1278,7 @@ export async function buildStartupSnapshotFromCurrentState(
       }
     }
 
-    // Reuse the validated result from above for media status computation,
-    // avoiding a duplicate Rust validation call per game.
+    // Reuse the validated result from above for media status computation
     if (!validatedForStatus) {
       validatedForStatus = await validateSnapshotMediaPaths(game.appId, media);
     }
@@ -1301,9 +1301,7 @@ export async function buildStartupSnapshotFromCurrentState(
       // achievementStore not available or not loaded — leave null
     }
 
-    // Fallback: prefer existing snapshot's achievementSummary over stale LibraryGame fields.
-    // The snapshot value (e.g. 15/42 from a prior refresh) is more recent than the
-    // LibraryGame's achievementUnlocked (e.g. 13/42) which may be from an older boot snapshot.
+    // Fallback: prefer existing snapshot's achievementSummary over stale LibraryGame fields
     if (!achievementSummary && cachedSnapshot) {
       const existing = cachedSnapshot.library.games.find(g => g.appId === game.appId);
       if (existing?.achievementSummary && existing.achievementSummary.total > 0) {
@@ -1335,14 +1333,12 @@ export async function buildStartupSnapshotFromCurrentState(
       favorite: game.isFavorite ?? false,
       hidden: false,
       source: game.source,
+      hasLua: game.hasLua ?? false,
       installPath: game.installDir || null,
       media,
       lastPlayed: (() => {
-        // Prefer playtime store (authoritative lastPlayedAt from sessions)
-        // Use findPlaytimeEntryByAppId to find entries under any key (app-, debrid:, manual:)
         const ptEntry = game.appId ? findPlaytimeEntryByAppId(game.appId) : null;
         if (ptEntry?.lastPlayedAt) return ptEntry.lastPlayedAt;
-        // Fallback: from game fields (seconds from snapshot)
         return game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null;
       })(),
       playtime: (getPlaytimeSecondsForAppId(game.appId) > 0 ? Math.round(getPlaytimeSecondsForAppId(game.appId) / 60) : null) ?? game.steamPlaytimeMinutes ?? null,
@@ -1377,18 +1373,22 @@ export async function buildStartupSnapshotFromCurrentState(
   // These games have no canonical appinfo or Steam media paths, so media is null
   // until the user adds artwork via GameEditDialog.
 
-  // Pre-fetch SQLite Epic media (single query, reused for all Epic games)
+  // Pre-fetch SQLite Epic media from games_v2 (single query, reused for all Epic games)
   const epicSqliteMedia = new Map<string, { coverPath?: string; landscapePath?: string; backgroundPath?: string; logoPath?: string; iconPath?: string }>();
   const hasEpicGames = games.some((g) => !g.appId && g.source === "epic");
   if (hasEpicGames) {
     try {
-      const { readAllGames } = await import("./tauri");
-      const allGames = await readAllGames().catch(() => []);
-      for (const g of allGames) {
-        if (g.provider === "epic" && g.appId && g.mediaJson) {
-          try {
-            epicSqliteMedia.set(g.appId, JSON.parse(g.mediaJson));
-          } catch { /* malformed JSON — skip */ }
+      const { getGamesV2BySource } = await import("./tauri");
+      const epicGamesV2 = await getGamesV2BySource("epic").catch(() => []);
+      for (const g of epicGamesV2) {
+        if (g.appId && (g.coverPath || g.landscapePath || g.backgroundPath)) {
+          epicSqliteMedia.set(g.appId, {
+            coverPath: g.coverPath ?? undefined,
+            landscapePath: g.landscapePath ?? undefined,
+            backgroundPath: g.backgroundPath ?? undefined,
+            logoPath: g.logoPath ?? undefined,
+            iconPath: g.iconPath ?? undefined,
+          });
         }
       }
     } catch { /* SQLite unavailable — leave map empty */ }
@@ -1441,6 +1441,7 @@ export async function buildStartupSnapshotFromCurrentState(
       favorite: game.isFavorite ?? false,
       hidden: false,
       source: game.source,
+      hasLua: game.hasLua ?? false,
       installPath: null,
       media,
       lastPlayed: game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null,
@@ -1449,6 +1450,7 @@ export async function buildStartupSnapshotFromCurrentState(
       mediaStatus: null,
       missingMedia: [],
       achievementSummary: null,
+      completionStatus: null,
       lastMediaCheckAt: now,
       updatedAt: now,
     });

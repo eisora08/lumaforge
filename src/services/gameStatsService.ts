@@ -77,8 +77,10 @@ export async function loadSteamStats(
       return new Map();
     }
 
-    // Startup guard: skip any stats scan during first 30s after module load
-    if (isWithinStartupGuard()) {
+    // Startup guard: skip any stats scan during first 30s after module load.
+    // forceRefresh (from enrichWithStats at boot) bypasses this — the scan runs
+    // on a 3s delay already, and blocking it for 30s means playtime is never imported.
+    if (!isManualRefresh && isWithinStartupGuard()) {
       if (ENABLE_VERBOSE_STATS_LOGS) {
         console.debug(`[SteamStats] Within startup guard (${Date.now() - moduleLoadedAt}ms), deferring stats for ${appIds.length} apps`);
       }

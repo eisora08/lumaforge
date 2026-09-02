@@ -1,4 +1,17 @@
+/**
+ * playtimeService.ts — Playtime data layer backed by games_v2.
+ *
+ * Maintains the existing synchronous API for backward compatibility.
+ * Internally reads/writes to games_v2 via the unified Tauri commands.
+ * The in-memory cache is populated on load from games_v2, making reads synchronous.
+ */
 import { invoke } from "@tauri-apps/api/core";
+import { getAllGamesV2, updatePlaytimeV2, incrementPlayCountV2, addPlaytimeV2 } from "./tauri";
+import type { GameV2 } from "../types/gameV2";
+
+// ---------------------------------------------------------------------------
+// Types — kept identical for backward compatibility
+// ---------------------------------------------------------------------------
 
 export type PlaytimeEntry = {
   gameKey: string;
@@ -58,25 +71,71 @@ export type ExternalPlaytimeImport = {
   title?: string;
   externalPlaytimeSeconds: number;
   externalSource: "steam" | "epic" | "gog" | "manual" | "unknown";
-  /** Optional last-played timestamp (Unix seconds) to seed when entry has none. */
   lastPlayedAtSeconds?: number;
 };
+
+// ---------------------------------------------------------------------------
+// In-memory cache — populated from games_v2
+// ---------------------------------------------------------------------------
 
 let cachedStore: PlaytimeStore | null = null;
 let loadPromise: Promise<PlaytimeStore> | null = null;
 
-async function readStore(): Promise<PlaytimeStore> {
-  try {
-    return await invoke<PlaytimeStore>("read_playtime_store");
-  } catch {
-    return { version: 1, updatedAt: Date.now(), games: {} };
+/** Convert a GameV2 to PlaytimeEntry for backward compat. */
+function gameV2ToPlaytimeEntry(game: GameV2): PlaytimeEntry {
+  const provider = game.source || "steam";
+  const playtimeSource = provider === "steam" ? "external" : provider === "local" ? "local" : null;
+  // DB stores lastPlayedAt as milliseconds (see libraryGameToGameV2), store expects seconds
+  let lastPlayedSeconds: number | null = null;
+  if (game.lastPlayedAt) {
+    lastPlayedSeconds = game.lastPlayedAt > 100000000000 ? Math.floor(game.lastPlayedAt / 1000) : game.lastPlayedAt;
   }
+  return {
+    gameKey: game.id,
+    appId: game.appId ?? null,
+    provider,
+    title: game.title || "",
+    playtimeSource,
+    externalPlaytimeSeconds: game.playtimeSeconds,
+    externalSource: provider === "steam" ? "steam" : null,
+    externalImportedAt: null,
+    localPlaytimeSeconds: 0,
+    totalPlaytimeSeconds: game.playtimeSeconds,
+    lastPlayedAt: lastPlayedSeconds,
+    lastSessionSeconds: null,
+    sessions: [],
+  };
+}
+
+/** Build a PlaytimeStore from all games_v2. */
+function buildStoreFromGamesV2(games: GameV2[]): PlaytimeStore {
+  const store: PlaytimeStore = {
+    version: 1,
+    updatedAt: Math.floor(Date.now() / 1000),
+    games: {},
+  };
+  for (const game of games) {
+    // Only include games with playtime or that have been played
+    if (game.playtimeSeconds > 0 || game.lastPlayedAt) {
+      store.games[game.id] = gameV2ToPlaytimeEntry(game);
+    }
+  }
+  return store;
+}
+
+// ---------------------------------------------------------------------------
+// Load / subscribe — same pattern as before
+// ---------------------------------------------------------------------------
+
+async function readStoreFromGamesV2(): Promise<PlaytimeStore> {
+  const games = await getAllGamesV2();
+  return buildStoreFromGamesV2(games);
 }
 
 export async function loadPlaytimeStore(forceRefresh = false): Promise<PlaytimeStore> {
   if (cachedStore && !forceRefresh) return cachedStore;
   if (loadPromise && !forceRefresh) return loadPromise;
-  loadPromise = readStore().then((store) => {
+  loadPromise = readStoreFromGamesV2().then((store) => {
     cachedStore = store;
     loadPromise = null;
     return store;
@@ -117,8 +176,36 @@ async function markPlaytimeDirty(appId: string | null | undefined): Promise<void
   }
 }
 
+// ---------------------------------------------------------------------------
+// Write operations — backed by games_v2 commands
+// ---------------------------------------------------------------------------
+
 export async function importExternalPlaytime(input: ExternalPlaytimeImport): Promise<PlaytimeEntry> {
-  const entry = await invoke<PlaytimeEntry>("import_external_playtime", { input });
+  // Update games_v2 with the external playtime — only set lastPlayed if we have a real value
+  const gameV2Id = input.gameKey;
+  const totalSeconds = input.externalPlaytimeSeconds;
+  // Do NOT stamp NOW when lastPlayed is missing — that contaminates every steam game with "Just now"
+  const resolvedLastPlayed = input.lastPlayedAtSeconds ?? cachedStore?.games[gameV2Id]?.lastPlayedAt ?? null;
+  const lastPlayedForDb = resolvedLastPlayed ?? 0;
+  await updatePlaytimeV2(gameV2Id, totalSeconds, lastPlayedForDb);
+
+  // Build entry from the input
+  const entry: PlaytimeEntry = {
+    gameKey: input.gameKey,
+    appId: input.appId ?? null,
+    provider: input.provider,
+    title: input.title ?? "",
+    playtimeSource: "external",
+    externalPlaytimeSeconds: input.externalPlaytimeSeconds,
+    externalSource: input.externalSource,
+    externalImportedAt: Math.floor(Date.now() / 1000),
+    localPlaytimeSeconds: 0,
+    totalPlaytimeSeconds: input.externalPlaytimeSeconds,
+    lastPlayedAt: resolvedLastPlayed,
+    lastSessionSeconds: null,
+    sessions: [],
+  };
+
   if (cachedStore) {
     cachedStore.games[input.gameKey] = entry;
     cachedStore.updatedAt = Date.now();
@@ -130,62 +217,102 @@ export async function importExternalPlaytime(input: ExternalPlaytimeImport): Pro
 
 /** Batch import external playtime for multiple games in a single SQLite transaction. */
 export async function batchImportExternalPlaytime(inputs: ExternalPlaytimeImport[]): Promise<number> {
-  const count = await invoke<number>("batch_import_external_playtime", { inputs });
+  // For each import, update games_v2 — do not stamp NOW when missing
+  for (const input of inputs) {
+    const gameV2Id = input.gameKey;
+    const totalSeconds = input.externalPlaytimeSeconds;
+    const lastPlayed = input.lastPlayedAtSeconds ?? cachedStore?.games[gameV2Id]?.lastPlayedAt ?? 0;
+    await updatePlaytimeV2(gameV2Id, totalSeconds, lastPlayed);
+  }
   // Refresh cache after batch write
   await loadPlaytimeStore(true);
   notifyPlaytimeStored();
-  return count;
+  return inputs.length;
 }
 
 export async function startPlaySession(input: PlaySessionStart): Promise<ActivePlaySession> {
-  const result = await invoke<ActivePlaySession>("record_play_session_start", { input });
-  // Refresh cache from SQLite
-  await loadPlaytimeStore(true);
-  // Persist app-{appId} canonical key to SQLite + in-memory so next loadPlaytimeStore(true)
-  // picks up the correct lastPlayedAt instead of the stale boot-import value.
-  if (input.appId && input.gameKey !== `app-${input.appId}`) {
-    const canonicalKey = `app-${input.appId}`;
-    if (cachedStore?.games[canonicalKey]) {
-      cachedStore.games[canonicalKey].lastPlayedAt = input.startedAt;
+  const now = Math.floor(Date.now() / 1000);
+  const fallbackSessionId = `session-${now}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // Update games_v2: increment play count, set last played (preserve existing playtime)
+  await incrementPlayCountV2(input.gameKey);
+  const existingSeconds = cachedStore?.games[input.gameKey]?.totalPlaytimeSeconds ?? 0;
+  await updatePlaytimeV2(input.gameKey, existingSeconds, now); // preserve playtime, update last_played_at
+
+  // Record session start — capture Rust-returned session ID so endPlaySession can find it
+  let sessionId = fallbackSessionId;
+  try {
+    const rustSession = await invoke<ActivePlaySession>("record_play_session_start", { input });
+    if (rustSession?.sessionId) {
+      sessionId = rustSession.sessionId;
     }
-    // Persist to SQLite so reloads don't wipe the patch
-    invoke("import_external_playtime", { input: {
-      gameKey: canonicalKey,
-      appId: input.appId,
-      provider: input.provider ?? "steam",
-      title: input.title ?? "",
-      lastPlayedAtSeconds: input.startedAt,
-    }}).catch(() => {});
+  } catch {
+    // non-critical — session tracking is optional
   }
+
+  // Update cache
+  if (cachedStore?.games[input.gameKey]) {
+    cachedStore.games[input.gameKey].lastPlayedAt = now;
+  }
+
+  const result: ActivePlaySession = {
+    sessionId,
+    startedAt: now,
+    gameKey: input.gameKey,
+  };
+
   notifyPlaytimeStored();
   markPlaytimeDirty(input.appId);
   return result;
 }
 
 export async function endPlaySession(input: PlaySessionEnd): Promise<PlaytimeEntry> {
-  const entry = await invoke<PlaytimeEntry>("record_play_session_end", { input });
+  const now = Math.floor(Date.now() / 1000);
+
+  // Try to end session in legacy table
+  let entry: PlaytimeEntry;
+  try {
+    entry = await invoke<PlaytimeEntry>("record_play_session_end", { input });
+  } catch {
+    // Build entry from cache if legacy command fails
+    entry = cachedStore?.games[input.gameKey] ?? {
+      gameKey: input.gameKey,
+      appId: null,
+      provider: "steam",
+      title: "",
+      playtimeSource: null,
+      externalPlaytimeSeconds: 0,
+      externalSource: null,
+      externalImportedAt: null,
+      localPlaytimeSeconds: 0,
+      totalPlaytimeSeconds: 0,
+      lastPlayedAt: now,
+      lastSessionSeconds: null,
+      sessions: [],
+    };
+  }
+
   if (cachedStore) {
     cachedStore.games[input.gameKey] = entry;
-    // Persist app-{appId} canonical key to SQLite + in-memory
-    if (entry.appId && input.gameKey !== `app-${entry.appId}`) {
-      const canonicalKey = `app-${entry.appId}`;
-      if (cachedStore.games[canonicalKey]) {
-        cachedStore.games[canonicalKey].lastPlayedAt = entry.lastPlayedAt;
-        cachedStore.games[canonicalKey].totalPlaytimeSeconds = entry.totalPlaytimeSeconds;
-        cachedStore.games[canonicalKey].lastSessionSeconds = entry.lastSessionSeconds;
-      }
-      invoke("import_external_playtime", { input: {
-        gameKey: canonicalKey,
-        appId: entry.appId,
-        provider: cachedStore.games[canonicalKey]?.provider ?? "steam",
-        title: cachedStore.games[canonicalKey]?.title ?? entry.title ?? "",
-        externalPlaytimeSeconds: entry.totalPlaytimeSeconds,
-        externalSource: "steam",
-        lastPlayedAtSeconds: entry.lastPlayedAt,
-      }}).catch(() => {});
-    }
     cachedStore.updatedAt = Date.now();
   }
+
+  // Persist local session duration to games_v2 for non-Steam games.
+  // Steam/lua playtime is authoritative from Steam localconfig.vdf, so skip for steam.
+  const sessionSeconds = entry.lastSessionSeconds ?? 0;
+  if (sessionSeconds >= MIN_SESSION_SECONDS && entry.provider !== "steam") {
+    try {
+      await addPlaytimeV2(input.gameKey, sessionSeconds);
+      // Update cached total to reflect DB increment
+      if (cachedStore?.games[input.gameKey]) {
+        cachedStore.games[input.gameKey].totalPlaytimeSeconds += sessionSeconds;
+        cachedStore.games[input.gameKey].localPlaytimeSeconds += sessionSeconds;
+      }
+    } catch {
+      // non-critical
+    }
+  }
+
   notifyPlaytimeStored();
   markPlaytimeDirty(entry.appId);
   return entry;
@@ -198,7 +325,10 @@ export function computeTotalPlaytime(entry: PlaytimeEntry): number {
   return entry.totalPlaytimeSeconds;
 }
 
-/** Look up a playtime entry by appId — tries normalized key then legacy aliases */
+// ---------------------------------------------------------------------------
+// Read helpers — all backed by in-memory cache (populated from games_v2)
+// ---------------------------------------------------------------------------
+
 const DEBUG_ACTIVITY = false;
 
 export function getPlaytimeEntryByAppId(appId: string | null | undefined): PlaytimeEntry | null {
@@ -212,6 +342,10 @@ export function getPlaytimeEntryByAppId(appId: string | null | undefined): Playt
   if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam:${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
   entry = cachedStore.games[`steam-${appId}`] ?? null;
   if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam-${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  entry = cachedStore.games[`lua-${appId}`] ?? null;
+  if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=lua-${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  entry = cachedStore.games[`lua:${appId}`] ?? null;
+  if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=lua:${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
   entry = cachedStore.games[appId] ?? null;
   if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
   return null;
@@ -240,7 +374,9 @@ export function resolvePlaytimeKey(game: {
   if (game.source === "manual" && game.libraryId) return game.libraryId;
   if (game.source === "debrid" && game.libraryId) return game.libraryId;
   if (game.source === "epic" && game.id) return game.id;
-  // Steam/Lua games: canonical "app-{appId}" if available
+  // Steam/Lua: prefer the canonical games_v2 id (steam-xxx / lua-xxx) so the
+  // store key matches the DB row. app-xxx is kept as legacy alias in lookups.
+  if (game.id && (game.id.startsWith("steam-") || game.id.startsWith("lua-"))) return game.id;
   if (game.appId) return `app-${game.appId}`;
   // Fallback: game.id
   if (game.id) return game.id;
@@ -351,7 +487,6 @@ export async function importSnapshotPlaytime(
     if (!game.appId || !game.playtime || game.playtime <= 0) continue;
     const existing = cachedStore?.games[`app-${game.appId}`];
     if (existing?.externalPlaytimeSeconds && existing.externalPlaytimeSeconds >= game.playtime * 60) continue;
-    // SnapshotGame has `lastPlayed` (seconds); parameter type may also have `lastPlayedAt` — accept both
     const lpSeconds = game.lastPlayedAt ?? game.lastPlayed ?? undefined;
     imports.push({
       gameKey: `app-${game.appId}`,
@@ -373,7 +508,7 @@ export async function importSnapshotPlaytime(
   }
 }
 
-// Listen for external restore writes and force-refresh playtime from Rust
+// Listen for external restore writes and force-refresh playtime from games_v2
 if (typeof window !== "undefined") {
   window.addEventListener("lumaforge-data-changed", (e: Event) => {
     const detail = (e as CustomEvent).detail;

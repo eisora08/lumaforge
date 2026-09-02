@@ -71,7 +71,7 @@ export type AchievementWithState = AchievementDef & {
   xpAwarded?: number;
 };
 
-export type StatsTimeFilter = "week" | "month" | "30days" | "year" | "all";
+export type StatsTimeFilter = "today" | "week" | "month" | "30days" | "year" | "all";
 
 export type PlayActivityDay = {
   date: string;

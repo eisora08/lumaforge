@@ -274,6 +274,31 @@ async function flushAppInfoUpdates() {
   ).catch(() => {});
   invalidateResolvedMediaCache(appId);
 
+  // Write-back media paths to games_v2 so the library grid picks them up
+  try {
+    const { getGameV2ByAppId, upsertGameV2 } = await import("./tauri");
+    const existing = await getGameV2ByAppId(appId);
+    if (existing && (
+      merged.coverPath !== existing.coverPath ||
+      merged.landscapePath !== existing.landscapePath ||
+      merged.backgroundPath !== existing.backgroundPath ||
+      merged.logoPath !== existing.logoPath ||
+      merged.iconPath !== existing.iconPath
+    )) {
+      await upsertGameV2({
+        ...existing,
+        coverPath: merged.coverPath ?? existing.coverPath,
+        landscapePath: merged.landscapePath ?? existing.landscapePath,
+        backgroundPath: merged.backgroundPath ?? existing.backgroundPath,
+        logoPath: merged.logoPath ?? existing.logoPath,
+        iconPath: merged.iconPath ?? existing.iconPath,
+      });
+      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][GAMES_V2_WRITEBACK] appid=${appId} caller=flushAppInfoUpdates`);
+    }
+  } catch (err) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][GAMES_V2_WRITEBACK_FAIL] appid=${appId}`, err);
+  }
+
   // Update MediaIndex
   const entry = getMediaEntry(appId);
   if (entry) {

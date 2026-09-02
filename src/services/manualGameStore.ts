@@ -57,6 +57,143 @@ type ManualGameStore = {
   entries: ManualGameEntry[];
 };
 
+// ─── games_v2 conversion ────────────────────────────────────────────────
+
+import type { GameV2 } from "../types/gameV2";
+
+/**
+ * Convert a ManualGameEntry to a GameV2 for writing to games_v2 table.
+ */
+export function manualGameEntryToGameV2(entry: ManualGameEntry): GameV2 {
+  return {
+    id: `manual:${entry.id}`,
+    title: entry.name,
+    source: "manual",
+    appId: entry.appId,
+    providerGameId: entry.id,
+    libraryId: `manual:${entry.id}`,
+
+    isInstalled: true,
+    installDir: entry.installDir,
+    installSize: entry.sizeOnDisk,
+    exePath: entry.executablePath,
+    exeName: entry.executablePath?.split(/[\\/]/).pop(),
+    workingDirectory: entry.workingDirectory,
+    launchArguments: entry.launchArguments,
+
+    playtimeSeconds: 0,
+    playCount: 0,
+    lastPlayedAt: undefined,
+
+    coverPath: entry.coverPath,
+    landscapePath: entry.landscapePath,
+    backgroundPath: entry.backgroundPath,
+    logoPath: entry.logoPath,
+    iconPath: entry.iconPath,
+
+    releaseDate: entry.releaseDate,
+    description: entry.description,
+    shortDescription: entry.shortDescription,
+    genres: entry.genres ? JSON.stringify(entry.genres) : undefined,
+    developers: entry.developers ? JSON.stringify(entry.developers) : undefined,
+    publishers: entry.publishers ? JSON.stringify(entry.publishers) : undefined,
+    categories: entry.categories ? JSON.stringify(entry.categories) : undefined,
+    features: entry.features ? JSON.stringify(entry.features) : undefined,
+    tags: entry.tags ? JSON.stringify(entry.tags) : undefined,
+
+    userScore: entry.userScore,
+    criticScore: entry.criticScore,
+    communityScore: entry.communityScore,
+    reviewSummary: entry.reviewSummary,
+    reviewCount: entry.reviewCount,
+
+    linkedAppId: entry.linkedSteamAppId,
+    linkedIgdbId: entry.linkedIgdbId,
+
+    isFavorite: entry.isFavorite ?? false,
+    isHidden: false,
+    standalone: false,
+    sortingName: entry.sortingName,
+
+    hasLua: false,
+
+    series: entry.series,
+    ageRating: entry.ageRating,
+    region: entry.region,
+    completionStatus: entry.completionStatus,
+
+    providerMetadata: undefined,
+
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+/**
+ * Convert a GameV2 back to a ManualGameEntry for reading from games_v2 table.
+ */
+export function gameV2ToManualGameEntry(game: GameV2): ManualGameEntry {
+  const parseJsonArray = (s?: string): string[] | undefined => {
+    if (!s) return undefined;
+    try {
+      const parsed = JSON.parse(s);
+      return Array.isArray(parsed) ? parsed.map(String) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  return {
+    id: game.providerGameId ?? game.id.replace("manual:", ""),
+    name: game.title,
+    executablePath: game.exePath,
+    workingDirectory: game.workingDirectory,
+    launchArguments: game.launchArguments,
+    installDir: game.installDir,
+    libraryPath: undefined,
+
+    coverPath: game.coverPath,
+    landscapePath: game.landscapePath,
+    backgroundPath: game.backgroundPath,
+    logoPath: game.logoPath,
+    iconPath: game.iconPath,
+
+    genres: parseJsonArray(game.genres),
+    developers: parseJsonArray(game.developers),
+    publishers: parseJsonArray(game.publishers),
+    releaseDate: game.releaseDate,
+    description: game.description,
+    shortDescription: game.shortDescription,
+
+    categories: parseJsonArray(game.categories),
+    features: parseJsonArray(game.features),
+    tags: parseJsonArray(game.tags),
+    sortingName: game.sortingName,
+
+    userScore: game.userScore,
+    criticScore: game.criticScore,
+    communityScore: game.communityScore,
+    reviewSummary: game.reviewSummary,
+    reviewCount: game.reviewCount,
+
+    series: game.series,
+    ageRating: game.ageRating,
+    region: game.region,
+    completionStatus: game.completionStatus,
+
+    linkedSteamAppId: game.linkedAppId,
+    linkedIgdbId: game.linkedIgdbId,
+
+    appId: game.appId,
+
+    sizeOnDisk: game.installSize,
+    isFavorite: game.isFavorite,
+
+    createdAt: game.createdAt,
+    updatedAt: game.updatedAt,
+  };
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────
 
 const LOCAL_STORAGE_KEY = "lumaforge-manual-games-v1";
@@ -164,15 +301,46 @@ function clearPendingWrite(): void {
 // ─── JSON disk persistence (async, via Rust) ───────────────────────────
 
 /**
- * Load entries from the AppData JSON file via Rust.
+ * Load entries from games_v2 table (source="manual").
  * Returns the entries array, or `[]` on error.
  */
 async function loadFromJsonDisk(): Promise<ManualGameEntry[]> {
   try {
-    const { readManualGames } = await import("./tauri");
-    return await readManualGames();
+    const { getGamesV2BySource } = await import("./tauri");
+    const gamesV2 = await getGamesV2BySource("manual");
+    
+    // Convert GameV2 back to ManualGameEntry format
+    return gamesV2.map((g) => ({
+      id: normalizeManualGameId(g.providerGameId ?? g.id.replace("manual:", "")),
+      name: g.title,
+      executablePath: g.exePath,
+      workingDirectory: g.workingDirectory,
+      launchArguments: g.launchArguments,
+      installDir: g.installDir,
+      libraryPath: undefined,
+      coverPath: g.coverPath,
+      landscapePath: g.landscapePath,
+      backgroundPath: g.backgroundPath,
+      logoPath: g.logoPath,
+      iconPath: g.iconPath,
+      appId: g.appId,
+      linkedSteamAppId: g.linkedAppId,
+      genres: JSON.parse(g.genres ?? "[]"),
+      tags: JSON.parse(g.tags ?? "[]"),
+      categories: JSON.parse(g.categories ?? "[]"),
+      features: JSON.parse(g.features ?? "[]"),
+      developers: JSON.parse(g.developers ?? "[]"),
+      publishers: JSON.parse(g.publishers ?? "[]"),
+      description: g.description,
+      shortDescription: g.shortDescription,
+      releaseDate: g.releaseDate,
+      isFavorite: g.isFavorite,
+      sizeOnDisk: g.installSize,
+      createdAt: g.createdAt,
+      updatedAt: g.updatedAt,
+    }));
   } catch (e) {
-    console.log("[ManualGames] JSON disk read failed:", e);
+    console.log("[ManualGames] games_v2 read failed:", e);
     return [];
   }
 }
@@ -184,7 +352,8 @@ async function loadFromJsonDisk(): Promise<ManualGameEntry[]> {
  */
 async function persistToDisk(entries: ManualGameEntry[]): Promise<boolean> {
   try {
-    const { writeManualGames, backupManualGames } = await import("./tauri");
+    const { batchUpsertGamesV2 } = await import("./tauri");
+    const { manualGameEntryToGameV2 } = await import("./gameV2Mapper");
 
     // Set pending marker BEFORE writing — localStorage is already current
     // (caller wrote to localStorage synchronously before calling us).
@@ -192,15 +361,15 @@ async function persistToDisk(entries: ManualGameEntry[]): Promise<boolean> {
     setPendingWrite();
 
     if (!_persisted) {
-      try {
-        await backupManualGames();
-      } catch {
-        // backup failure is non-critical
-      }
       _persisted = true;
     }
 
-    await writeManualGames(entries);
+    // Write to games_v2 (single source of truth)
+    const gamesV2 = entries.map((e) => manualGameEntryToGameV2(e));
+    if (gamesV2.length > 0) {
+      await batchUpsertGamesV2(gamesV2).catch(() => {});
+    }
+    
     clearPendingWrite();
     return true;
   } catch (e) {
@@ -333,6 +502,7 @@ export async function loadManualGamesFromJson(): Promise<ManualGameEntry[]> {
     }
 
     _migrationDone = true;
+    console.log(`[MANUAL_STORE][GAMES_V2] loadManualGamesFromJson → ${_cache.length} games loaded from JSON`);
     return _cache;
   }
 
@@ -379,6 +549,32 @@ export async function loadManualGamesFromJson(): Promise<ManualGameEntry[]> {
   return _cache;
 }
 
+// ─── games_v2 sync (fire-and-forget) ────────────────────────────────────
+
+/**
+ * Sync a ManualGameEntry to games_v2 table.
+ * "upsert" writes the entry, "delete" removes it.
+ * Fire-and-forget: errors are logged but don't block the caller.
+ */
+async function syncToGamesV2(
+  entry: ManualGameEntry,
+  op: "upsert" | "delete"
+): Promise<void> {
+  try {
+    const { upsertGameV2, deleteGameV2 } = await import("./tauri");
+    if (op === "upsert") {
+      const gameV2 = manualGameEntryToGameV2(entry);
+      await upsertGameV2(gameV2);
+      console.log(`[ManualGames][GAMES_V2] op=upsert id=${entry.id} ok=true`);
+    } else {
+      await deleteGameV2(`manual:${entry.id}`);
+      console.log(`[ManualGames][GAMES_V2] op=delete id=${entry.id} ok=true`);
+    }
+  } catch (e) {
+    console.error(`[ManualGames][GAMES_V2] op=${op} id=${entry.id} FAILED:`, e);
+  }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────
 
 /**
@@ -404,6 +600,8 @@ export function getManualGameCount(): number {
 }
 
 export function saveManualGame(entry: ManualGameEntry): ManualGameEntry {
+  // Always normalize ID to prevent manual:manual:uuid double-prefix
+  entry = { ...entry, id: normalizeManualGameId(entry.id) };
   const entries = ensureCache();
   if (entries.some((e) => e.id === entry.id)) {
     throw new Error(`Manual game "${entry.id}" already exists`);
@@ -416,6 +614,8 @@ export function saveManualGame(entry: ManualGameEntry): ManualGameEntry {
       `[ManualGames][DISK_WRITE] op=add id=${entry.id} ok=${ok}`
     );
   });
+  // Write to games_v2 (fire-and-forget)
+  syncToGamesV2(entry, "upsert");
   notifyListeners();
   return entry;
 }
@@ -424,6 +624,7 @@ export function updateManualGame(
   id: string,
   patch: Partial<ManualGameEntry>
 ): ManualGameEntry {
+  id = normalizeManualGameId(id);
   const entries = ensureCache();
   const idx = entries.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error(`Manual game "${id}" not found`);
@@ -436,6 +637,8 @@ export function updateManualGame(
       `[ManualGames][DISK_WRITE] op=update id=${id} ok=${ok}`
     );
   });
+  // Write to games_v2 (fire-and-forget)
+  syncToGamesV2(updated, "upsert");
   notifyListeners();
   return updated;
 }
@@ -461,6 +664,9 @@ export function removeManualGame(id: string): boolean {
       `[ManualGames][DISK_WRITE] op=remove id=${id} ok=${ok} remaining=${entries.length}`
     );
   });
+
+  // Delete from games_v2 (fire-and-forget)
+  syncToGamesV2({ id } as ManualGameEntry, "delete");
 
   notifyListeners();
   return true;

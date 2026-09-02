@@ -579,20 +579,6 @@ const SECTION_COLLECTORS: SectionCollector[] = [
     },
   },
   {
-    section: "playtime",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-game-play-stats-v1");
-      return data ? [{ path: "lumaforge/playtime.json", data }] : [];
-    },
-  },
-  {
-    section: "sessionHistory",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-session-history-v1");
-      return data ? [{ path: "lumaforge/session-history.json", data }] : [];
-    },
-  },
-  {
     section: "providerOverrides",
     collect: async () => {
       const data = collectLocalStorage("lumaforge-epic-overrides-v1");
@@ -1006,8 +992,6 @@ const FILE_PATH_TO_STORAGE_KEY: Record<string, string> = {
   "lumaforge/integrations.json": "lumaforge-integration-settings",
   "lumaforge/favorites.json": "lumaforge-favorites-v1",
   "lumaforge/manual-games.json": "lumaforge-manual-games-v1",
-  "lumaforge/playtime.json": "lumaforge-game-play-stats-v1",
-  "lumaforge/session-history.json": "lumaforge-session-history-v1",
   "lumaforge/provider-overrides.json": "lumaforge-epic-overrides-v1",
   "lumaforge/profile.json": "lumaforge-user-profile-v1",
   "lumaforge/custom-artwork-manifest.json": "lumaforge-game-activities",
@@ -1185,8 +1169,6 @@ export function getLocalStorageKeyForSection(section: string): string {
     integrations: "lumaforge-integration-settings",
     favorites: "lumaforge-favorites-v1",
     manualGames: "lumaforge-manual-games-v1",
-    playtime: "lumaforge-game-play-stats-v1",
-    sessionHistory: "lumaforge-session-history-v1",
     providerOverrides: "lumaforge-epic-overrides-v1",
     profile: "lumaforge-user-profile-v1",
     customArtwork: "lumaforge-game-activities",
@@ -1490,8 +1472,6 @@ export const SECTION_STORAGE_KEYS: Record<string, string[]> = {
   uiPreferences: ["lumaforge-theme", "lumaforge-surface-mode", "lumaforge-settings"],
   favorites: ["lumaforge-favorites-v1"],
   manualGames: ["lumaforge-manual-games-v1", "lumaforge-manual-games-json-migrated-v1"],
-  playtime: ["lumaforge-playtime-v1"],
-  sessionHistory: ["lumaforge-session-history-v1"],
   integrations: ["lumaforge-integration-settings"],
   profile: ["lumaforge-user-profile-v1"],
   providerOverrides: ["lumaforge-epic-overrides-v1"],

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::commands::sqlite_cache;
 use crate::commands::sqlite_cache::SqliteCoreDb;
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -95,57 +94,28 @@ pub struct ManualGamesFile {
     pub entries: Vec<ManualGameEntry>,
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────
+// ─── Commands (stubs — data now lives in games_v2) ───────────────────────
 
 #[tauri::command]
 pub fn read_manual_games(
     _app_handle: AppHandle,
-    db: tauri::State<'_, SqliteCoreDb>,
+    _db: tauri::State<'_, SqliteCoreDb>,
 ) -> Result<Vec<ManualGameEntry>, String> {
-    let Some(inner) = db.0.as_ref() else {
-        return Ok(vec![]);
-    };
-    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
-
-    let json_opt = sqlite_cache::manual_games_cache::read_manual_games(&conn)?;
-
-    let Some(json) = json_opt else {
-        return Ok(vec![]);
-    };
-
-    let file: ManualGamesFile = serde_json::from_str(&json).map_err(|e| {
-        println!("[ManualGames] corrupt data in SQLite, returning empty: {}", e);
-        format!("Corrupt manual games data: {}", e)
-    })?;
-
-    Ok(file.entries)
+    // Deprecated: data now lives in games_v2. Return empty for backwards compat.
+    Ok(vec![])
 }
 
 #[tauri::command]
 pub fn write_manual_games(
     _app_handle: AppHandle,
-    db: tauri::State<'_, SqliteCoreDb>,
-    entries: Vec<ManualGameEntry>,
+    _db: tauri::State<'_, SqliteCoreDb>,
+    _entries: Vec<ManualGameEntry>,
 ) -> Result<(), String> {
-    let Some(inner) = db.0.as_ref() else {
-        return Err("SQLite core DB not initialized".to_string());
-    };
-    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
-
-    let file = ManualGamesFile {
-        version: 1,
-        entries,
-    };
-
-    let json =
-        serde_json::to_string_pretty(&file).map_err(|e| format!("Failed to serialize: {}", e))?;
-
-    sqlite_cache::manual_games_cache::write_manual_games(&conn, &json)?;
-
+    // Deprecated: data now lives in games_v2. No-op for backwards compat.
     Ok(())
 }
 
 #[tauri::command]
 pub fn backup_manual_games(_app_handle: AppHandle) -> Result<String, String> {
-    Ok("backup no longer needed, data is in SQLite".to_string())
+    Ok("backup no longer needed, data is in games_v2".to_string())
 }

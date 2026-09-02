@@ -1,6 +1,4 @@
-import type { GameEntry } from "./tauri";
 import {
-  readAllGames,
   scanInstalledLuaScripts,
 } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
@@ -63,29 +61,31 @@ function parseMetadata(json: string): SteamAppMetadata | null {
   }
 }
 
-function mapGameEntry(entry: GameEntry): SteamGameIndexEntry {
-  return {
-    appId: entry.appId,
-    title: entry.title,
-    installed: entry.installed,
-    playtime: entry.playtime,
-    lastPlayed: entry.lastPlayed,
-    metadata: parseMetadata(entry.metadataJson),
-  };
-}
-
 /**
- * Load all games from SQLite `games` table.
+ * Load all games from SQLite `games_v2` table.
  * This is instant — no scanning, no I/O beyond SQLite.
  */
 export async function loadSteamGameIndex(): Promise<SteamGameIndexEntry[]> {
-  const entries = await readAllGames();
-  return entries.map(mapGameEntry);
+  const { getAllGamesV2 } = await import("./tauri");
+  const gamesV2 = await getAllGamesV2();
+  
+  // Filter to Steam games only and map to SteamGameIndexEntry
+  return gamesV2
+    .filter((g) => g.source === "steam")
+    .map((g) => ({
+      appId: g.appId ?? g.providerGameId ?? "",
+      title: g.title,
+      installed: g.isInstalled,
+      playtime: Math.floor((g.playtimeSeconds ?? 0) / 60), // Convert seconds to minutes
+      lastPlayed: g.lastPlayedAt ? Math.floor(g.lastPlayedAt / 1000) : 0, // Convert ms to seconds
+      metadata: parseMetadata(g.genres ?? "{}"),
+    }));
 }
 
 export async function getSteamGameCount(): Promise<number> {
-  const entries = await readAllGames();
-  return entries.length;
+  const { getAllGamesV2 } = await import("./tauri");
+  const gamesV2 = await getAllGamesV2();
+  return gamesV2.filter((g) => g.source === "steam").length;
 }
 
 // ---------------------------------------------------------------------------
