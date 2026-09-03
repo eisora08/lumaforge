@@ -88,7 +88,12 @@ function gameV2ToPlaytimeEntry(game: GameV2): PlaytimeEntry {
   // DB stores lastPlayedAt as milliseconds (see libraryGameToGameV2), store expects seconds
   let lastPlayedSeconds: number | null = null;
   if (game.lastPlayedAt) {
-    lastPlayedSeconds = game.lastPlayedAt > 100000000000 ? Math.floor(game.lastPlayedAt / 1000) : game.lastPlayedAt;
+    // Normalize: ns (>1e14) → /1e6, ms (>1e10) → /1, else seconds
+    lastPlayedSeconds = game.lastPlayedAt > 1e14
+      ? Math.floor(game.lastPlayedAt / 1_000_000_000)
+      : game.lastPlayedAt > 1e10
+        ? Math.floor(game.lastPlayedAt / 1000)
+        : game.lastPlayedAt;
   }
   return {
     gameKey: game.id,

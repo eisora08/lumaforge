@@ -313,10 +313,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
   // PID polling
   useEffect(() => {
+    let softScanCounter = 0;
     const interval = setInterval(async () => {
       const current = sessionsRef.current;
       let changed = false;
       const next: Record<string, RunningGameSession> = {};
+      const softSessions: Array<[string, RunningGameSession]> = [];
 
       for (const [key, s] of Object.entries(current)) {
         if (s.state === "running" && s.pid != null) {
@@ -331,8 +333,42 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           } catch {
             // keep session on poll error
           }
+        } else if (s.state === "running" && s.softSession && s.pid == null) {
+          softSessions.push([key, s]);
         }
         next[key] = s;
+      }
+
+      // Re-scan for soft sessions (no PID) every ~60s to detect when game closed
+      if (softSessions.length > 0) {
+        softScanCounter++;
+        if (softScanCounter >= 12) {
+          softScanCounter = 0;
+          try {
+            const allProcesses = await listProcesses();
+            for (const [key, s] of softSessions) {
+              const candidates = findCandidates(allProcesses, {
+                executablePath: s.executablePath,
+                installDir: s.installDir,
+                title: s.title,
+                appId: s.appId,
+              }, []);
+              const best = pickBestCandidate(candidates);
+              if (!best) {
+                console.debug("[GameSession] soft session: process not found, clearing", { gameKey: key });
+                delete next[key];
+                changed = true;
+              } else {
+                // Found process — promote to PID-tracked session
+                if (ENABLE_VERBOSE_SESSION_POLL) console.debug("[GameSession] soft session: process found, promoting", { gameKey: key, pid: best.pid });
+                next[key] = { ...s, pid: best.pid, softSession: false, trackingConfidence: best.confidence, updatedAt: Date.now() };
+                changed = true;
+              }
+            }
+          } catch {
+            // scan error — keep sessions alive
+          }
+        }
       }
 
       if (changed) {
@@ -1109,17 +1145,6 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           setSessions((prev) => {
             const existing = prev[computedKey];
             if (!existing || existing.state !== "launching") return prev;
-            if (isEpicSource) {
-              return {
-                ...prev,
-                [computedKey]: {
-                  ...existing,
-                  state: "error" as ActiveGameState,
-                  errorMessage: "Game did not start. The Epic Games Launcher may need authentication or a restart.",
-                  updatedAt: Date.now(),
-                },
-              };
-            }
             return {
               ...prev,
               [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
@@ -1700,6 +1725,16 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             imageUrl: mediaInfo?.imageUrl,
             heroUrl: mediaInfo?.heroUrl,
             iconUrl: mediaInfo?.iconUrl,
+          });
+
+          // Emit game-launched activity event for Activity Feed
+          pushActivityEvent({
+            gameId: curSession.gameId || key,
+            appId: curSession.appId,
+            kind: "game-launched",
+            title: curSession.title || "Unknown Game",
+            source: "local",
+            severity: "info",
           });
 
           // Start playtime session

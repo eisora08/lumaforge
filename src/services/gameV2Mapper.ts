@@ -13,6 +13,16 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Normalize a timestamp to milliseconds.
+ * DB may hold: seconds (<10^10), milliseconds (10^10–10^14), or nanoseconds (>10^14).
+ */
+function normalizeToMs(value: number): number {
+  if (value > 1e14) return Math.floor(value / 1_000_000); // nanoseconds → ms
+  if (value > 1e10) return value; // already ms
+  return value * 1000; // seconds → ms
+}
+
 /** Parse a JSON array string safely, returning [] on failure. */
 function parseJsonArray(s?: string): string[] {
   if (!s) return [];
@@ -160,12 +170,12 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
     sizeOnDisk: game.installSize,
 
     // Playtime — restore to both steam and local fields so every consumer finds data regardless of source
-    // DB may hold ms (manual/epic via local session) or legacy seconds (steam via old importExternalPlaytime)
+    // DB may hold ns (epic launcher timestamps), ms (manual/epic via local session), or legacy seconds (steam via old importExternalPlaytime)
     // Normalize lastPlayedAt to ms for LibraryGame (consumers expect ms)
     steamPlaytimeMinutes: game.playtimeSeconds ? Math.floor(game.playtimeSeconds / 60) : undefined,
     localPlaytimeMinutes: game.playtimeSeconds ? Math.floor(game.playtimeSeconds / 60) : undefined,
-    steamLastPlayedAt: game.lastPlayedAt != null ? (game.lastPlayedAt > 100000000000 ? game.lastPlayedAt : game.lastPlayedAt * 1000) : undefined,
-    localLastPlayedAt: game.lastPlayedAt != null ? (game.lastPlayedAt > 100000000000 ? game.lastPlayedAt : game.lastPlayedAt * 1000) : undefined,
+    steamLastPlayedAt: game.lastPlayedAt != null ? normalizeToMs(game.lastPlayedAt) : undefined,
+    localLastPlayedAt: game.lastPlayedAt != null ? normalizeToMs(game.lastPlayedAt) : undefined,
 
     // Completion status
     completionStatus: game.completionStatus ?? undefined,

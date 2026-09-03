@@ -172,13 +172,14 @@ export async function computeFilteredPlaytime(games: LibraryGame[], filter: Stat
     }
 
     // Fallback: if no sessions found for this game, use playtime store total
-    // (for "all_time" filter or when no launcher sessions exist)
+    // Check last_played_at to determine if game was played within the filter period
     if (gameTotal === 0 && store) {
       const entry = store.games[ptKey];
       if (entry && entry.totalPlaytimeSeconds > 0) {
-        // For "all" filter, use the full total; for time-restricted filters,
-        // we can't split imported playtime by date, so only use for "all"
-        if (filter === "all") {
+        // Use lastPlayedAt from playtime store (seconds) to check if game was active in this filter period
+        if (entry.lastPlayedAt && entry.lastPlayedAt >= cutoffSec) {
+          gameTotal = entry.totalPlaytimeSeconds;
+        } else if (filter === "all") {
           gameTotal = entry.totalPlaytimeSeconds;
         }
       }
