@@ -459,6 +459,36 @@ pub fn get_game_v2_by_app_id_inner(
     .map_err(|e| format!("Failed to get game_v2 by app_id: {}", e))
 }
 
+pub fn get_games_v2_by_app_id_inner(
+    db: &Mutex<Connection>,
+    app_id: &str,
+) -> Result<Vec<GameV2>, String> {
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, title, source, app_id, provider_game_id, library_id,
+                    is_installed, install_dir, install_size, exe_path, exe_name, working_directory, launch_arguments,
+                    playtime_seconds, play_count, last_played_at,
+                    cover_path, landscape_path, background_path, logo_path, icon_path,
+                    release_date, description, short_description, genres, developers, publishers, categories, features, tags,
+                    user_score, critic_score, community_score, review_summary, review_count,
+                    linked_app_id, linked_igdb_id,
+                    is_favorite, is_hidden, standalone, sorting_name,
+                    series, age_rating, region, completion_status,
+                    has_lua, provider_metadata, created_at, updated_at
+             FROM games_v2 WHERE app_id = ?1",
+        )
+        .map_err(|e| format!("Failed to prepare get_games_v2_by_app_id: {}", e))?;
+    let rows = stmt
+        .query_map([app_id], |row| map_row_to_game_v2(row))
+        .map_err(|e| format!("Failed to query games_v2 by app_id: {}", e))?;
+    let mut games = Vec::new();
+    for row in rows {
+        games.push(row.map_err(|e| format!("Failed to map game_v2 row: {}", e))?);
+    }
+    Ok(games)
+}
+
 pub fn get_all_games_v2_inner(db: &Mutex<Connection>) -> Result<Vec<GameV2>, String> {
     let conn = db.lock().unwrap();
     let total: i64 = conn
@@ -688,6 +718,18 @@ pub fn get_game_v2_by_app_id(
         return Ok(None);
     };
     get_game_v2_by_app_id_inner(db, &app_id)
+}
+
+#[tauri::command]
+pub fn get_games_v2_by_app_id(
+    state: tauri::State<'_, SqliteCoreDb>,
+    app_id: String,
+) -> Result<Vec<GameV2>, String> {
+    let db = state.0.as_ref();
+    let Some(db) = db else {
+        return Ok(Vec::new());
+    };
+    get_games_v2_by_app_id_inner(db, &app_id)
 }
 
 #[tauri::command]

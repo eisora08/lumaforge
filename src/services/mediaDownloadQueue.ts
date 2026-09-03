@@ -275,29 +275,46 @@ async function flushAppInfoUpdates() {
   invalidateResolvedMediaCache(appId);
 
   // Write-back media paths to games_v2 so the library grid picks them up
+  // Uses getGamesV2ByAppId to find ALL games with this app_id (e.g. Lua + manual)
+  // and updates each one that needs the new paths.
   try {
-    const { getGameV2ByAppId, upsertGameV2 } = await import("./tauri");
-    const existing = await getGameV2ByAppId(appId);
-    if (existing && (
-      merged.coverPath !== existing.coverPath ||
-      merged.landscapePath !== existing.landscapePath ||
-      merged.backgroundPath !== existing.backgroundPath ||
-      merged.logoPath !== existing.logoPath ||
-      merged.iconPath !== existing.iconPath
-    )) {
-      await upsertGameV2({
-        ...existing,
-        coverPath: merged.coverPath ?? existing.coverPath,
-        landscapePath: merged.landscapePath ?? existing.landscapePath,
-        backgroundPath: merged.backgroundPath ?? existing.backgroundPath,
-        logoPath: merged.logoPath ?? existing.logoPath,
-        iconPath: merged.iconPath ?? existing.iconPath,
-      });
-      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][GAMES_V2_WRITEBACK] appid=${appId} caller=flushAppInfoUpdates`);
+    const { getGamesV2ByAppId, upsertGameV2 } = await import("./tauri");
+    const existingGames = await getGamesV2ByAppId(appId);
+    for (const existing of existingGames) {
+      if (
+        merged.coverPath !== existing.coverPath ||
+        merged.landscapePath !== existing.landscapePath ||
+        merged.backgroundPath !== existing.backgroundPath ||
+        merged.logoPath !== existing.logoPath ||
+        merged.iconPath !== existing.iconPath
+      ) {
+        await upsertGameV2({
+          ...existing,
+          coverPath: merged.coverPath ?? existing.coverPath,
+          landscapePath: merged.landscapePath ?? existing.landscapePath,
+          backgroundPath: merged.backgroundPath ?? existing.backgroundPath,
+          logoPath: merged.logoPath ?? existing.logoPath,
+          iconPath: merged.iconPath ?? existing.iconPath,
+        });
+        if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][GAMES_V2_WRITEBACK] appid=${appId} id=${existing.id} source=${existing.source} caller=flushAppInfoUpdates`);
+      }
     }
   } catch (err) {
     if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][GAMES_V2_WRITEBACK_FAIL] appid=${appId}`, err);
   }
+
+  // For non-Steam/Lua games, also resolve ALL media paths from disk.
+  // Steam/Lua games get this at boot via appBootCoordinator, but manual/debrid/epic
+  // games need it after each download to pick up all files on disk.
+  try {
+    const { getGamesV2ByAppId } = await import("./tauri");
+    const { resolveAndStoreMedia } = await import("./gameMediaResolver");
+    const allMatching = await getGamesV2ByAppId(appId);
+    const nonSteamGames = allMatching.filter(g => g.source !== "steam" && g.source !== "lua");
+    if (nonSteamGames.length > 0) {
+      resolveAndStoreMedia(nonSteamGames).catch(() => {});
+    }
+  } catch { /* non-critical */ }
 
   // Update MediaIndex
   const entry = getMediaEntry(appId);

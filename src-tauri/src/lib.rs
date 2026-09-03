@@ -497,6 +497,7 @@ pub fn run() {
             commands::sqlite_cache::batch_upsert_games_v2,
             commands::sqlite_cache::get_game_v2,
             commands::sqlite_cache::get_game_v2_by_app_id,
+            commands::sqlite_cache::get_games_v2_by_app_id,
             commands::sqlite_cache::get_all_games_v2,
             commands::sqlite_cache::get_games_v2_by_source,
             commands::sqlite_cache::search_games_v2,

@@ -53,7 +53,8 @@ pub use game_appinfo::{
 };
 pub use games_v2::{
     GameV2, add_playtime_v2, batch_upsert_games_v2, delete_game_v2, get_all_games_v2, get_game_v2,
-    get_game_v2_by_app_id, get_game_v2_count, get_games_v2_by_source, increment_play_count_v2, search_games_v2,
+    get_game_v2_by_app_id, get_game_v2_count, get_games_v2_by_app_id, get_games_v2_by_source,
+    increment_play_count_v2, search_games_v2,
     update_playtime_v2, upsert_game_v2,
 };
 pub use game_sessions::{
@@ -139,6 +140,7 @@ pub use games_v2::__cmd__upsert_game_v2;
 pub use games_v2::__cmd__batch_upsert_games_v2;
 pub use games_v2::__cmd__get_game_v2;
 pub use games_v2::__cmd__get_game_v2_by_app_id;
+pub use games_v2::__cmd__get_games_v2_by_app_id;
 pub use games_v2::__cmd__get_all_games_v2;
 pub use games_v2::__cmd__get_games_v2_by_source;
 pub use games_v2::__cmd__search_games_v2;
@@ -148,6 +150,7 @@ pub use games_v2::__tauri_command_name_upsert_game_v2;
 pub use games_v2::__tauri_command_name_batch_upsert_games_v2;
 pub use games_v2::__tauri_command_name_get_game_v2;
 pub use games_v2::__tauri_command_name_get_game_v2_by_app_id;
+pub use games_v2::__tauri_command_name_get_games_v2_by_app_id;
 pub use games_v2::__tauri_command_name_get_all_games_v2;
 pub use games_v2::__tauri_command_name_get_games_v2_by_source;
 pub use games_v2::__tauri_command_name_search_games_v2;

@@ -48,6 +48,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
     const ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
     return {
       stableId: game.libraryId || game.id,
+      appId: game.appId,
       libraryId: game.libraryId,
       source: game.source ?? "manual",
       title: game.title,

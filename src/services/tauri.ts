@@ -2741,6 +2741,16 @@ export async function getGameV2ByAppId(appId: string): Promise<GameV2 | null> {
   }
 }
 
+export async function getGamesV2ByAppId(appId: string): Promise<GameV2[]> {
+  try {
+    const result = await invoke<GameV2[]>("get_games_v2_by_app_id", { appId });
+    console.log(`[GAMES_V2][READ] get_games_v2_by_app_id appId=${appId} count=${result.length}`);
+    return result;
+  } catch {
+    return [];
+  }
+}
+
 export async function getAllGamesV2(): Promise<GameV2[]> {
   try {
     const result = await invoke<GameV2[]>("get_all_games_v2");

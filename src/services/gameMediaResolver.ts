@@ -43,7 +43,16 @@ async function resolveMediaForGame(
       return paths;
     }
     
-    // For other providers, try using the provider path resolver
+    // For manual/debrid/epic games with an appId, also check the steam media directory
+    // since media files are stored at games/steam/<appId>/media/ for all sources
+    if (appId) {
+      const paths = await invoke<GameMediaPaths>("resolve_game_media_paths", { appId });
+      if (paths && (paths.coverPath || paths.landscapePath || paths.backgroundPath || paths.logoPath || paths.iconPath)) {
+        return paths;
+      }
+    }
+    
+    // Fallback: try using the provider path resolver
     const paths = await invoke<GameMediaPaths>("resolve_game_media_path", {
       provider: source,
       providerGameId: appId,
