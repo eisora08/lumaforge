@@ -294,25 +294,7 @@ export default function AchievementsModal({
     : 0;
   const isPerfected = summary.total > 0 && summary.unlocked === summary.total && summary.progressAvailable !== false;
 
-  const [resolvedGameIcon, setResolvedGameIcon] = useState<string | undefined>(() => resolveGameIconUrl(gameIconUrl, appIdStr));
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // Fast path: sync resolution handles HTTP, asset://, Steam CDN hashes
-      const syncResult = resolveGameIconUrl(gameIconUrl, appIdStr);
-      if (syncResult) { if (!cancelled) setResolvedGameIcon(syncResult); return; }
-      // Slow path: resolve relative paths (media/, img/, games/) via gameCacheService
-      if (gameIconUrl && appIdStr) {
-        try {
-          const { resolveGameMediaUrl } = await import("../../services/gameCacheService");
-          const resolved = await resolveGameMediaUrl(appIdStr, gameIconUrl);
-          if (!cancelled && resolved) setResolvedGameIcon(resolved);
-        } catch { /* ignore */ }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [gameIconUrl, appIdStr]);
+  const resolvedGameIcon = resolveGameIconUrl(gameIconUrl, appIdStr);
 
   // --- Tab: My Achievements ---
   const myAchievementsContent = useMemo(() => {
