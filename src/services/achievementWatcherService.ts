@@ -481,11 +481,14 @@ class AchievementWatcherService {
             const savePath = save_path || undefined;
             console.log(`[ACH][PIPELINE] ${source}_detected appid=${appIdStr} savePath=${savePath ?? "unknown"}`);
             this.processCrackIniChange(appIdStr, savePath, traceId)
-              .then(() => {
-                // Ensure achievement schema exists — creates achievements/schema/steam/<appId>/
-                // via Steam Web API when missing. This is the first time Goldberg/GSE/RUNE
-                // achievements are detected, so the schema likely doesn't exist yet.
-                this._scheduleResolverRefresh(appIdStr, traceId);
+              .then((applied) => {
+                // Only run resolver refresh if crack-ini didn't already apply a patch
+                // (schema missing for first-time crack detection). When applied=true,
+                // the patch already updated the store + fired toasts — running the
+                // resolver again would cause duplicate toasts.
+                if (!applied) {
+                  this._scheduleResolverRefresh(appIdStr, traceId);
+                }
               })
               .catch((err) => {
                 console.warn(`[ACH][PIPELINE] ${source}_error appid=${appIdStr} reason=${err}`);

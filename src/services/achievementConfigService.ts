@@ -421,6 +421,14 @@ export async function getOrCreateConfig(
       console.log(`[ACH][CONFIG] stale save_path for cracked game appId=${appId} old=${existing.save_path} re-detecting...`);
       const result = await autoDetectAndCreateConfig(appId, gameName ?? existing.name, effectiveSource, installDir);
       if (result?.config?.save_path && !result.config.save_path.includes("appcache\\stats")) {
+        // Save path changed — restart watcher so extraWatchDirMap picks up the new directory
+        try {
+          const { achievementWatcherService } = await import("./achievementWatcherService");
+          if (achievementWatcherService.started) {
+            console.log(`[ACH][CONFIG] stale save_path re-detected appid=${appId} old=${existing.save_path} new=${result.config.save_path}, restarting watcher`);
+            await achievementWatcherService.restartWatching();
+          }
+        } catch { /* non-critical */ }
         return result.config;
       }
       // If re-detection still can't find crack, keep existing config
@@ -431,6 +439,18 @@ export async function getOrCreateConfig(
 
   // 2. Auto-detect and create
   const result = await autoDetectAndCreateConfig(appId, gameName, gameSource, installDir);
+
+  // Restart watcher so extraWatchDirMap picks up any new save_path directories
+  if (result?.config) {
+    try {
+      const { achievementWatcherService } = await import("./achievementWatcherService");
+      if (achievementWatcherService.started) {
+        console.log(`[ACH][CONFIG] new config created appid=${appId} platform=${result.config.platform} save_path=${result.config.save_path ?? "null"}, restarting watcher`);
+        await achievementWatcherService.restartWatching();
+      }
+    } catch { /* non-critical */ }
+  }
+
   return result?.config ?? null;
 }
 
