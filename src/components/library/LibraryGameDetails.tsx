@@ -95,7 +95,7 @@ import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey,
 import type { SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
-import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
+import { resolveSteamAchievements, debugAchievements, numericAppIdHash } from "../../services/steamAchievementsResolver";
 import { scanSteamAppcacheAchievements, uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
 import { showAchievementToast, showGroupedAchievementToast, showTestAchievementToast } from "./AchievementToast";
 import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "../../services/achievementNotificationService";
@@ -294,6 +294,8 @@ export default function LibraryGameDetails({
   const [showStickyBar, setShowStickyBar] = useState(false);
   const isManualGame = game.source === "manual";
   const isEpicGame = game.source === "epic";
+  // Epic games always support achievements via Epic API — override snapshot value
+  const achievementsSupported = game.achievementsSupported || isEpicGame;
   const linkedSteamAppId = isManualGame ? ((localDetailsData as any)?.linkedSteamAppId ?? null) : null;
 
   const detailTitle = resolveCanonicalDisplayTitle(
@@ -314,7 +316,8 @@ export default function LibraryGameDetails({
   const { sessions: gameSessions } = useGameSession();
   const gameSessionKey = game.id;
   const isManualRunning = game.source === "manual" && !!(gameSessions[gameSessionKey]?.state === "running" || gameSessions[gameSessionKey]?.state === "launching");
-  const appIdStr = game.appId;
+  const appIdStr = game.appId ?? (game.source === "epic" ? (game.providerGameId?.split(":")?.[2] ?? game.providerGameId?.split(":")?.[0]) : undefined);
+  const epicNamespace = game.source === "epic" ? (game.providerGameId?.split(":")?.[0] ?? undefined) : undefined;
   const snapshotHydratedRef = useRef(false);
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
     if (!appIdStr) return null;
@@ -351,10 +354,11 @@ export default function LibraryGameDetails({
   // Lazy initializer: read persisted choice synchronously so the FIRST resolve uses the correct
   // platform (avoids writing to steam-official/ before async detectCrackType completes).
   // Also checks installDir for known crack folder patterns to avoid the race.
-  const [achSource, setAchSource] = useState<"steam-official" | "steam">(() => {
+  const [achSource, setAchSource] = useState<"steam-official" | "steam" | "epic-official">(() => {
     if (!appIdStr) return "steam-official";
-    const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
+    const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | "epic-official" | null;
     if (saved) return saved;
+    if (game?.source === "epic") return "epic-official";
     if (game?.isStandalone) return "steam";
     if (game?.source === "debrid" || game?.source === "manual") return "steam";
     // Sync heuristic: if installDir contains a known crack folder name, treat as crack
@@ -377,6 +381,14 @@ export default function LibraryGameDetails({
     userSwitchedSourceRef.current = false;
     setCrackDetectDone(false);
     let cancelled = false;
+
+    // Epic games always use epic-official — no crack detection needed
+    if (game?.source === "epic") {
+      setCrackDetectDone(true);
+      setHasCrackSave(false);
+      return () => { cancelled = true; };
+    }
+
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
     import("../../services/achievementConfigService").then(({ detectCrackType }) => {
       detectCrackType(appIdStr, game?.installDir).then((result: any) => {
@@ -385,9 +397,6 @@ export default function LibraryGameDetails({
         const hasCrack = !!result?.savePath;
         setHasCrackSave(hasCrack);
         if (saved) {
-          // Always apply from localStorage — the lazy initializer may have run before
-          // standalone was activated, leaving achSource as "steam-official" while
-          // handleToggleStandalone already wrote "steam" to localStorage.
           setAchSource(saved);
           console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} loaded from localStorage=${saved} hasCrack=${hasCrack}`);
         } else if (game?.isStandalone || hasCrack || game?.source === "debrid" || game?.source === "manual") {
@@ -399,7 +408,7 @@ export default function LibraryGameDetails({
       }).catch(() => { setCrackDetectDone(true); });
     }).catch(() => { setCrackDetectDone(true); });
     return () => { cancelled = true; };
-  }, [appIdStr, game?.installDir, game?.isStandalone]);
+  }, [appIdStr, game?.installDir, game?.isStandalone, game?.source]);
 
   // Re-resolve achievements when source changes — always re-resolve, even without summary
   const achSourceRef = useRef<string | null>(achSource); // initialized with achSource → only fires on actual platform switch
@@ -414,7 +423,7 @@ export default function LibraryGameDetails({
       const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
       setAchievementsLoading(true);
       try {
-        const gameSource = achSource === "steam" ? "debrid" : "steam";
+        const gameSource = achSource === "steam" ? "debrid" : achSource === "epic-official" ? "epic" : "steam";
         const s = await resolveSteamAchievements({
           appId: appIdStr,
           steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -427,6 +436,7 @@ export default function LibraryGameDetails({
           gameSource,
           platform: achSource,
           installDir: game.installDir,
+          epicNamespace,
         });
         if (appIdStr && s && s.achievements?.length > 0) {
           setAchievementsSummary(s);
@@ -443,7 +453,7 @@ export default function LibraryGameDetails({
   const supportCheckDoneRef = useRef(false);
 
   useEffect(() => {
-    if (game.achievementsSupported) {
+    if (achievementsSupported) {
       setLocalAchSupportFound(true);
       supportCheckDoneRef.current = true;
       return;
@@ -451,7 +461,7 @@ export default function LibraryGameDetails({
     if (supportCheckDoneRef.current) return;
     if (!appIdStr || !settings.steamRoot) return;
     supportCheckDoneRef.current = true;
-    const appIdNum = Number(appIdStr);
+    const appIdNum = numericAppIdHash(appIdStr);
     if (isNaN(appIdNum)) return;
     scanSteamAppcacheAchievements({ appId: appIdNum, steamPath: settings.steamRoot }).then((res) => {
       if (res.schema_file_found || res.parsed_schema.length > 0 || res.stats_file_found) {
@@ -463,7 +473,7 @@ export default function LibraryGameDetails({
     }).catch(() => {
       console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} source=local-appcache error=scan-failed supported=uncertain`);
     });
-  }, [appIdStr, game.achievementsSupported, settings.steamRoot]);
+  }, [appIdStr, achievementsSupported, settings.steamRoot]);
 
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback, fallbackBundle);
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
@@ -827,7 +837,7 @@ export default function LibraryGameDetails({
     console.log(`[ACH][PROGRESS_AVAILABLE_CHECK] appid=${appIdStr} resolverProgressAvailable=${achievementsSummary?.progressAvailable} summaryProgressAvailable=${achievementsSummary?.progressAvailable} uiProgressAvailable=${effectiveProgressAvailable} derivedUnlocked=${derivedUnlocked} canDerive=${canDeriveProgress}`);
   }
   const achievementsStatus = achievementsSummary?.source === "disabled"
-    ? ((game.achievementsSupported || localAchSupportFound) ? "Supported" : "Unavailable")
+    ? ((achievementsSupported || localAchSupportFound) ? "Supported" : "Unavailable")
     : achievementsSummary?.source === "setup-required"
       ? "Setup required"
       : achievementsSummary?.errorReason === "missing-appid"
@@ -836,7 +846,7 @@ export default function LibraryGameDetails({
           ? `${effectiveUnlocked} / ${effectiveTotal}`
           : achievementsSummary && achievementsSummary.achievements.length > 0
             ? "Progress unavailable"
-            : (game.achievementsSupported || localAchSupportFound)
+            : (achievementsSupported || localAchSupportFound)
               ? "Supported"
               : "Unavailable";
   const [steamNews, setSteamNews] = useState<SteamNewsItem[]>([]);
@@ -909,7 +919,7 @@ export default function LibraryGameDetails({
       }
       // 2. If ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP, check if disk cache is newer than store
       if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP) {
-        const appIdNum = Number(appIdStr);
+        const appIdNum = numericAppIdHash(appIdStr);
         if (Number.isFinite(appIdNum)) {
           import("../../services/tauri").then(({ readAchievementCache }) => {
             if (cancelled) return;
@@ -979,6 +989,7 @@ export default function LibraryGameDetails({
                   gameSource: game.source,
                   platform: achSource,
                   installDir: game.installDir,
+                  epicNamespace,
                 }).then((resolved) => {
                   if (cancelled || !resolved.progressAvailable) {
                     if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
@@ -1028,6 +1039,7 @@ export default function LibraryGameDetails({
       gameSource: game.source,
       platform: achSource,
       installDir: game.installDir,
+      epicNamespace,
     })
       .then((summary) => {
         if (!cancelled) {
@@ -1129,6 +1141,8 @@ export default function LibraryGameDetails({
       steamAchievementsEnabled: settings.steamAchievementsEnabled,
       achievementSchemaPath: settings.achievementSchemaPath || undefined,
       platform: achSource,
+      gameSource: game.source,
+      epicNamespace,
     });
     return () => {
       achievementAutoSyncService.stopWatching(appIdStr);
@@ -2165,8 +2179,8 @@ export default function LibraryGameDetails({
                 </div>
               )}
 
-              {/* Achievements — hidden for manual without appId and epic games */}
-              {(!isManualGame || !!appIdStr) && !isEpicGame && (
+              {/* Achievements — hidden for manual without appId */}
+              {(!isManualGame || !!appIdStr) && (
                 <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                   {!isPerfected && (
                     <h3 className="text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 text-(--color-muted)">
@@ -2229,17 +2243,17 @@ export default function LibraryGameDetails({
                         </div>
                       )}
 
-                      {/* Source selector + refresh — only shown when crack save exists AND not Debrid/Manual (always cracked) */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                      {/* Source selector + refresh — shown for crack save, not Debrid/Manual */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
                         <div className="flex items-center gap-2">
-                          <select
-                            value={achSource}
-                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                          >
-                            <option value="steam-official">{t("library_details.steamOfficial")}</option>
-                            <option value="steam">{t("library_details.crackSave")}</option>
-                          </select>
+                            <select
+                              value={achSource}
+                              onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                              className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                            >
+                              <option value="steam-official">{t("library_details.steamOfficial")}</option>
+                              <option value="steam">{t("library_details.crackSave")}</option>
+                            </select>
                           <button
                             type="button"
                             onClick={async () => {
@@ -2249,11 +2263,11 @@ export default function LibraryGameDetails({
                               try {
                                 achievementStore.deleteSummary(appIdStr, achSource);
                                 const { deleteAchievementCache } = await import("../../services/tauri");
-                                const appIdNum = Number(appIdStr);
+                                const appIdNum = numericAppIdHash(appIdStr);
                                 if (Number.isFinite(appIdNum)) {
                                   await deleteAchievementCache(appIdNum, achSource).catch(() => { });
                                 }
-                                const gameSource = achSource === "steam" ? "debrid" : "steam";
+                                const gameSource = achSource === "steam" ? "debrid" : achSource === "epic-official" ? "epic" : "steam";
                                 const s = await resolveSteamAchievements({
                                   appId: appIdStr,
                                   steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -2266,6 +2280,7 @@ export default function LibraryGameDetails({
                                                                     gameSource,
                                   platform: achSource,
                                   installDir: game.installDir,
+                                  epicNamespace,
                                 });
                                 if (appIdStr) {
                                   setAchievementsSummary(s);
@@ -2382,17 +2397,17 @@ export default function LibraryGameDetails({
                     </div>
                   ) : achievementsSummary && !effectiveProgressAvailable && achievementsSummary.achievements.length > 0 ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                      {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
                         <div className="flex items-center gap-2">
-                          <select
-                            value={achSource}
-                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                          >
-                            <option value="steam-official">Steam Official</option>
-                            <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
-                          </select>
+                            <select
+                              value={achSource}
+                              onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                              className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                            >
+                              <option value="steam-official">Steam Official</option>
+                              <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                            </select>
                           <button
                             type="button"
                             onClick={async () => {
@@ -2402,11 +2417,11 @@ export default function LibraryGameDetails({
                               try {
                                 achievementStore.deleteSummary(appIdStr, achSource);
                                 const { deleteAchievementCache } = await import("../../services/tauri");
-                                const appIdNum = Number(appIdStr);
+                                const appIdNum = numericAppIdHash(appIdStr);
                                 if (Number.isFinite(appIdNum)) {
                                   await deleteAchievementCache(appIdNum, achSource).catch(() => { });
                                 }
-                                const gameSource = achSource === "steam" ? "debrid" : "steam";
+                                const gameSource = achSource === "steam" ? "debrid" : achSource === "epic-official" ? "epic" : "steam";
                                 const s = await resolveSteamAchievements({
                                   appId: appIdStr,
                                   steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -2419,6 +2434,7 @@ export default function LibraryGameDetails({
                                                                     gameSource,
                                   platform: achSource,
                                   installDir: game.installDir,
+                                  epicNamespace,
                                 });
                                 if (appIdStr) {
                                   setAchievementsSummary(s);
@@ -2512,62 +2528,68 @@ export default function LibraryGameDetails({
                         )}
                       </div>
                     </div>
-                  ) : achievementsSummary && achievementsSummary.source === "unavailable" && (game.achievementsSupported || localAchSupportFound) ? (
+                  ) : achievementsSummary && achievementsSummary.source === "unavailable" && (achievementsSupported || localAchSupportFound) ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                      {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
                         <div className="flex items-center gap-2">
                            <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{t("library_details.source")}:</label>
-                           <select
-                             value={achSource}
-                             onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                             className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                           >
-                             <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
-                             <option value="steam">{t("library_details.crackSave")}</option>
-                           </select>
+                             <select
+                               value={achSource}
+                               onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                               className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                             >
+                               <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
+                               <option value="steam">{t("library_details.crackSave")}</option>
+                             </select>
                          </div>
                        )}
-                       <p className="text-xs text-(--color-muted)">
-                         {achSource === "steam"
-                           ? t("library_details.noAchievementDataCrack")
-                           : t("library_details.achievementTrackingRequiresApi")}
-                       </p>
-                       <p className="text-[10px] text-(--color-muted)/60">
-                         {achSource === "steam"
-                           ? t("library_details.tryManualRefreshCrack")
-                           : t("library_details.configureOrSwitchSource")}
+                        <p className="text-xs text-(--color-muted)">
+                          {achSource === "steam"
+                            ? t("library_details.noAchievementDataCrack")
+                            : achSource === "epic-official"
+                              ? "No Epic achievement data available. Click refresh to fetch from Epic Games Store."
+                              : t("library_details.achievementTrackingRequiresApi")}
+                        </p>
+                        <p className="text-[10px] text-(--color-muted)/60">
+                          {achSource === "steam"
+                            ? t("library_details.tryManualRefreshCrack")
+                            : achSource === "epic-official"
+                              ? "Achievements are fetched from Epic's servers. Make sure you're logged in via Epic settings."
+                              : t("library_details.configureOrSwitchSource")}
                       </p>
                       <div className="flex gap-2">
                         <button
                           type="button"
                           onClick={async () => {
                             const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
-                            if (!appIdStr) return;
-                            setAchievementsLoading(true);
-                            try {
-                              achievementStore.deleteSummary(appIdStr, achSource);
-                              const { deleteAchievementCache } = await import("../../services/tauri");
-                              const appIdNum = Number(appIdStr);
-                              if (Number.isFinite(appIdNum)) {
-                                await deleteAchievementCache(appIdNum, achSource).catch(() => { });
-                              }
-                              const gameSource = achSource === "steam" ? "debrid" : "steam";
-                              const s = await resolveSteamAchievements({
-                                appId: appIdStr,
-                                steamWebApiKey: settings.steamWebApiKey || undefined,
-                                steamId64: settings.steamId64 || undefined,
-                                accountId: settings.steamAccountId || undefined,
-                                steamPath: settings.steamRoot || undefined,
-                                forceRefresh: true,
-                                steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                                achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                                gameSource,
-                                platform: achSource,
-                                installDir: game.installDir,
-                              });
-                              if (appIdStr) {
-                                setAchievementsSummary(s);
+                              if (!appIdStr) return;
+                              setAchievementsLoading(true);
+                              try {
+                                achievementStore.deleteSummary(appIdStr, achSource);
+                                const { deleteAchievementCache } = await import("../../services/tauri");
+                                const appIdNum = numericAppIdHash(appIdStr);
+                                if (Number.isFinite(appIdNum)) {
+                                  await deleteAchievementCache(appIdNum, achSource).catch(() => { });
+                                }
+                                const gameSource = achSource === "steam" ? "debrid" : achSource === "epic-official" ? "epic" : "steam";
+                                const s = await resolveSteamAchievements({
+                                  appId: appIdStr,
+                                  steamWebApiKey: settings.steamWebApiKey || undefined,
+                                  steamId64: settings.steamId64 || undefined,
+                                  accountId: settings.steamAccountId || undefined,
+                                  steamPath: settings.steamRoot || undefined,
+                                  forceRefresh: true,
+                                  steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                                  achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                                                                    gameSource,
+                                  platform: achSource,
+                                  installDir: game.installDir,
+                                  epicNamespace,
+                                });
+                                if (appIdStr) {
+                                  setAchievementsSummary(s);
+
                                 achievementStore.setSummary(appIdStr, s, achSource);
                                 const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
                                 console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${unlocked}/${s.total}`);
@@ -2596,29 +2618,31 @@ export default function LibraryGameDetails({
                         )}
                       </div>
                     </div>
-                  ) : (game.achievementsSupported || localAchSupportFound) ? (
+                  ) : (achievementsSupported || localAchSupportFound) ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
+                      {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
                         <div className="flex items-center gap-2">
                           <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{t("library_details.source")}:</label>
-                          <select
-                            value={achSource}
-                            onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                            className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                          >
-                            <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
-                            <option value="steam">{t("library_details.crackSave")}</option>
-                          </select>
+                            <select
+                              value={achSource}
+                              onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
+                              className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                            >
+                              <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
+                              <option value="steam">{t("library_details.crackSave")}</option>
+                            </select>
                         </div>
                       )}
                       <p className="text-xs text-(--color-muted)">
                         {t("library_details.achievementsNotLoaded")}
                       </p>
                       <p className="text-[10px] text-(--color-muted)/60">
-                        {achSource === "steam"
-                          ? t("library_details.crackSaveInfo")
-                          : t("library_details.steamOfficialInfo")}
+                        {game?.source === "epic"
+                          ? "Fetches achievements from Epic Games Store"
+                          : achSource === "steam"
+                            ? t("library_details.crackSaveInfo")
+                            : t("library_details.steamOfficialInfo")}
                       </p>
                       <button
                         type="button"
@@ -2630,7 +2654,7 @@ export default function LibraryGameDetails({
                             // CRITICAL: delete ALL cache layers BEFORE resolving.
                             achievementStore.deleteSummary(appIdStr, achSource);
                             const { deleteAchievementCache } = await import("../../services/tauri");
-                            const appIdNum = Number(appIdStr);
+                            const appIdNum = numericAppIdHash(appIdStr);
                             if (Number.isFinite(appIdNum)) {
                               await deleteAchievementCache(appIdNum, achSource).catch(() => { });
                             }
@@ -2646,7 +2670,7 @@ export default function LibraryGameDetails({
                               }
                             } catch { /* non-critical */ }
                             // Pass gameSource based on selected source
-                            const gameSource = achSource === "steam" ? "debrid" : "steam";
+                            const gameSource = achSource === "steam" ? "debrid" : achSource === "epic-official" ? "epic" : "steam";
                             const s = await resolveSteamAchievements({
                               appId: appIdStr,
                               steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -2659,6 +2683,7 @@ export default function LibraryGameDetails({
                               gameSource,
                               platform: achSource,
                               installDir: game.installDir,
+                              epicNamespace,
                             });
                             if (appIdStr) {
                               setAchievementsSummary(s);
@@ -2836,6 +2861,7 @@ export default function LibraryGameDetails({
               platform: achSource,
               gameSource: game.source,
               installDir: game.installDir,
+              epicNamespace,
             }).then(handleResult).catch(handleError);
           }}
           refreshing={achievementsRefreshing}

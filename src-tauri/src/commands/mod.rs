@@ -37,6 +37,7 @@ pub mod profile;
 pub mod provider_media;
 pub mod igdb;
 pub mod epic;
+pub mod epic_achievements;
 pub mod epic_auth;
 pub mod epic_catalog;
 pub mod store_catalog;

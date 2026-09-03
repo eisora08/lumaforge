@@ -64,16 +64,36 @@ function isValidImageSource(value: string | undefined | null): value is string {
   return true;
 }
 
-function normalizeValidAppId(value: unknown): string | null {
+function normalizeValidAppId(value: unknown, gameSource?: string): string | null {
   const appId = String(value ?? "").trim();
   if (!appId || appId === "0" || appId.toLowerCase() === "undefined" || appId.toLowerCase() === "null" || appId === "NaN") {
     return null;
+  }
+  // Epic/GOG/other non-Steam games use string app IDs (e.g. "Fortnite", "Sugar")
+  if (gameSource === "epic" || gameSource === "gog") {
+    return appId;
   }
   const num = Number(appId);
   if (!Number.isFinite(num) || num <= 0) {
     return null;
   }
   return appId;
+}
+
+/**
+ * Convert a string appId to a stable numeric hash for cache operations.
+ * Steam apps already have numeric IDs; Epic/GOG apps get a deterministic hash.
+ */
+export function numericAppIdHash(str: string): number {
+  const num = Number(str);
+  if (Number.isFinite(num) && num > 0) return num;
+  // FNV-1a 32-bit hash — deterministic and well-distributed
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return (hash >>> 0) || 1; // unsigned 32-bit — matches Rust u32
 }
 
 function buildUnavailableSummary(appId: string, reason?: string): GameAchievementsSummary {
@@ -510,16 +530,20 @@ export async function resolveSteamAchievements(params: {
   steamAchievementsEnabled?: boolean;
   achievementSchemaPath?: string;
   gameSource?: string; // "steam" | "lua" | "debrid" | "manual" | "epic"
-  platform?: string; // "steam" | "steam-official" — force platform, skip auto-detect
+  platform?: string; // "steam" | "steam-official" | "epic-official" — force platform, skip auto-detect
   installDir?: string; // game install directory — used for Tenoke crack detection
+  epicNamespace?: string; // Epic namespace (first segment of providerGameId)
 }): Promise<GameAchievementsSummary> {
-  const appIdStr = normalizeValidAppId(params.appId);
+  const appIdStr = normalizeValidAppId(params.appId, params.gameSource);
 
   if (!appIdStr) {
     return buildUnavailableSummary(String(params.appId ?? ""), "missing-appid");
   }
 
-  const appIdNum = Number(appIdStr);
+  const appIdNum = numericAppIdHash(appIdStr);
+
+  // Epic: the real productId from the API (may differ from appName)
+  let epicProductId = appIdStr;
 
   const achievementsEnabled = params.steamAchievementsEnabled !== false;
   const hasApiKey = typeof params.steamWebApiKey === "string" && params.steamWebApiKey.trim().length > 0;
@@ -595,6 +619,11 @@ export async function resolveSteamAchievements(params: {
         gameConfig = await updateConfigForCrack(appIdStr, readSavePath, gameConfig?.name) ?? gameConfig;
       } catch { /* config update failed, continue with local vars */ }
     }
+  } else if (params.platform === "epic-official" || params.gameSource === "epic") {
+    // Epic Official — no local save_path needed (progress fetched from Epic API)
+    readPlatform = "epic-official";
+    readSavePath = ""; // Epic achievements are fetched from API, not local files
+    console.log(`[ACH][RESOLVE] appid=${appIdStr} Epic Official platform, skipping Steam-specific checks`);
   } else {
     // Auto-detect (default behavior)
     const crackResult = await detectCrackType(appIdStr, params.installDir).catch(() => null);
@@ -697,6 +726,64 @@ export async function resolveSteamAchievements(params: {
 
       // Read from crack schema (primary for crack progress)
       generatedCache = generatedCache ?? await readAchievementCache(appIdNum, readPlatform);
+    } else if (readPlatform === "epic-official") {
+      // Epic Official path: fetch schema from Epic API → writes to epic-official/<appId>/
+      console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Epic Official, fetching schema from Epic API → epic-official/${appIdStr}/`);
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const epicSchema = await invoke<{
+          product_id: string;
+          sandbox_id: string;
+          achievements: Array<{
+            api_name: string;
+            display_name: string;
+            description: string;
+            icon_url: string | null;
+            icon_gray_url: string | null;
+            hidden: boolean;
+            xp: number | null;
+          }>;
+        }>("epic_fetch_achievement_schema", {
+          productId: appIdStr,
+          namespaceId: params.epicNamespace ?? "",
+        });
+
+        // Capture the real Epic productId discovered by the API (different from appName)
+        epicProductId = epicSchema.product_id || appIdStr;
+        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Epic discovered productId=${epicProductId} sandboxId=${epicSchema.sandbox_id}`);
+
+        if (epicSchema && epicSchema.achievements.length > 0) {
+          const entries: import("./tauri").AppAchievementCacheEntry[] = epicSchema.achievements.map((a) => ({
+            id: a.api_name,
+            api_name: a.api_name,
+            name: a.display_name,
+            description: a.description,
+            icon: a.icon_url ?? undefined,
+            icon_gray: a.icon_gray_url ?? undefined,
+            unlocked: false,
+            unlock_time: undefined,
+          }));
+          await writeAchievementCache(appIdNum, {
+            achievements: entries,
+            achievement_percentages: [],
+            summary: {
+              app_id: appIdStr,
+              total: entries.length,
+              unlocked: 0,
+              percent: 0,
+              progress_available: false,
+              source: "epic-official",
+              updated_at: Math.floor(Date.now() / 1000),
+            },
+          }, false, "epic-official");
+          console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Epic schema: ${entries.length} achievements written to epic-official/${appIdStr}/`);
+          generatedCache = await readAchievementCache(appIdNum, readPlatform);
+        } else {
+          console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Epic API returned no achievements`);
+        }
+      } catch (e) {
+        console.warn(`[ACH][SCHEMA_GEN] appid=${appIdStr} Epic API failed: ${String(e)}`);
+      }
     } else {
       // Official path: KV binary + API enrichment → writes schema to steam-official/<appId>/
       generatedCache = await ensureSchemaGenerated(appIdStr, effectiveSteamPath, effectiveAccountId, params.steamWebApiKey, "steam-official");
@@ -1042,6 +1129,75 @@ export async function resolveSteamAchievements(params: {
     }
   } else {
     console.log(`[ACH][CRACK_READ] appid=${appIdStr} skipped — platform=${readPlatform} savePath=${readSavePath ?? "null"}`);
+  }
+
+  // 3d. Epic Official player achievements — fetch from Epic GraphQL API
+  if (!localProgressSummary && readPlatform === "epic-official") {
+    console.log(`[ACH][EPIC_READ] appid=${appIdStr} Epic Official, fetching player achievements from Epic API`);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      // Get Epic account ID from config or token
+        let epicAccountId = "";
+      try {
+        const accountInfo = await invoke<{ id: string; display_name: string }>("epic_get_account_info");
+        epicAccountId = accountInfo.id;
+      } catch { /* not logged in */ }
+
+      if (epicAccountId) {
+        console.log(`[ACH][EPIC_READ] appid=${appIdStr} fetching player progress with productId=${epicAccountId ? epicProductId : "(no account)"} epicAccountId=${epicAccountId.slice(0,8)}...`);
+        const epicProgress = await invoke<Array<{
+          achievement_name: string;
+          unlocked: boolean;
+          unlock_date: string | null;
+          xp: number | null;
+        }>>("epic_fetch_player_achievements", {
+          productId: epicProductId,
+          epicAccountId,
+        });
+
+        if (epicProgress && epicProgress.length > 0) {
+          // Build achievements list from schema + player progress
+          const achievements: GameAchievement[] = [];
+          let unlocked = 0;
+
+          for (const [apiName, schema] of schemaMap.entries()) {
+            const playerAch = epicProgress.find(p => p.achievement_name === apiName);
+            const isUnlocked = playerAch?.unlocked ?? false;
+            if (isUnlocked) unlocked++;
+
+            achievements.push({
+              id: apiName,
+              apiName,
+              name: schema.displayName || apiName,
+              description: schema.description,
+              iconUrl: schema.icon,
+              iconGrayUrl: schema.icongray,
+              unlocked: isUnlocked,
+              unlockTime: playerAch?.unlock_date ? new Date(playerAch.unlock_date).getTime() : undefined,
+            });
+          }
+
+          const total = schemaMap.size;
+          localProgressSummary = {
+            appId: appIdStr,
+            achievements,
+            total,
+            unlocked,
+            percent: total > 0 ? Math.round((unlocked / total) * 100) : 0,
+            progressAvailable: true,
+            source: "epic-official" as GameAchievementsSummary["source"],
+            updatedAt: Date.now(),
+          };
+          console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=epic-official unlocked=${unlocked}/${total}`);
+        } else {
+          console.log(`[ACH][EPIC_READ] appid=${appIdStr} Epic API returned no player achievements`);
+        }
+      } else {
+        console.warn(`[ACH][EPIC_READ] appid=${appIdStr} no Epic account ID available`);
+      }
+    } catch (err) {
+      console.warn(`[ACH][EPIC_READ] appid=${appIdStr} Epic player achievements failed:`, err);
+    }
   }
 
   // 4. Web API player progress — fallback when forceRefresh=true and no binary stats

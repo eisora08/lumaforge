@@ -2653,13 +2653,18 @@ fn get_achievement_cache_dir(app_handle: &AppHandle, app_id: u32) -> Result<Path
 /// Get the write directory for achievement schema based on platform.
 /// "steam" = cracked games → writes to steam/<appId>/
 /// "steam-official" = Steam library games → writes to steam-official/<appId>/
+/// "epic-official" = Epic Official games → writes to epic-official/<appId>/
 fn get_achievement_write_dir(app_handle: &AppHandle, app_id: u32, platform: &str) -> Result<PathBuf, String> {
   let app_dir = app_handle
     .path()
     .app_data_dir()
     .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-  let sub = if platform == "steam" { "steam" } else { "steam-official" };
+  let sub = match platform {
+    "steam" => "steam",
+    "epic-official" => "epic-official",
+    _ => "steam-official",
+  };
   Ok(app_dir.join("achievements").join("schema").join(sub).join(app_id.to_string()))
 }
 
@@ -2668,6 +2673,7 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
   let cache_dir = match platform.as_deref() {
     Some("steam") => get_achievement_write_dir(&app_handle, app_id, "steam")?,
     Some("steam-official") => get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    Some("epic-official") => get_achievement_write_dir(&app_handle, app_id, "epic-official")?,
     _ => get_achievement_cache_dir(&app_handle, app_id)?,
   };
 
@@ -2778,6 +2784,7 @@ pub fn delete_achievement_cache(app_handle: AppHandle, app_id: u32, platform: Op
   let dirs: Vec<std::path::PathBuf> = match platform.as_deref() {
     Some("steam") => vec![get_achievement_write_dir(&app_handle, app_id, "steam")?],
     Some("steam-official") => vec![get_achievement_write_dir(&app_handle, app_id, "steam-official")?],
+    Some("epic-official") => vec![get_achievement_write_dir(&app_handle, app_id, "epic-official")?],
     _ => vec![
       get_achievement_write_dir(&app_handle, app_id, "steam")?,
       get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
@@ -2798,6 +2805,7 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32, platform: Opti
   let cache_dir = match platform.as_deref() {
     Some("steam") => get_achievement_write_dir(&app_handle, app_id, "steam")?,
     Some("steam-official") => get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    Some("epic-official") => get_achievement_write_dir(&app_handle, app_id, "epic-official")?,
     _ => get_achievement_cache_dir(&app_handle, app_id)?,
   };
 

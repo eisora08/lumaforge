@@ -871,7 +871,7 @@ export async function runBootTasks(): Promise<void> {
                     updatedAt: row.updatedAt,
                   };
                   // Use platform from SQLite; infer from source when missing
-                  const platform = row.platform || (row.source === "crack" ? "steam" : "steam-official");
+                  const platform = row.platform || (row.source === "crack" ? "steam" : row.source === "epic" ? "epic-official" : "steam-official");
                   achievementStore.setSummary(row.appId, summary as any, platform, { skipUnlockDetection: true });
                   loaded++;
                 }

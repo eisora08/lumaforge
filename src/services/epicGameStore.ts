@@ -695,7 +695,7 @@ export async function refreshOwnedGames(): Promise<{
         // Achievement fields
         achievementUnlocked: 0,
         achievementTotal: 0,
-        achievementsSupported: false,
+        achievementsSupported: true, // Epic games support achievements via Epic API
         completionStatus: "not-played",
         isFavorite: false,
         isStandalone: false,

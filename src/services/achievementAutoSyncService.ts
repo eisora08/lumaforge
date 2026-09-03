@@ -1,4 +1,4 @@
-import { resolveSteamAchievements } from "./steamAchievementsResolver";
+import { resolveSteamAchievements, numericAppIdHash } from "./steamAchievementsResolver";
 import { checkAchievementLibraryCacheMetadata, readAchievementCache, writeAchievementCache } from "./tauri";
 import { achievementStore } from "./achievementStore";
 import type { GameAchievementsSummary } from "../types/gameAchievements";
@@ -19,7 +19,9 @@ export type AutoSyncParams = {
   steamPath?: string;
   steamAchievementsEnabled?: boolean;
   achievementSchemaPath?: string;
-  platform?: "steam-official" | "steam";
+  platform?: "steam-official" | "steam" | "epic-official";
+  gameSource?: string;
+  epicNamespace?: string;
 };
 
 export type AutoSyncEvent = {
@@ -176,7 +178,7 @@ class AchievementAutoSyncService {
    */
   private async performLocalCacheRefresh(appId: string, reason: string): Promise<void> {
     try {
-      const cached = await readAchievementCache(Number(appId), this.watchers.get(appId)?.params.platform);
+      const cached = await readAchievementCache(numericAppIdHash(appId), this.watchers.get(appId)?.params.platform);
       if (!cached) {
         console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=false updatedAt=null`);
         return;
@@ -226,7 +228,7 @@ class AchievementAutoSyncService {
       // Phase 4: Persist to disk cache immediately — pass platform to avoid cross-directory write
       const watchPlatform = this.watchers.get(appId)?.params.platform;
       try {
-        await writeAchievementCache(Number(appId), cached, false, watchPlatform);
+        await writeAchievementCache(numericAppIdHash(appId), cached, false, watchPlatform);
         console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt} platform=${watchPlatform ?? "none"}`);
       } catch (writeErr) {
         console.warn(`[ACH][CACHE_WRITE] failed appid=${appId}`, String(writeErr));
@@ -291,7 +293,7 @@ class AchievementAutoSyncService {
       if (!LIBRARYCACHE_PROCESSING_ENABLED) return;
 
       const meta = await checkAchievementLibraryCacheMetadata({
-        appId: Number(appId),
+        appId: numericAppIdHash(appId),
         steamAccountId: accountId,
         steamPath,
       });
@@ -316,7 +318,7 @@ class AchievementAutoSyncService {
       if (!LIBRARYCACHE_PROCESSING_ENABLED) return;
 
       const meta = await checkAchievementLibraryCacheMetadata({
-        appId: Number(appId),
+        appId: numericAppIdHash(appId),
         steamAccountId: state.params.accountId,
         steamPath: state.params.steamPath,
       });
@@ -380,6 +382,8 @@ class AchievementAutoSyncService {
         accountId: params.accountId,
         steamPath: params.steamPath,
         platform: params.platform,
+        gameSource: params.gameSource,
+        epicNamespace: params.epicNamespace,
         forceRefresh: true,
         skipImageDownload: true, // Auto-sync should NOT download images — only manual refresh does
         steamAchievementsEnabled: params.steamAchievementsEnabled,

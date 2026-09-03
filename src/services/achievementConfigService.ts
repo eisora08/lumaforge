@@ -148,9 +148,9 @@ export async function detectCrackType(appId: string, installDir?: string): Promi
 export async function readConfig(appId: string): Promise<AchievementGameConfig | null> {
   const appDataDir = await getAppDataDir();
 
-  // Search both platform directories — steam first (cracked), then steam-official
+  // Search platform directories — steam first (cracked), then steam-official, then epic-official
   let best: AchievementGameConfig | null = null;
-  for (const platform of ["steam", "steam-official"]) {
+  for (const platform of ["steam", "steam-official", "epic-official"]) {
     const configsDir = getConfigsDir(appDataDir, platform);
     const files = await listJsonFiles(configsDir);
 
@@ -257,7 +257,7 @@ export async function listConfigs(): Promise<AchievementGameConfig[]> {
   const appDataDir = await getAppDataDir();
   const configs: AchievementGameConfig[] = [];
 
-  for (const platform of ["steam-official", "steam"]) {
+  for (const platform of ["steam-official", "steam", "epic-official"]) {
     const configsDir = getConfigsDir(appDataDir, platform);
     const files = await listJsonFiles(configsDir);
 
@@ -285,12 +285,6 @@ export async function autoDetectAndCreateConfig(
   gameSource?: string, // "steam" | "lua" | "debrid" | "manual" | "epic"
   installDir?: string,
 ): Promise<AutoDetectResult | null> {
-  const steamPath = await resolveSteamPath();
-  if (!steamPath) {
-    console.warn(`[ACH][CONFIG] auto-detect failed: no steamPath`);
-    return null;
-  }
-
   const appDataDir = await getAppDataDir();
 
   // If gameSource/installDir not provided, look up from games_v2
@@ -325,6 +319,35 @@ export async function autoDetectAndCreateConfig(
 
   // Determine platform based on game source
   const isCracked = effectiveSource === "debrid" || effectiveSource === "manual";
+  const isEpic = effectiveSource === "epic" || effectiveSource === "epic-official";
+
+  // Epic games don't need Steam — handle early
+  if (isEpic) {
+    // Epic Official game — no local save_path needed (progress fetched from Epic API)
+    const configPath = `${appDataDir}\\achievements\\schema\\epic-official\\${appId}`;
+    const config: AchievementGameConfig = {
+      app_id: appId,
+      name: effectiveName || `Game ${appId}`,
+      platform: "epic-official",
+      save_path: null, // Epic achievements are fetched from API, not local files
+      config_path: configPath,
+      executable: effectiveInstallDir || "",
+      arguments: "",
+      process_name: "",
+      updated_at: Date.now(),
+    };
+
+    await writeConfig(config);
+    console.log(`[ACH][CONFIG] created config for ${appId} platform=epic-official source=${effectiveSource}`);
+    return { config, crackType: undefined };
+  }
+
+  // Steam games need steamPath — resolve after Epic early return
+  const steamPath = await resolveSteamPath();
+  if (!steamPath) {
+    console.warn(`[ACH][CONFIG] auto-detect failed: no steamPath`);
+    return null;
+  }
 
   if (isCracked) {
     // Cracked game (debrid/manual) — find crack save directory
