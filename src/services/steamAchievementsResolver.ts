@@ -1137,23 +1137,53 @@ export async function resolveSteamAchievements(params: {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       // Get Epic account ID from config or token
-        let epicAccountId = "";
+      let epicAccountId = "";
       try {
         const accountInfo = await invoke<{ id: string; display_name: string }>("epic_get_account_info");
         epicAccountId = accountInfo.id;
-      } catch { /* not logged in */ }
+        console.log(`[ACH][EPIC_READ] appid=${appIdStr} epic_get_account_info OK id=${epicAccountId.slice(0,8)}... display=${accountInfo.display_name}`);
+      } catch (err) {
+        console.warn(`[ACH][EPIC_READ] appid=${appIdStr} epic_get_account_info FAILED:`, err);
+      }
 
       if (epicAccountId) {
-        console.log(`[ACH][EPIC_READ] appid=${appIdStr} fetching player progress with productId=${epicAccountId ? epicProductId : "(no account)"} epicAccountId=${epicAccountId.slice(0,8)}...`);
-        const epicProgress = await invoke<Array<{
-          achievement_name: string;
-          unlocked: boolean;
-          unlock_date: string | null;
-          xp: number | null;
-        }>>("epic_fetch_player_achievements", {
-          productId: epicProductId,
-          epicAccountId,
-        });
+        // Helper to fetch player progress for a given productId
+        const fetchProgress = async (pid: string) => {
+          console.log(`[ACH][EPIC_READ] appid=${appIdStr} fetching player progress productId=${pid} epicAccountId=${epicAccountId.slice(0,8)}...`);
+          return invoke<Array<{
+            achievement_name: string;
+            unlocked: boolean;
+            unlock_date: string | null;
+            xp: number | null;
+          }>>("epic_fetch_player_achievements", {
+            productId: pid,
+            epicAccountId,
+          });
+        };
+
+        // Try all possible IDs: namespace, discovered product_id, and appIdStr (appName/catalogItemId)
+        // The GraphQL productAchievements query may need a specific ID format
+        const idsToTry = [
+          params.epicNamespace ?? "",
+          epicProductId,
+          appIdStr,
+        ].filter(id => id.length > 0);
+        const uniqueIds = [...new Set(idsToTry)];
+        console.log(`[ACH][EPIC_READ] appid=${appIdStr} trying ${uniqueIds.length} product IDs: ${uniqueIds.join(", ")}`);
+        let epicProgress: Array<{ achievement_name: string; unlocked: boolean; unlock_date: string | null; xp: number | null }> = [];
+
+        for (const tryId of uniqueIds) {
+          try {
+            epicProgress = await fetchProgress(tryId);
+            if (epicProgress.length > 0) {
+              console.log(`[ACH][EPIC_READ] appid=${appIdStr} got ${epicProgress.length} player achievements with productId=${tryId}`);
+              break;
+            }
+            console.log(`[ACH][EPIC_READ] appid=${appIdStr} 0 achievements with productId=${tryId}, trying next...`);
+          } catch (progressErr) {
+            console.warn(`[ACH][EPIC_READ] appid=${appIdStr} player progress failed with productId=${tryId}:`, progressErr);
+          }
+        }
 
         if (epicProgress && epicProgress.length > 0) {
           // Build achievements list from schema + player progress
@@ -1190,10 +1220,10 @@ export async function resolveSteamAchievements(params: {
           };
           console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=epic-official unlocked=${unlocked}/${total}`);
         } else {
-          console.log(`[ACH][EPIC_READ] appid=${appIdStr} Epic API returned no player achievements`);
+          console.log(`[ACH][EPIC_READ] appid=${appIdStr} Epic API returned no player achievements (progress len=${epicProgress?.length ?? 0})`);
         }
       } else {
-        console.warn(`[ACH][EPIC_READ] appid=${appIdStr} no Epic account ID available`);
+        console.warn(`[ACH][EPIC_READ] appid=${appIdStr} no Epic account ID available — user may not be logged in via Epic settings`);
       }
     } catch (err) {
       console.warn(`[ACH][EPIC_READ] appid=${appIdStr} Epic player achievements failed:`, err);

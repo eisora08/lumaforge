@@ -87,7 +87,14 @@ struct GraphQLData {
     #[serde(default, alias = "Achievements")]
     achievements: Option<GraphQLAchievementsWrapper>,
     #[serde(default, alias = "PlayerProfile")]
-    player_profile: Option<GraphQLPlayerProfile>,
+    player_profile: Option<GraphQLPlayerProfileWrapper>,
+}
+
+// GraphQL response has double nesting: data.PlayerProfile.playerProfile
+#[derive(Debug, Deserialize)]
+struct GraphQLPlayerProfileWrapper {
+    #[serde(default, alias = "playerProfile")]
+    inner: Option<GraphQLPlayerProfile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +334,10 @@ pub async fn epic_fetch_player_achievements(
         .await
         .map_err(|e| format!("Failed to read response: {e}"))?;
 
+    // Log raw response for debugging (truncate to 2000 chars)
+    let preview = if text.len() > 2000 { &text[..2000] } else { &text };
+    eprintln!("[EPIC_ACH] GraphQL player progress response ({} chars): {}", text.len(), preview);
+
     if !status.is_success() {
         return Err(format!("Epic GraphQL error ({status}): {text}"));
     }
@@ -344,28 +355,47 @@ pub async fn epic_fetch_player_achievements(
     let profile = gql
         .data
         .and_then(|d| d.player_profile)
+        .and_then(|w| w.inner)
         .ok_or("No player profile in response")?;
 
-    let product = profile
+    // Try nested data first, then fall back to product_achievements directly
+    let product_data = profile
         .product_achievements
-        .and_then(|pa| pa.data)
-        .ok_or("No product achievements data")?;
+        .as_ref()
+        .and_then(|pa| {
+            if let Some(data) = &pa.data {
+                Some(data) // Standard path: productAchievements.data
+            } else {
+                None
+            }
+        });
 
+    // If nested data is None, log what we got and return empty
+    if product_data.is_none() {
+        let pa_debug = profile.product_achievements.as_ref().map(|pa| {
+            format!("productAchievements={{ data=None }}")
+        }).unwrap_or_else(|| "productAchievements=None".to_string());
+        eprintln!("[EPIC_ACH] player progress: {} — returning empty", pa_debug);
+        return Ok(Vec::new());
+    }
+
+    let product = product_data.unwrap();
     let mut result = Vec::new();
 
-    if let Some(achievements) = product.player_achievements {
+    if let Some(achievements) = &product.player_achievements {
         for wrapper in achievements {
-            if let Some(inner) = wrapper.player_achievement {
+            if let Some(inner) = &wrapper.player_achievement {
                 result.push(EpicPlayerAchievement {
-                    achievement_name: inner.achievement_name.unwrap_or_default(),
+                    achievement_name: inner.achievement_name.clone().unwrap_or_default(),
                     unlocked: inner.unlocked.unwrap_or(false),
-                    unlock_date: inner.unlock_date,
+                    unlock_date: inner.unlock_date.clone(),
                     xp: inner.xp,
                 });
             }
         }
     }
 
+    eprintln!("[EPIC_ACH] player progress: got {} achievements", result.len());
     Ok(result)
 }
 
