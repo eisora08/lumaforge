@@ -13,8 +13,12 @@ import type { GameAchievementsSummary } from "../types/gameAchievements";
 
 const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps";
 
-function resolveGameIconUrl(appId: string | undefined): string | undefined {
+function resolveGameIconUrl(appId: string | undefined, game?: LibraryGame): string | undefined {
   if (!appId) return undefined;
+  // Epic/manual/debrid games: use the game's own imageUrl
+  if (game?.source && game.source !== "steam") {
+    return game.imageUrl;
+  }
   return `${STEAM_CDN}/${appId}/${appId}.jpg`;
 }
 
@@ -258,7 +262,7 @@ export default function Achievements() {
           summary={selectedSummary}
           appIdStr={selectedGame.appId}
           gameTitle={selectedGame.title}
-          gameIconUrl={resolveGameIconUrl(selectedGame.appId)}
+          gameIconUrl={resolveGameIconUrl(selectedGame.appId, selectedGame)}
           onClose={() => { setSelectedGame(null); setSelectedSummary(null); }}
           onRefresh={handleRefreshModal}
           refreshing={refreshing}
