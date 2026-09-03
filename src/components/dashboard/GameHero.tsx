@@ -164,6 +164,16 @@ function buildDebridPlaytime(debridGames: LibraryGame[]) {
   return map;
 }
 
+function buildSteamLuaPlaytime(games: LibraryGame[]) {
+  const map = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
+  for (const g of games) {
+    const ptKey = resolvePlaytimeKey(g);
+    const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+    if (entry) map.set(g.id, { lastPlayedAt: entry.lastPlayedAt ?? 0, totalSeconds: entry.totalPlaytimeSeconds });
+  }
+  return map;
+}
+
 // ─── Hero source → section ID mapping for maxItems limits ──
 // Each hero source corresponds to a dashboard section with its own item limit.
 // The hero rotation pool should match the section's display limit.
@@ -184,12 +194,18 @@ function buildHeroCandidates(
   manualGames: LibraryGame[],
   epicGames: LibraryGame[],
   debridGames: LibraryGame[],
+  steamLuaGames: LibraryGame[],
   heroSources: string[],
   sectionLimits: Record<string, number> = {},
 ): HeroCandidate[] {
   const manualPlaytime = buildManualPlaytime(manualGames);
   const epicPlaytime = buildEpicPlaytime(epicGames);
   const debridPlaytime = buildDebridPlaytime(debridGames);
+  const steamLuaPlaytime = buildSteamLuaPlaytime(steamLuaGames);
+  // Merge Steam/Lua playtime into manual playtime so sort logic works for type="manual"
+  for (const [k, v] of steamLuaPlaytime) {
+    if (!manualPlaytime.has(k)) manualPlaytime.set(k, v);
+  }
   const candidates: HeroCandidate[] = [];
 
   for (let si = 0; si < heroSources.length; si++) {
@@ -200,11 +216,18 @@ function buildHeroCandidates(
     switch (sourceId) {
       case "continuePlaying": {
         const all: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && g.title) {
             const lp = getEffectiveLastPlayedMs(g);
             if (lp > 0) all.push({ type: "snapshot", game: g, sourceIndex: si });
           }
+        }
+        for (const sg of steamLuaGames) {
+          if (!sg.title || (sg.appId && snapAppIds.has(sg.appId))) continue;
+          const mp = manualPlaytime.get(sg.id);
+          const lp = (mp?.lastPlayedAt ?? 0) * 1000;
+          if (lp > 0) all.push({ type: "manual", game: sg, sourceIndex: si });
         }
         for (const mg of manualGames) {
           if (!mg.title) continue;
@@ -238,9 +261,16 @@ function buildHeroCandidates(
       }
       case "favorites": {
         const favs: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && favoriteIds.has(g.appId) && hasValidMedia(g)) {
             favs.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const sg of steamLuaGames) {
+          const favKey = sg.libraryId || sg.id;
+          if (!snapAppIds.has(sg.appId ?? "") && favoriteIds.has(favKey) && (hasManualValidMedia(sg) || sg.appId)) {
+            favs.push({ type: "manual", game: sg, sourceIndex: si });
           }
         }
         for (const mg of manualGames) {
@@ -266,11 +296,18 @@ function buildHeroCandidates(
       }
       case "recentlyPlayed": {
         const all: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && g.title) {
             const lp = getEffectiveLastPlayedMs(g);
             if (lp > 0) all.push({ type: "snapshot", game: g, sourceIndex: si });
           }
+        }
+        for (const sg of steamLuaGames) {
+          if (!sg.title || (sg.appId && snapAppIds.has(sg.appId))) continue;
+          const mp = manualPlaytime.get(sg.id);
+          const lp = (mp?.lastPlayedAt ?? 0) * 1000;
+          if (lp > 0) all.push({ type: "manual", game: sg, sourceIndex: si });
         }
         for (const mg of manualGames) {
           if (!mg.title) continue;
@@ -304,10 +341,15 @@ function buildHeroCandidates(
       }
       case "topPlayed": {
         const all: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && g.title) {
             all.push({ type: "snapshot", game: g, sourceIndex: si });
           }
+        }
+        for (const sg of steamLuaGames) {
+          if (!sg.title || (sg.appId && snapAppIds.has(sg.appId))) continue;
+          all.push({ type: "manual", game: sg, sourceIndex: si });
         }
         for (const mg of manualGames) {
           if (!mg.title) continue;
@@ -335,9 +377,16 @@ function buildHeroCandidates(
       }
       case "recommended": {
         const recs: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && g.title && hasValidMedia(g)) {
             recs.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const sg of steamLuaGames) {
+          if (!sg.title || (sg.appId && snapAppIds.has(sg.appId))) continue;
+          if (hasManualValidMedia(sg) || sg.appId) {
+            recs.push({ type: "manual", game: sg, sourceIndex: si });
           }
         }
         candidates.push(...recs.slice(0, sourceLimit));
@@ -345,9 +394,16 @@ function buildHeroCandidates(
       }
       case "featured": {
         const feats: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && g.title && hasValidMedia(g)) {
             feats.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const sg of steamLuaGames) {
+          if (!sg.title || (sg.appId && snapAppIds.has(sg.appId))) continue;
+          if (hasManualValidMedia(sg) || sg.appId) {
+            feats.push({ type: "manual", game: sg, sourceIndex: si });
           }
         }
         candidates.push(...feats.slice(0, sourceLimit));
@@ -355,9 +411,16 @@ function buildHeroCandidates(
       }
       case "newNoteworthy": {
         const nn: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && g.title && hasValidMedia(g)) {
             nn.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const sg of steamLuaGames) {
+          if (!sg.title || (sg.appId && snapAppIds.has(sg.appId))) continue;
+          if (hasManualValidMedia(sg) || sg.appId) {
+            nn.push({ type: "manual", game: sg, sourceIndex: si });
           }
         }
         candidates.push(...nn.slice(0, sourceLimit));
@@ -380,15 +443,25 @@ function buildHeroCandidates(
             manuals.push({ type: "debrid", game: dg, sourceIndex: si });
           }
         }
+        for (const sg of steamLuaGames) {
+          if (sg.title && (hasManualValidMedia(sg) || sg.appId)) {
+            manuals.push({ type: "manual", game: sg, sourceIndex: si });
+          }
+        }
         candidates.push(...manuals.slice(0, sourceLimit));
         break;
       }
       case "steamGames": {
         const steam: HeroCandidate[] = [];
+        const snapAppIds = new Set(snapshotGames.map((g) => g.appId).filter(Boolean));
         for (const g of snapshotGames) {
           if (g.appId && g.title) {
             steam.push({ type: "snapshot", game: g, sourceIndex: si });
           }
+        }
+        for (const sg of steamLuaGames) {
+          if (!sg.title || (sg.appId && snapAppIds.has(sg.appId))) continue;
+          steam.push({ type: "manual", game: sg, sourceIndex: si });
         }
         candidates.push(...steam.slice(0, sourceLimit));
         break;
@@ -549,6 +622,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     [libraryGames],
   );
 
+  const steamLuaGames = useMemo(
+    () => libraryGames.filter((g) => (g.source === "steam" || g.source === "lua") && g.title),
+    [libraryGames],
+  );
+
   // Hero sources from settings
   const heroSources = settings.dashboardHeroSources ?? ["continuePlaying", "favorites"];
   const heroAutoRotate = settings.dashboardHeroAutoRotate ?? false;
@@ -566,8 +644,8 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   // Build candidates from selected hero sources (for non-running rotate + single-pick)
   const heroCandidates = useMemo(() => {
-    return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, debridGames, heroSources, sectionLimits);
-  }, [snapshotGames, favoriteIds, manualGames, epicGames, debridGames, heroSources, sectionLimits]);
+    return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, debridGames, steamLuaGames, heroSources, sectionLimits);
+  }, [snapshotGames, favoriteIds, manualGames, epicGames, debridGames, steamLuaGames, heroSources, sectionLimits]);
 
   // ─── DIAGNOSTIC: log candidates by source ──
   useEffect(() => {

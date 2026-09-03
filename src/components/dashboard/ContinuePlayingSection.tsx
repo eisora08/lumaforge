@@ -136,7 +136,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
     return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
   }, []);
 
-  const nonSnapshotGames = useMemo(() => getNonSnapshotGamesForDashboard(libraryGames), [libraryGames]);
+  const nonSnapshotGames = useMemo(() => getNonSnapshotGamesForDashboard(libraryGames, !snapshot?.library?.games?.length), [libraryGames, snapshot]);
 
   const displayGames = useMemo(
     () => getContinueDisplayGames(

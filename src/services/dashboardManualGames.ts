@@ -258,8 +258,14 @@ export function getEpicGamesForDashboard(libraryGames: LibraryGame[]): LibraryGa
 /**
  * Filter all non-snapshot games (manual + Epic + any future provider) from libraryGames.
  * Single source of truth for dashboard sections — replaces separate manual/epic filters.
+ * When includeAll is true (e.g. when the startup snapshot is null/empty), returns ALL
+ * library games regardless of source so dashboard sections can still display Steam/Lua games.
+ * The `seen` set in each dashboard section prevents duplicates when a snapshot is also present.
  */
-export function getNonSnapshotGamesForDashboard(libraryGames: LibraryGame[]): LibraryGame[] {
+export function getNonSnapshotGamesForDashboard(libraryGames: LibraryGame[], includeAll = false): LibraryGame[] {
+  if (includeAll) {
+    return libraryGames.filter((g) => g.title);
+  }
   return libraryGames.filter((g) => (g.source === "manual" || g.source === "epic" || g.source === "debrid") && g.title);
 }
 

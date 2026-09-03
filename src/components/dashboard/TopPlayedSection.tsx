@@ -87,7 +87,7 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, 
     return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
   }, []);
 
-  const nonSnapshotGames = useMemo(() => getNonSnapshotGamesForDashboard(libraryGames), [libraryGames]);
+  const nonSnapshotGames = useMemo(() => getNonSnapshotGamesForDashboard(libraryGames, !snapshot?.library?.games?.length), [libraryGames, snapshot]);
 
   const snapshotGames = useMemo(
     () => snapshot?.library?.games ?? [],

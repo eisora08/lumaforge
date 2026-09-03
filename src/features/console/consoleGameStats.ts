@@ -75,10 +75,10 @@ export function getGameAchievementSummary(game: LibraryGame): {
 
 export function getGameCompletionStatus(game: LibraryGame, playtimeSeconds: number): string | null {
   if (playtimeSeconds === 0) return "Not Played";
-  const unlocked = game.achievementUnlocked;
-  const total = game.achievementTotal;
-  if (typeof unlocked === "number" && typeof total === "number" && total > 0) {
-    if (unlocked >= total) return "Completed";
+  // Use getGameAchievementSummary which has achievementStore fallback
+  const summary = getGameAchievementSummary(game);
+  if (summary) {
+    if (summary.unlocked >= summary.total) return "Completed";
     return "In Progress";
   }
   return "Played";
