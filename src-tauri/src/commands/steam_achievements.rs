@@ -4551,7 +4551,7 @@ pub fn scan_achievement_folders(app_handle: AppHandle) -> Result<Vec<FolderAchie
     let schema_dir = app_dir.join("achievements").join("schema");
     let mut results: Vec<FolderAchievementSummary> = Vec::new();
 
-    for (platform, source_label) in [("steam", "crack"), ("steam-official", "steam")] {
+    for (platform, source_label) in [("steam", "crack"), ("steam-official", "steam"), ("epic-official", "epic")] {
         let platform_dir = schema_dir.join(platform);
         if !platform_dir.exists() {
             continue;
@@ -4566,7 +4566,6 @@ pub fn scan_achievement_folders(app_handle: AppHandle) -> Result<Vec<FolderAchie
             if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                 continue;
             }
-            let app_id = entry.file_name().to_string_lossy().to_string();
             let summary_path = entry.path().join("summary.json");
             if !summary_path.exists() {
                 continue;
@@ -4580,6 +4579,14 @@ pub fn scan_achievement_folders(app_handle: AppHandle) -> Result<Vec<FolderAchie
             let summary: AppAchievementSummary = match serde_json::from_str(&content) {
                 Ok(s) => s,
                 Err(_) => continue,
+            };
+
+            // Use app_id from summary.json (matches game.appId in TypeScript)
+            // Fall back to folder name for legacy cache entries
+            let app_id = if summary.app_id.is_empty() {
+                entry.file_name().to_string_lossy().to_string()
+            } else {
+                summary.app_id.clone()
             };
 
             if summary.total == 0 {

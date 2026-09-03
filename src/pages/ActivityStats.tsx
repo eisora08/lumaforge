@@ -624,13 +624,18 @@ function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
     return () => { cancelled = true; };
   }, []);
 
-  const { steamGames, crackGames } = useMemo(() => {
+  const { steamGames, crackGames, epicGames } = useMemo(() => {
     const steam: Array<{ game: LibraryGame; total: number; unlocked: number; percent: number; appId: string }> = [];
     const crack: Array<{ game: LibraryGame; total: number; unlocked: number; percent: number; appId: string }> = [];
+    const epic: Array<{ game: LibraryGame; total: number; unlocked: number; percent: number; appId: string }> = [];
 
     const gameByAppId = new Map<string, LibraryGame>();
     for (const game of games) {
       if (game.appId) gameByAppId.set(game.appId, game);
+      if (game.source === "epic" && game.providerGameId) {
+        const parts = game.providerGameId.split(":");
+        if (parts.length === 3 && parts[2]) gameByAppId.set(parts[2], game);
+      }
     }
 
     for (const row of folderData) {
@@ -642,6 +647,8 @@ function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
 
       if (row.source === "crack") {
         crack.push(entry);
+      } else if (row.source === "epic") {
+        epic.push(entry);
       } else {
         steam.push(entry);
       }
@@ -649,10 +656,11 @@ function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
 
     steam.sort((a, b) => b.percent - a.percent);
     crack.sort((a, b) => b.percent - a.percent);
-    return { steamGames: steam, crackGames: crack };
+    epic.sort((a, b) => b.percent - a.percent);
+    return { steamGames: steam, crackGames: crack, epicGames: epic };
   }, [games, folderData]);
 
-  if (steamGames.length === 0 && crackGames.length === 0) return null;
+  if (steamGames.length === 0 && crackGames.length === 0 && epicGames.length === 0) return null;
 
   return (
     <>
@@ -669,6 +677,14 @@ function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
           title={t("activity_stats.crack_achievements")}
           icon={<Zap className="h-4 w-4 text-purple-400" />}
           entries={crackGames}
+          grow={grow}
+        />
+      )}
+      {epicGames.length > 0 && (
+        <GameAchievementSection
+          title={t("activity_stats.epic_achievements")}
+          icon={<Award className="h-4 w-4 text-amber-400" />}
+          entries={epicGames}
           grow={grow}
         />
       )}
@@ -698,10 +714,11 @@ function GameAchievementSection({
       for (const { game } of entries.slice(0, 30)) {
         if (cancelled) break;
         const bg = game.coverPath ?? game.landscapePath ?? game.backgroundPath;
-        if (!bg || !game.appId) continue;
+        const key = game.appId ?? game.providerGameId?.split(":")[2] ?? game.id;
+        if (!bg || !key) continue;
         try {
-          const url = await resolveGameMediaUrl(game.appId, bg, "steam");
-          if (!cancelled && url) next.set(game.appId, url);
+          const url = await resolveGameMediaUrl(game.appId ?? key, bg, "steam");
+          if (!cancelled && url) next.set(key, url);
         } catch { /* ignore */ }
       }
       if (!cancelled) setImgSrcs(next);
@@ -718,7 +735,8 @@ function GameAchievementSection({
       </div>
       <div className="space-y-1 max-h-[400px] overflow-y-auto">
         {entries.map(({ game, total, unlocked, percent, appId }) => {
-          const img = imgSrcs.get(appId);
+          const key = game.appId ?? game.providerGameId?.split(":")[2] ?? game.id;
+          const img = imgSrcs.get(key);
           return (
             <div key={appId} className="flex items-center gap-2.5 py-1.5">
               {img ? (
