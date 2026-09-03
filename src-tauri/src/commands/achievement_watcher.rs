@@ -340,16 +340,17 @@ fn crack_json_from_path(path: &Path) -> Option<(u32, PathBuf)> {
 
 /// Given a file path, check if it's user_stats.ini (Tenoke) inside a crack save dir.
 /// Returns Some((appid, save_dir)) if so.
-fn tenoke_stats_from_path(path: &Path) -> Option<(u32, PathBuf)> {
+/// Works for both known crack bases AND custom game install dirs (via dir_map).
+fn tenoke_stats_from_path(path: &Path, dir_map: &HashMap<PathBuf, u32>) -> Option<(u32, PathBuf)> {
   let fname = path.file_name()?.to_string_lossy();
   if fname != "user_stats.ini" {
     return None;
   }
-  // Could be at <base>/<appId>/user_stats.ini or <base>/<appId>/SteamData/user_stats.ini
   let save_dir = path.parent()?;
   let parent_name = save_dir.file_name()?.to_string_lossy();
+
+  // Pattern 1: <base>/<appId>/SteamData/user_stats.ini (known crack base)
   if parent_name.eq_ignore_ascii_case("SteamData") {
-    // Nested: save_dir is <base>/<appId>/SteamData — walk up to <base>/<appId>
     let game_dir = save_dir.parent()?;
     let appid_str = game_dir.file_name()?.to_string_lossy();
     if let Ok(appid) = appid_str.parse::<u32>() {
@@ -362,8 +363,8 @@ fn tenoke_stats_from_path(path: &Path) -> Option<(u32, PathBuf)> {
       }
     }
   } else {
-    // Direct: save_dir is <base>/<appId>
-    let appid_str = parent_name;
+    // Pattern 2: <base>/<appId>/user_stats.ini (known crack base)
+    let appid_str = &parent_name;
     if let Ok(appid) = appid_str.parse::<u32>() {
       let parent_of_save = save_dir.parent()?;
       let bases = resolve_crack_save_bases();
@@ -374,6 +375,18 @@ fn tenoke_stats_from_path(path: &Path) -> Option<(u32, PathBuf)> {
       }
     }
   }
+
+  // Pattern 3: Custom game install dir — match against dir_map.
+  // user_stats.ini may be at <save_path>/user_stats.ini or <save_path>/SteamData/user_stats.ini
+  // Walk up to find a directory that matches a dir_map entry.
+  let mut check = Some(save_dir.to_path_buf());
+  while let Some(dir) = check {
+    if let Some(&appid) = dir_map.get(&dir) {
+      return Some((appid, dir));
+    }
+    check = dir.parent().map(|p| p.to_path_buf());
+  }
+
   None
 }
 
@@ -529,7 +542,7 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path, dir_map: &
   }
 
   // Handle Tenoke user_stats.ini (direct or SteamData/ nested)
-  if let Some((appid, save_dir)) = tenoke_stats_from_path(path) {
+  if let Some((appid, save_dir)) = tenoke_stats_from_path(path, dir_map) {
     eprintln!(
       "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=crack-ini savePath={}",
       raw_path, fname, appid, save_dir.display()

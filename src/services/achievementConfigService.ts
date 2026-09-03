@@ -149,6 +149,7 @@ export async function readConfig(appId: string): Promise<AchievementGameConfig |
   const appDataDir = await getAppDataDir();
 
   // Search both platform directories — steam first (cracked), then steam-official
+  let best: AchievementGameConfig | null = null;
   for (const platform of ["steam", "steam-official"]) {
     const configsDir = getConfigsDir(appDataDir, platform);
     const files = await listJsonFiles(configsDir);
@@ -161,20 +162,42 @@ export async function readConfig(appId: string): Promise<AchievementGameConfig |
         if (config.platform !== platform) {
           console.warn(`[ACH][CONFIG] config platform mismatch: found in ${platform}/ but platform=${config.platform} — deleting stale config ${filePath}`);
           await deleteFile(filePath);
-          return null;
+          continue;
         }
-        return config;
+        // Prefer the config with the most recent updated_at
+        if (!best || (config.updated_at ?? 0) > (best.updated_at ?? 0)) {
+          best = config;
+        }
       }
     }
   }
 
-  return null;
+  return best;
 }
 
 export async function writeConfig(config: AchievementGameConfig): Promise<void> {
   const appDataDir = await getAppDataDir();
   const configName = sanitizeFileName(config.name || `Game ${config.app_id}`);
   const newFilePath = getConfigFilePath(appDataDir, config.platform, configName);
+
+  // Delete any stale config files with the same app_id but different name
+  // This prevents duplicates like "Game 3358170.json" + "Dodo Duckie.json"
+  try {
+    const configsDir = getConfigsDir(appDataDir, config.platform);
+    const files = await listJsonFiles(configsDir);
+    for (const file of files) {
+      if (file.endsWith(".json")) {
+        const filePath = `${configsDir}\\${file}`;
+        if (filePath !== newFilePath) {
+          const existing = await readJsonFile<AchievementGameConfig>(filePath);
+          if (existing && existing.app_id === config.app_id) {
+            await deleteFile(filePath);
+            console.log(`[ACH][CONFIG] deleted stale config ${filePath} (same app_id=${config.app_id})`);
+          }
+        }
+      }
+    }
+  } catch { /* best-effort cleanup */ }
 
   await writeJsonFile(newFilePath, {
     ...config,
@@ -270,18 +293,48 @@ export async function autoDetectAndCreateConfig(
 
   const appDataDir = await getAppDataDir();
 
+  // If gameSource/installDir not provided, look up from games_v2
+  let effectiveSource = gameSource;
+  let effectiveInstallDir = installDir;
+  let effectiveName = gameName;
+  if (!effectiveSource || !effectiveInstallDir) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const game = await invoke<any>("get_game_v2_by_app_id", { appId });
+      if (game) {
+        if (!effectiveSource) effectiveSource = game.source;
+        if (!effectiveInstallDir) effectiveInstallDir = game.installDir;
+        if (!effectiveName) effectiveName = game.title;
+      }
+    } catch { /* not critical */ }
+  }
+
+  // Resolve installDir: if it's just a name (not an absolute path), derive from exePath
+  if (effectiveInstallDir && !/^[A-Za-z]:\\|^\\\\|^\//.test(effectiveInstallDir)) {
+    // installDir is a relative name — try to derive full path from exePath
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const game = await invoke<any>("get_game_v2_by_app_id", { appId });
+      if (game?.exePath) {
+        // exePath = "E:\GAMES\Dodo Duckie\DoDoDuck.exe" → parent = "E:\GAMES\Dodo Duckie"
+        const parentDir = game.exePath.replace(/[\\/][^\\/]+$/, "");
+        effectiveInstallDir = parentDir;
+      }
+    } catch { /* not critical */ }
+  }
+
   // Determine platform based on game source
-  const isCracked = gameSource === "debrid" || gameSource === "manual";
+  const isCracked = effectiveSource === "debrid" || effectiveSource === "manual";
 
   if (isCracked) {
     // Cracked game (debrid/manual) — find crack save directory
-    const crackResult = await detectCrackType(appId, installDir);
+    const crackResult = await detectCrackType(appId, effectiveInstallDir);
 
     const savePath = crackResult?.savePath ?? `${steamPath}\\appcache\\stats`;
     const configPath = `${appDataDir}\\achievements\\schema\\steam\\${appId}`;
     const config: AchievementGameConfig = {
       app_id: appId,
-      name: gameName || `Game ${appId}`,
+      name: effectiveName || `Game ${appId}`,
       platform: "steam",
       save_path: savePath,
       config_path: configPath,
@@ -292,7 +345,7 @@ export async function autoDetectAndCreateConfig(
     };
 
     await writeConfig(config);
-    console.log(`[ACH][CONFIG] created config for ${appId} platform=steam source=${gameSource} crack=${crackResult?.crackType ?? "none"} save_path=${savePath}`);
+    console.log(`[ACH][CONFIG] created config for ${appId} platform=steam source=${effectiveSource} crack=${crackResult?.crackType ?? "none"} save_path=${savePath}`);
     return { config, crackType: crackResult?.crackType };
   }
 
@@ -300,7 +353,7 @@ export async function autoDetectAndCreateConfig(
   const configPath = `${appDataDir}\\achievements\\schema\\steam-official\\${appId}`;
   const config: AchievementGameConfig = {
     app_id: appId,
-    name: gameName || `Game ${appId}`,
+    name: effectiveName || `Game ${appId}`,
     platform: "steam-official",
     save_path: `${steamPath}\\appcache\\stats`,
     config_path: configPath,
@@ -311,7 +364,7 @@ export async function autoDetectAndCreateConfig(
   };
 
   await writeConfig(config);
-  console.log(`[ACH][CONFIG] created config for ${appId} platform=steam-official source=${gameSource} save_path=${config.save_path}`);
+  console.log(`[ACH][CONFIG] created config for ${appId} platform=steam-official source=${effectiveSource} save_path=${config.save_path}`);
   return { config, crackType: undefined };
 }
 
@@ -331,13 +384,24 @@ export async function getOrCreateConfig(
   // Stale config fix: if existing config points to appcache/stats but the game
   // is debrid/manual (cracked), re-detect to find the actual crack save path.
   // This handles configs created before the tenoke/recursive-search fix.
-  if (existing && existing.save_path?.includes("appcache\\stats") && (gameSource === "debrid" || gameSource === "manual")) {
-    console.log(`[ACH][CONFIG] stale save_path for cracked game appId=${appId} old=${existing.save_path} re-detecting...`);
-    const result = await autoDetectAndCreateConfig(appId, gameName ?? existing.name, gameSource, installDir);
-    if (result?.config?.save_path && !result.config.save_path.includes("appcache\\stats")) {
-      return result.config;
+  if (existing && existing.save_path?.includes("appcache\\stats")) {
+    // Look up source from games_v2 if not provided by caller
+    let effectiveSource = gameSource;
+    if (!effectiveSource) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const game = await invoke<any>("get_game_v2_by_app_id", { appId });
+        if (game) effectiveSource = game.source;
+      } catch { /* not critical */ }
     }
-    // If re-detection still can't find crack, keep existing config
+    if (effectiveSource === "debrid" || effectiveSource === "manual") {
+      console.log(`[ACH][CONFIG] stale save_path for cracked game appId=${appId} old=${existing.save_path} re-detecting...`);
+      const result = await autoDetectAndCreateConfig(appId, gameName ?? existing.name, effectiveSource, installDir);
+      if (result?.config?.save_path && !result.config.save_path.includes("appcache\\stats")) {
+        return result.config;
+      }
+      // If re-detection still can't find crack, keep existing config
+    }
   }
 
   if (existing) return existing;

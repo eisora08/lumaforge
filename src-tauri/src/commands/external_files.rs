@@ -563,6 +563,41 @@ pub fn resolve_app_data_dir(
 // Crack save detection (uses std::env::var, works in Rust but not browser)
 // ---------------------------------------------------------------------------
 
+/// Search for SteamData directory relative to install_dir.
+/// Common locations:
+///   <install_dir>/SteamData/
+///   <install_dir>/Binaries/Win64/SteamData/
+///   <install_dir>/<GameName>/Binaries/Win64/SteamData/
+fn find_steam_data(install_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    // Fast path: direct child
+    let direct = install_path.join("SteamData");
+    if direct.is_dir() {
+        return Some(direct);
+    }
+    // Common: Binaries/Win64/SteamData
+    let bin = install_path.join("Binaries").join("Win64").join("SteamData");
+    if bin.is_dir() {
+        return Some(bin);
+    }
+    // Recursive scan for SteamData directory (depth 4)
+    for entry in walkdir::WalkDir::new(install_path)
+        .max_depth(4)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            !name.starts_with('.') && name != "node_modules" && name != "steamapps"
+        })
+    {
+        if let Ok(entry) = entry {
+            if entry.file_type().is_dir() && entry.file_name().to_string_lossy().eq_ignore_ascii_case("SteamData") {
+                return Some(entry.into_path());
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CrackSaveResult {
     pub crack_type: String,
@@ -602,59 +637,85 @@ pub fn detect_crack_save_type(app_id: String, install_dir: Option<String>) -> Re
     }
 
     // Tenoke: look for tenoke.ini in the game's install directory.
+    // When found, save_path MUST point to the SteamData directory (relative to
+    // install_dir), even if user_stats.ini doesn't exist there yet.
     // Tenoke puts tenoke.ini next to steam_api64.dll in various locations:
     //   <install_dir>/tenoke.ini
     //   <install_dir>/Binaries/Win64/tenoke.ini
     //   <install_dir>/Engine/Binaries/ThirdParty/Steamworks/Steamv157/Win64/tenoke.ini
-    // Do a bounded recursive scan (max depth 6) instead of hardcoded paths.
     if let Some(ref dir) = install_dir {
         let install_path = std::path::PathBuf::from(dir);
-        // Fast path: direct child
+
+        // Find SteamData relative to install_dir (common locations)
+        let steam_data = find_steam_data(&install_path);
+
+        // Fast path: tenoke.ini as direct child
+        let mut tenoke_found = false;
         if install_path.join("tenoke.ini").exists() {
+            tenoke_found = true;
+        }
+        // Bounded recursive scan for tenoke.ini (depth 6 covers deep UE structures)
+        if !tenoke_found {
+            for entry in walkdir::WalkDir::new(&install_path)
+                .max_depth(6)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| {
+                    let name = e.file_name().to_string_lossy().to_lowercase();
+                    !name.starts_with('.') && name != "node_modules" && name != "steamapps"
+                })
+            {
+                if let Ok(entry) = entry {
+                    if entry.file_type().is_file() && entry.file_name().to_string_lossy().eq_ignore_ascii_case("tenoke.ini") {
+                        tenoke_found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if tenoke_found {
+            // save_path MUST point to SteamData — find it relative to install_dir
+            if let Some(ref sd) = steam_data {
+                return Ok(Some(CrackSaveResult {
+                    crack_type: "tenoke".to_string(),
+                    save_path: sd.to_string_lossy().to_string(),
+                }));
+            }
+            // No SteamData found — fall back to install_dir itself
             return Ok(Some(CrackSaveResult {
                 crack_type: "tenoke".to_string(),
                 save_path: install_path.to_string_lossy().to_string(),
             }));
-        }
-        // Bounded recursive scan for tenoke.ini (depth 6 covers deep UE structures)
-        for entry in walkdir::WalkDir::new(&install_path)
-            .max_depth(6)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| {
-                let name = e.file_name().to_string_lossy().to_lowercase();
-                !name.starts_with('.') && name != "node_modules" && name != "steamapps"
-            })
-        {
-            if let Ok(entry) = entry {
-                if entry.file_type().is_file() && entry.file_name().to_string_lossy().eq_ignore_ascii_case("tenoke.ini") {
-                    let parent = entry.path().parent().unwrap_or(&install_path);
-                    return Ok(Some(CrackSaveResult {
-                        crack_type: "tenoke".to_string(),
-                        save_path: parent.to_string_lossy().to_string(),
-                    }));
-                }
-            }
         }
     }
 
     // Tenoke user_stats.ini: check common locations directly before recursive scan
     if let Some(ref dir) = install_dir {
         let install_path = std::path::PathBuf::from(dir);
+
+        // Check if SteamData exists (even without user_stats.ini) — if so, point there
+        let steam_data = find_steam_data(&install_path);
+        if let Some(ref sd) = steam_data {
+            let user_stats = sd.join("user_stats.ini");
+            if user_stats.exists() {
+                return Ok(Some(CrackSaveResult {
+                    crack_type: "tenoke-stats".to_string(),
+                    save_path: sd.to_string_lossy().to_string(),
+                }));
+            }
+            // SteamData exists but no user_stats.ini yet — still point to SteamData
+            return Ok(Some(CrackSaveResult {
+                crack_type: "tenoke-stats".to_string(),
+                save_path: sd.to_string_lossy().to_string(),
+            }));
+        }
         // Direct: <install_dir>/user_stats.ini
         let direct = install_path.join("user_stats.ini");
         if direct.exists() {
             return Ok(Some(CrackSaveResult {
                 crack_type: "tenoke-stats".to_string(),
                 save_path: install_path.to_string_lossy().to_string(),
-            }));
-        }
-        // Nested: <install_dir>/SteamData/user_stats.ini
-        let nested = install_path.join("SteamData").join("user_stats.ini");
-        if nested.exists() {
-            return Ok(Some(CrackSaveResult {
-                crack_type: "tenoke-stats".to_string(),
-                save_path: nested.parent().unwrap_or(&install_path).to_string_lossy().to_string(),
             }));
         }
         // OnlineFix: <install_dir>/Stats/achievements.ini
