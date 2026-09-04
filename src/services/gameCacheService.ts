@@ -818,7 +818,7 @@ export function subscribeMediaCacheVersion(cb: () => void): () => void {
 
 const MEDIA_PATH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-function getCachedResolvedMedia(appId: string): GameMediaPaths | null | undefined {
+export function getCachedResolvedMedia(appId: string): GameMediaPaths | null | undefined {
   const cached = resolvedMediaSessionCache.get(appId);
   if (cached && (Date.now() - cached.ts) < MEDIA_PATH_CACHE_TTL_MS) {
     return cached.value;
@@ -2172,6 +2172,10 @@ async function getAppDataBase(): Promise<string> {
   } catch {
     return "";
   }
+}
+
+export function getAppDataBaseSync(): string {
+  return appDataBaseCache.get("base") ?? "";
 }
 
 /** Resolve a provider-relative game media path to an absolute filesystem path.

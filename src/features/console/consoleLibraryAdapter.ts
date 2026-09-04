@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getCachedGameMediaPaths, resolveGameMediaUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
+import { getCachedGameMediaPaths, getCachedResolvedMedia, getAppDataBaseSync, localPathToUrl, resolveGameMediaUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
 import { getManualGame } from "../../services/manualGameStore";
 
 const DEBUG_EPIC_CONSOLE_MEDIA = false;
@@ -24,6 +24,49 @@ export type ConsoleLibraryGame = LibraryGame & {
 };
 
 const _mediaCache = new Map<string, { media: ConsoleMedia; ts: number }>();
+
+function buildAssetUrl(base: string, provider: string, appId: string, relativePath: string | null): string | null {
+  if (!relativePath) return null;
+  if (/^https?:\/\//i.test(relativePath)) return relativePath;
+  if (relativePath.startsWith("asset://") || relativePath.startsWith("data:") || relativePath.startsWith("file://")) return relativePath;
+  if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) {
+    return localPathToUrl(relativePath);
+  }
+  const abs = `${base}\\games\\${provider}\\${appId}\\${relativePath.replace(/\//g, "\\")}`;
+  return localPathToUrl(abs);
+}
+
+export function seedMediaCacheFromSessionCache(games: LibraryGame[]): number {
+  const base = getAppDataBaseSync();
+  if (!base) return 0;
+  let seeded = 0;
+  for (const g of games) {
+    const appId = g.appId;
+    if (!appId) continue;
+    if (_mediaCache.has(appId)) continue;
+    const paths = getCachedResolvedMedia(appId);
+    if (paths === undefined) continue;
+    if (paths === null) {
+      _mediaCache.set(appId, { media: { coverSrc: null, landscapeSrc: null, backgroundSrc: null, logoSrc: null, heroSrc: null }, ts: Date.now() });
+      continue;
+    }
+    const provider = g.source === "epic" ? "epic" : "steam";
+    const coverSrc = buildAssetUrl(base, provider, appId, paths.coverPath);
+    const landscapeSrc = buildAssetUrl(base, provider, appId, paths.landscapePath);
+    const backgroundSrc = buildAssetUrl(base, provider, appId, paths.backgroundPath);
+    const logoSrc = buildAssetUrl(base, provider, appId, paths.logoPath);
+    const media: ConsoleMedia = {
+      coverSrc,
+      landscapeSrc,
+      backgroundSrc,
+      logoSrc,
+      heroSrc: backgroundSrc || landscapeSrc,
+    };
+    _mediaCache.set(appId, { media, ts: Date.now() });
+    seeded++;
+  }
+  return seeded;
+}
 
 function getSyncMedia(appId: string): ConsoleMedia | undefined {
   return _mediaCache.get(appId)?.media;
@@ -59,8 +102,15 @@ export async function resolveConsoleMedia(appId: string): Promise<ConsoleMedia> 
 }
 
 export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame[] {
-  const [enriched, setEnriched] = useState<ConsoleLibraryGame[]>(() =>
-    games.map((g) => {
+  const [enriched, setEnriched] = useState<ConsoleLibraryGame[]>(() => {
+    if (_mediaCache.size === 0 && games.length > 0) {
+      const seeded = seedMediaCacheFromSessionCache(games);
+      console.log(`[CONSOLE_MEDIA][SEED] seeded=${seeded} from session cache (total games=${games.length})`);
+    }
+    const hits = games.filter((g) => !!getSyncMedia(g.appId || g.id)).length;
+    const misses = games.length - hits;
+    console.log(`[CONSOLE_MEDIA][INIT] games=${games.length} cacheHits=${hits} cacheMisses=${misses} cacheSize=${_mediaCache.size}`);
+    return games.map((g) => {
       const key = g.appId || g.id;
       const syncMedia = getSyncMedia(key);
       const syncMeta = _mediaCache.get(key)?.ts
@@ -69,8 +119,8 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
       const base: ConsoleLibraryGame = { ...g, _consoleMedia: syncMedia };
       if (syncMeta) base._consoleMeta = syncMeta;
       return base;
-    }),
-  );
+    });
+  });
 
   const gamesRef = useRef(games);
   gamesRef.current = games;
@@ -175,6 +225,18 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
           return out;
         }),
       );
+
+      // Log per-game resolution result
+      for (const g of currentGames) {
+        const key = g.appId || g.id;
+        const m = mediaMap.get(key);
+        console.log(`[CONSOLE_MEDIA][RESOLVE] key=${key} title="${g.title}" source=${g.source} hasMedia=${!!m} cover=${!!m?.coverSrc} landscape=${!!m?.landscapeSrc} background=${!!m?.backgroundSrc} logo=${!!m?.logoSrc}`);
+        if (m?.coverSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} coverSrc=${m.coverSrc}`);
+        if (m?.landscapeSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} landscapeSrc=${m.landscapeSrc}`);
+        if (m?.backgroundSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} backgroundSrc=${m.backgroundSrc}`);
+        if (m?.logoSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} logoSrc=${m.logoSrc}`);
+        if (!m) console.log(`[CONSOLE_MEDIA][MISS] key=${key} title="${g.title}" source=${g.source} coverPath=${g.coverPath ?? "null"} landscapePath=${g.landscapePath ?? "null"} backgroundPath=${g.backgroundPath ?? "null"} logoPath=${g.logoPath ?? "null"}`);
+      }
 
       if (DEBUG_EPIC_CONSOLE_MEDIA) {
         for (const g of currentGames) {
