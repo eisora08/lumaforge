@@ -287,11 +287,11 @@ export async function autoDetectAndCreateConfig(
 ): Promise<AutoDetectResult | null> {
   const appDataDir = await getAppDataDir();
 
-  // If gameSource/installDir not provided, look up from games_v2
+  // If gameSource/installDir/gameName not provided, look up from games_v2
   let effectiveSource = gameSource;
   let effectiveInstallDir = installDir;
   let effectiveName = gameName;
-  if (!effectiveSource || !effectiveInstallDir) {
+  if (!effectiveSource || !effectiveInstallDir || !effectiveName) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const game = await invoke<any>("get_game_v2_by_app_id", { appId });
@@ -352,6 +352,7 @@ export async function autoDetectAndCreateConfig(
   if (isCracked) {
     // Cracked game (debrid/manual) — find crack save directory
     const crackResult = await detectCrackType(appId, effectiveInstallDir);
+    console.log(`[ACH][CONFIG] crackResult appId=${appId} crackType=${crackResult?.crackType ?? "null"} savePath=${crackResult?.savePath ?? "null"} installDir=${effectiveInstallDir ?? "null"}`);
 
     const savePath = crackResult?.savePath ?? `${steamPath}\\appcache\\stats`;
     const configPath = `${appDataDir}\\achievements\\schema\\steam\\${appId}`;
@@ -393,7 +394,13 @@ export async function autoDetectAndCreateConfig(
 
 // ---------------------------------------------------------------------------
 // Get or create config for a game
+//
+// Concurrent calls for the same appId are serialized: the second caller waits
+// for the first to finish and then reads the freshly-written config instead of
+// racing to create a duplicate.
 // ---------------------------------------------------------------------------
+
+const _pendingCreations = new Map<string, Promise<AchievementGameConfig | null>>();
 
 export async function getOrCreateConfig(
   appId: string,
@@ -401,8 +408,31 @@ export async function getOrCreateConfig(
   gameSource?: string,
   installDir?: string,
 ): Promise<AchievementGameConfig | null> {
+  // If another call is already handling this appId, piggyback on it
+  const pending = _pendingCreations.get(appId);
+  if (pending) {
+    console.debug(`[ACH][CONFIG] getOrCreateConfig appId=${appId} — waiting for in-flight creation`);
+    return pending;
+  }
+
+  const promise = _doGetOrCreateConfig(appId, gameName, gameSource, installDir);
+  _pendingCreations.set(appId, promise);
+  try {
+    return await promise;
+  } finally {
+    _pendingCreations.delete(appId);
+  }
+}
+
+async function _doGetOrCreateConfig(
+  appId: string,
+  gameName?: string,
+  gameSource?: string,
+  installDir?: string,
+): Promise<AchievementGameConfig | null> {
   // 1. Try existing config
   const existing = await readConfig(appId);
+  console.log(`[ACH][CONFIG] getOrCreateConfig appId=${appId} existing=${existing?.save_path ?? "null"} gameSource=${gameSource ?? "null"} installDir=${installDir ?? "null"}`);
 
   // Stale config fix: if existing config points to appcache/stats but the game
   // is debrid/manual (cracked), re-detect to find the actual crack save path.
@@ -420,6 +450,7 @@ export async function getOrCreateConfig(
     if (effectiveSource === "debrid" || effectiveSource === "manual") {
       console.log(`[ACH][CONFIG] stale save_path for cracked game appId=${appId} old=${existing.save_path} re-detecting...`);
       const result = await autoDetectAndCreateConfig(appId, gameName ?? existing.name, effectiveSource, installDir);
+      console.log(`[ACH][CONFIG] stale re-detect appId=${appId} newSavePath=${result?.config?.save_path ?? "null"} changed=${result?.config?.save_path !== existing.save_path}`);
       if (result?.config?.save_path && !result.config.save_path.includes("appcache\\stats")) {
         // Save path changed — restart watcher so extraWatchDirMap picks up the new directory
         try {
@@ -432,6 +463,7 @@ export async function getOrCreateConfig(
         return result.config;
       }
       // If re-detection still can't find crack, keep existing config
+      console.log(`[ACH][CONFIG] stale re-detect appId=${appId} still no crack path — keeping existing config`);
     }
   }
 

@@ -331,6 +331,10 @@ class AchievementWatcherService {
   async restartWatching(): Promise<void> {
     if (!this._steamPath || !this._steamAccountId) return;
     console.log("[ACH][WATCHER] restartWatching — re-scanning crack save dirs");
+    // Always stop first — _started may be false during boot baseline scan,
+    // in which case start() wouldn't call stop() and we'd end up with
+    // two Rust watcher instances running simultaneously.
+    await this.stop();
     this._alreadyStartedOnce = false;
     this._startingInProgress = false;
     await this.start(this._steamPath, this._steamAccountId, this._steamWebApiKey || undefined);

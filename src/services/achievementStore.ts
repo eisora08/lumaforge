@@ -570,7 +570,9 @@ class AchievementStoreImpl {
     const hasSnapshot = snapshots[patchSnapshotKey] !== undefined || snapshots[appId] !== undefined;
 
     // If no snapshot and no previous store progress, create baseline
-    const isBaseline = !hasSnapshot && (!current.progressAvailable || prevUnlocked === 0);
+    // But NOT for authoritative patches (crack/gse) — they provide the exact
+    // achievement state, so we should always detect unlocks even on first run.
+    const isBaseline = !patch.authoritative && !hasSnapshot && (!current.progressAvailable || prevUnlocked === 0);
 
     let newUnlocks: UnlockEvent[] = [];
 
@@ -583,9 +585,28 @@ class AchievementStoreImpl {
         prevMap.set(apiName, wasUnlocked);
       }
       // Also fill in from current store for any entries not in snapshot
+      // Skip when createdMinimalSummary — the summary was just created from this
+      // same patch, so using it as "previous state" would make all unlocks appear
+      // already known and suppress toast notifications.
       for (const ach of current.achievements ?? []) {
-        if (!prevMap.has(ach.apiName)) {
+        if (!prevMap.has(ach.apiName) && !createdMinimalSummary) {
           prevMap.set(ach.apiName, ach.unlocked);
+        }
+      }
+
+      // ── Detect achievement data reset for authoritative patches ──
+      // If the old snapshot has more unlocks than the current patch reports,
+      // the achievement data was likely reset (deleted files, new game, etc.).
+      // Clear the stale snapshot and treat all current unlocks as new.
+      if (patch.authoritative) {
+        const snapshotUnlockedCount = Object.values(oldSnapshot).filter(v => v).length;
+        if (snapshotUnlockedCount > patch.unlocked) {
+          console.log(`[ACH][STORE_PATCH][${tid}] snapshot-reset appid=${appId} snapshotUnlocked=${snapshotUnlockedCount} patchUnlocked=${patch.unlocked} action=clear-stale-snapshot`);
+          prevMap.clear();
+          delete snapshots[patchSnapshotKey];
+          if (patchSnapshotKey !== appId) {
+            delete snapshots[appId];
+          }
         }
       }
 
