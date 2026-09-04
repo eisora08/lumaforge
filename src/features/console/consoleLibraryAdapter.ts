@@ -36,7 +36,7 @@ export async function resolveConsoleMedia(appId: string): Promise<ConsoleMedia> 
   const paths = await getCachedGameMediaPaths(appId);
   if (!paths) {
     const empty: ConsoleMedia = { coverSrc: null, landscapeSrc: null, backgroundSrc: null, logoSrc: null, heroSrc: null };
-    // Don't cache empty results — allow re-resolution on next attempt (files may not exist yet on early boot)
+    _mediaCache.set(appId, { media: empty, ts: Date.now() });
     return empty;
   }
 
@@ -77,9 +77,8 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
 
   useEffect(() => {
     let mounted = true;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    async function resolveAll(retryAttempt = false) {
+    async function resolveAll() {
       const currentGames = gamesRef.current;
       const resolvedAt = Date.now();
       const results = await Promise.all(
@@ -177,20 +176,6 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
         }),
       );
 
-      // Retry once after 2s if many games have no media (early boot: files not on disk yet)
-      if (!retryAttempt && mounted) {
-        const missingCount = currentGames.filter((g) => {
-          const key = g.appId || g.id;
-          const m = mediaMap.get(key);
-          return !m || (!m.coverSrc && !m.landscapeSrc && !m.backgroundSrc);
-        }).length;
-        if (missingCount > 0) {
-          retryTimer = setTimeout(() => {
-            if (mounted) resolveAll(true);
-          }, 2000);
-        }
-      }
-
       if (DEBUG_EPIC_CONSOLE_MEDIA) {
         for (const g of currentGames) {
           if (g.source === "epic") {
@@ -212,7 +197,6 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
     resolveAll();
     return () => {
       mounted = false;
-      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [games]);
 
