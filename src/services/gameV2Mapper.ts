@@ -485,7 +485,7 @@ export function debridGameToGameV2(entry: {
 
   return {
     id: libraryId,
-    title: entry.title ?? "Unknown Repack",
+    title: entry.title || "",
     source: "debrid",
     appId: entry.appId && entry.appId > 0 ? String(entry.appId) : undefined,
     providerGameId,
@@ -541,7 +541,7 @@ export function libraryGameToGameV2(game: LibraryGame): GameV2 {
 
   return {
     id,
-    title: game.title || "Unknown",
+    title: game.title || "",
     source,
     appId: game.appId ?? undefined,
     providerGameId: game.providerGameId ?? game.appId ?? undefined,

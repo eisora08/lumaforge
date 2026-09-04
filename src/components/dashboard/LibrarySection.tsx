@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Gamepad2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
@@ -14,7 +13,7 @@ import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 type Props = {
-  snapshot: StartupSnapshot | null;
+  snapshot?: any;
   onNavigate?: (page: AppPage) => void;
   excludeAppIds?: string[];
 };
@@ -27,18 +26,13 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
 
   const [titleMap, setTitleMap] = useState<Record<string, string>>({});
 
-  const snapshotGames = useMemo(
-    () => snapshot?.library?.games ?? [],
-    [snapshot],
-  );
-
   const displayGames = useMemo(() => {
     const exclude = new Set(excludeAppIds ?? []);
-    const installed = snapshotGames.filter((g) => g.installed && g.appId && !exclude.has(g.appId));
+    const installed = libraryGames.filter((g) => g.isInstalled && g.appId && !exclude.has(g.appId));
     if (installed.length > 0) return installed.slice(0, 10);
-    const remaining = snapshotGames.filter((g) => g.appId && !exclude.has(g.appId));
+    const remaining = libraryGames.filter((g) => g.appId && !exclude.has(g.appId));
     return remaining.slice(0, 10);
-  }, [snapshotGames, excludeAppIds]);
+  }, [libraryGames, excludeAppIds]);
 
   useEffect(() => {
     for (const game of displayGames) {
@@ -68,11 +62,11 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
         if (cancelled) break;
         const game = gameById.get(appId);
         if (!game) continue;
-        const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath || game.media?.iconPath;
+        const imgPath = game.landscapePath || game.coverPath || game.backgroundPath || game.iconPath;
         urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
         titles[appId] = resolvedTitles[appId]?.title ?? game.title;
         if (imgPath && !cancelled) {
-          const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : game.media?.backgroundPath ? "background" : "icon";
+          const selection = game.landscapePath ? "landscape" : game.coverPath ? "cover" : game.backgroundPath ? "background" : "icon";
           if (DEBUG_MEDIA_DASH) console.log(`[MEDIA][DASH] section=Library appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
         }
         if (DEBUG_NAME_DASH) console.log(`[NAME][DASH] section=Library appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
@@ -95,7 +89,7 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
 
   if (displayGames.length === 0) return null;
 
-  function handleOpen(game: SnapshotGame) {
+  function handleOpen(game: any) {
     if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
       if (libGame) {
@@ -113,7 +107,7 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
             {t("dashboard.from_your_library", "From Your Library")}
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            {t("dashboard.installed_games", { count: displayGames.filter((g) => g.installed).length, defaultValue: "{{count}} installed games" })}
+            {t("dashboard.installed_games", { count: displayGames.filter((g) => g.isInstalled).length, defaultValue: "{{count}} installed games" })}
           </p>
         </div>
         <button
@@ -165,7 +159,7 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
                     </div>
                   )}
                   <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
-                  {game.installed && (
+                  {game.isInstalled && (
                     <span className="absolute left-2 top-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur-sm">
                       {t("dashboard.installed", "Installed")}
                     </span>

@@ -9,6 +9,7 @@ import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../t
 import { sendAchievementNativeNotification, queueAchievementOverlay } from "./achievementNotificationService";
 import { showAchievementToast, showGroupedAchievementToast } from "../components/library/AchievementToast";
 import { playAchievementSound, rarityFromPercent } from "../features/activity/achievements/achievementSound";
+import { getReconciledGames } from "./gameStore";
 import {
   ACHIEVEMENTS_AUTO_ENABLED,
   ACHIEVEMENT_WATCHER_PROCESS_EVENTS,
@@ -899,10 +900,9 @@ class AchievementWatcherService {
 
   private _populateGameTitleCache(): void {
     try {
-      const raw = localStorage.getItem("lumaforge-snapshot-games");
-      if (raw) {
-        const games = JSON.parse(raw) as Array<{ appId: string; title: string }>;
-        for (const g of games) {
+      const games = getReconciledGames();
+      for (const g of games) {
+        if (g.appId && g.title) {
           this._gameTitleCache.set(g.appId, g.title);
         }
       }

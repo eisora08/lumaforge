@@ -1250,6 +1250,7 @@ export default function GameEditDialog({
     // Debrid mode — compare against current game data
     if (isDebridMode) {
       const hasChanges =
+        nameDraft !== (game?.title ?? "") ||
         appIdDraft !== (game?.appId ?? "") ||
         installDirDraft !== (game?.installDir ?? "") ||
         executablePathDraft !== (game?.executablePath ?? "") ||

@@ -128,6 +128,8 @@ const OLD_CACHE_KEYS = [
   "lumaforge-steam-store-search-cache",
   "lumaforge-steam-store-search-cache-v1",
   "lumaforge-steam-store-search-cache-v2",
+  "lumaforge-snapshot-games",
+  "lumaforge-session-history-v1",
 ];
 
 function cleanupOldCacheKeys() {

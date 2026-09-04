@@ -23,8 +23,6 @@ export type DebridGameStatus = "not-downloaded" | "downloading" | "needs-setup" 
 
 let _debridGames: LibraryGame[] = [];
 let _rawEntries = new Map<string, RepackQueryResult>();
-/** Disk JSON entries keyed by providerGameId — used to build orphan LibraryGames when catalog row is missing. */
-let _diskEntryById = new Map<string, DebridGameEntryJson>();
 let _debridFingerprint = "";
 let _scanWarning: string | null = null;
 let _scanState: "idle" | "scanning" | "done" | "error" = "idle";
@@ -200,14 +198,13 @@ function toDiskEntries(): DebridGameEntryJson[] {
     const meta = _launchMetadataByProviderGameId.get(id);
     const game = _debridGames.find((g) => g.providerGameId === id);
     const raw = _rawEntries.get(id);
-
-    const diskEntry = _diskEntryById.get(id);
     const override = _debridAppIdOverrides.get(id);
+    const diskTitle = _diskTitleByProviderGameId.get(id);
     const status = _debridGameStatuses.get(id) ?? (meta?.installDir ? "ready" : "not-downloaded");
     entries.push({
       id,
-      appId: override ? Number(override) : raw?.appId ?? (game?.appId ? Number(game.appId) : null) ?? diskEntry?.appId ?? null,
-      title: game?.title ?? raw?.title ?? diskEntry?.title ?? "Unknown",
+      appId: override ? Number(override) : raw?.appId ?? (game?.appId ? Number(game.appId) : null) ?? null,
+      title: game?.title ?? raw?.title ?? diskTitle ?? "",
       status,
       installDir: meta?.installDir ?? null,
       executablePath: meta?.executablePath ?? null,
@@ -227,12 +224,12 @@ function toDiskEntries(): DebridGameEntryJson[] {
     if (_userLibraryAppIds.has(id)) continue;
     const game = _debridGames.find((g) => g.providerGameId === id);
     const raw = _rawEntries.get(id);
-    const diskEntry = _diskEntryById.get(id);
+    const diskTitle = _diskTitleByProviderGameId.get(id);
     const status = _debridGameStatuses.get(id) ?? "ready";
     entries.push({
       id,
-      appId: raw?.appId ?? diskEntry?.appId ?? null,
-      title: game?.title ?? raw?.title ?? diskEntry?.title ?? "Unknown",
+      appId: raw?.appId ?? null,
+      title: game?.title ?? raw?.title ?? diskTitle ?? "",
       status,
       installDir: meta.installDir,
       executablePath: meta.executablePath ?? null,
@@ -530,7 +527,6 @@ export function removeDebridGameFromLibrary(...providerGameIds: string[]): numbe
     _debridGames = _debridGames.filter((g) => !(g.providerGameId && ids.has(g.providerGameId)));
     for (const id of ids) {
       _rawEntries.delete(id);
-      _diskEntryById.delete(id);
       _debridGameStatuses.delete(id);
       _launchMetadataByProviderGameId.delete(id);
       _pendingSetup.delete(id);
@@ -581,11 +577,9 @@ export function resetDebridLibraryAppIds(): void {
 
 /**
  * Derive the disk entry for a providerGameId from live in-memory state.
- * Prefers the boot-loaded map, falling back to a freshly derived entry so
- * in-session installs (which never touch `_diskEntryById`) are covered.
  */
 function deriveDiskEntry(providerGameId: string): DebridGameEntryJson | undefined {
-  return _diskEntryById.get(providerGameId) ?? toDiskEntries().find((e) => e.id === providerGameId);
+  return toDiskEntries().find((e) => e.id === providerGameId);
 }
 
 /**
@@ -972,7 +966,6 @@ export function subscribeDebridGames(listener: () => void): () => void {
 export function resetDebridGameCache(): void {
   _debridGames = [];
   _rawEntries = new Map();
-  _diskEntryById = new Map();
   _launchMetadataByProviderGameId = new Map();
   _debridGameStatuses = new Map();
   _pendingSetup = new Map();

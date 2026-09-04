@@ -36,7 +36,7 @@ export function repackEntryToDebridGame(entry: RepackQueryResult): LibraryGame {
   // launcherGameActions can fall through to isInstallable → "install".
   const mapped: LibraryGame = {
     id: libraryId,
-    title: entry.title || "Unknown Repack",
+    title: entry.title || "",
     source: "debrid",
     libraryId,
     providerId: "debrid",
