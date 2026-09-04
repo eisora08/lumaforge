@@ -973,24 +973,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             reportLibraryProgress({ phase: "updating-cache", source: "unknown" });
             await saveCachedGames(enriched, result.warnings);
 
-            // Seed games_v2 from the enriched game list so the next boot loads from games_v2 directly.
-            // This is THE write that breaks the cold-start chicken-and-egg.
-            try {
-              const { batchUpsertGamesV2 } = await import("../services/tauri");
-              const { libraryGameToGameV2 } = await import("../services/gameV2Mapper");
-              const { dedupeLibraryGames } = await import("../services/gameCacheService");
-              const deduped = dedupeLibraryGames(enriched);
-              const entries = deduped
-                .filter((g) => g.appId || g.id)
-                .map((g) => libraryGameToGameV2(g));
-              if (entries.length > 0) {
-                await batchUpsertGamesV2(entries);
-                console.log(`[LIBRARY_CONTEXT][SEED_GAMES_V2] seeded ${entries.length} games to games_v2 (from ${enriched.length} enriched)`);
-              }
-            } catch (err) {
-              console.warn("[LIBRARY_CONTEXT] seed games_v2 failed:", err);
-            }
-
             // Re-read ALL games from games_v2 (not just Steam) to avoid wiping Epic/Debrid/Manual
             const { getAllGamesV2 } = await import("../services/tauri");
             const { gameV2ToLibraryGame: g2l } = await import("../services/gameV2Mapper");
@@ -998,7 +980,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             const allLib = allV2.map((g) => g2l(g));
             applyGamesSafely(allLib.length > 0 ? allLib : enriched, "background-scan");
             setWarnings(result.warnings);
-            reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
+            reportLibraryProgress({ phase: "done", source: "steam", itemsFound: allLib.length || enriched.length });
           } catch (error) {
             console.error("[LibraryGamesContext] scan error:", error);
             reportLibraryProgress({ phase: "error", source: "steam", errors: [String(error)] });
@@ -1330,7 +1312,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       applyGamesSafely(allLib.length > 0 ? allLib : enriched, "manual-refresh", { allowReplace: true });
       setWarnings(result.warnings);
       await updateAppInfoFromGames(enriched).catch((err) => console.warn(err));
-      reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
+      reportLibraryProgress({ phase: "done", source: "steam", itemsFound: allLib.length || enriched.length });
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);
       reportLibraryProgress({ phase: "error", source: "steam", errors: [String(error)] });
