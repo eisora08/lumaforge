@@ -375,7 +375,7 @@ export default function ConsoleGridLayout({
             </div>
           ) : (
             <div className="flex h-full items-center justify-center">
-              <RichEmptyState railIndex={focusedRail >= 0 ? focusedRail : 4} />
+              <RichEmptyState railIndex={focusedRail >= 0 ? focusedRail : 5} />
             </div>
           )}
         </div>

@@ -1,11 +1,12 @@
 import {
-  Play, HardDrive, Code, Heart, LayoutGrid,
+  Sparkles, Play, HardDrive, Code, Heart, LayoutGrid,
 } from "lucide-react";
 import { getConsoleInputHints } from "./consoleInputHints";
 import type { ConsoleInputHintStyle } from "./consoleInputHints";
 import type { ConsoleBottomBarPosition } from "./consoleSettings";
 
 const CATEGORIES = [
+  { label: "New", key: "new", icon: Sparkles },
   { label: "Continue", key: "continue", icon: Play },
   { label: "Installed", key: "installed", icon: HardDrive },
   { label: "Lua", key: "lua", icon: Code },

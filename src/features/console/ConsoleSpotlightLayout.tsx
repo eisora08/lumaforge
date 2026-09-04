@@ -19,6 +19,7 @@ import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 const DEBUG_SPOTLIGHT_LAYOUT = false;
 
 const RAIL_CONFIGS = [
+  { title: "New Games", subtitle: "Recently added to your library" },
   { title: "Continue Playing", subtitle: "Jump back into your games" },
   { title: "Installed Games", subtitle: "Ready to play" },
   { title: "Lua / In Library", subtitle: "Games with Lua scripts" },
@@ -27,6 +28,7 @@ const RAIL_CONFIGS = [
 ] as const;
 
 const SECTION_LABELS: Record<string, string> = {
+  "New Games": "New",
   "Continue Playing": "Continue",
   "Installed Games": "Installed",
   "Lua / In Library": "Lua & In Library",

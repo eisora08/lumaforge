@@ -1,4 +1,4 @@
-import { Play, HardDrive, Code, Heart, LayoutGrid } from "lucide-react";
+import { Sparkles, Play, HardDrive, Code, Heart, LayoutGrid } from "lucide-react";
 
 export const EMPTY_STATE_CONFIGS: {
   icon: React.ComponentType<{ className?: string }>;
@@ -7,6 +7,13 @@ export const EMPTY_STATE_CONFIGS: {
   color: string;
   bgGlow: string;
 }[] = [
+  {
+    icon: Sparkles,
+    title: "New Games",
+    message: "Newly added games will appear here",
+    color: "text-blue-400",
+    bgGlow: "from-blue-500/10",
+  },
   {
     icon: Play,
     title: "Continue Playing",
@@ -45,7 +52,7 @@ export const EMPTY_STATE_CONFIGS: {
 ];
 
 export function RichEmptyState({ railIndex }: { railIndex: number }) {
-  const cfg = EMPTY_STATE_CONFIGS[railIndex] ?? EMPTY_STATE_CONFIGS[4];
+  const cfg = EMPTY_STATE_CONFIGS[railIndex] ?? EMPTY_STATE_CONFIGS[5];
   const Icon = cfg.icon;
   return (
     <div className="flex w-full items-center justify-center py-12">

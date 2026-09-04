@@ -785,8 +785,8 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       return;
     }
 
-    // Fallback order: continue → installed → lua → favorites → all
-    const fallbackOrder = [0, 1, 2, 3, 4];
+    // Fallback order: new → continue → installed → lua → favorites → all
+    const fallbackOrder = [0, 1, 2, 3, 4, 5];
     for (const i of fallbackOrder) {
       if (i !== preferredRail && rails[i]?.length > 0) {
         if (DEBUG_CONSOLE_ENTRY) {

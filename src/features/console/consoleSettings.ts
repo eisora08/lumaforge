@@ -23,7 +23,7 @@ export type ConsoleInputHintStyle = "xbox" | "playstation" | "keyboard" | "auto"
 
 export type ConsoleBottomBarPosition = "center" | "left" | "right";
 
-export type ConsoleStartCategory = "continue" | "installed" | "lua" | "favorites" | "all";
+export type ConsoleStartCategory = "new" | "continue" | "installed" | "lua" | "favorites" | "all";
 
 export type ConsoleTimeFormat = "12h" | "24h" | "system" | "hidden";
 

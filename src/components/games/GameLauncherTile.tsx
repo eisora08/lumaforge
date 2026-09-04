@@ -656,6 +656,22 @@ function GameLauncherTileInner({
             {t("game_tile.update", "Update")}
           </span>
         )}
+
+        {/* New badge — top-right, always visible */}
+        {(() => {
+          const _seedCompletedAt = Number(localStorage.getItem("_lumaforge_seed_completed_at") ?? "0");
+          const NEW_THRESHOLD_MS = 48 * 60 * 60 * 1000;
+          const isNew = _seedCompletedAt > 0
+            && game.createdAt != null
+            && game.createdAt > _seedCompletedAt
+            && (Date.now() - game.createdAt) < NEW_THRESHOLD_MS;
+          if (!isNew) return null;
+          return (
+            <span className="absolute right-2 top-2 rounded-full bg-blue-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-white shadow-sm">
+              NEW
+            </span>
+          );
+        })()}
       </div>
 
       {/* Right-click context menu (no visible button on card) */}
