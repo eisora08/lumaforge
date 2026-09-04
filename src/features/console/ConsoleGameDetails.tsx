@@ -844,7 +844,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     effectiveTotal,
     effectivePercent,
     isPerfected,
-  } = useConsoleAchievements(appIdStr);
+  } = useConsoleAchievements(appIdStr, game);
 
   const [animatedPercent, setAnimatedPercent] = useState(0);
   useEffect(() => {
@@ -866,7 +866,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   const releaseYear = useMemo(() => {
     if (!game?.metadata?.release_date) return null;
-    const m = game.metadata.release_date.match(/^(\d{4})/);
+    const raw = game.metadata.release_date;
+    const d = typeof raw === "string" ? raw : (raw as any)?.date ?? "";
+    const m = d.match(/^(\d{4})/);
     return m ? m[1] : null;
   }, [game]);
 

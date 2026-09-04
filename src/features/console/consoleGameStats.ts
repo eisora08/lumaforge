@@ -1,6 +1,32 @@
 import type { LibraryGame } from "../../types/libraryGame";
 import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { achievementStore } from "../../services/achievementStore";
+import type { FolderAchievementSummary } from "../../services/tauri";
+
+// Module-level cache for folder achievement data (populated by useConsoleAchievements or on demand)
+let _folderCache: FolderAchievementSummary[] | null = null;
+let _folderCachePromise: Promise<FolderAchievementSummary[]> | null = null;
+
+export function setFolderAchievementCache(rows: FolderAchievementSummary[]): void {
+  _folderCache = rows;
+}
+
+export async function ensureFolderAchievementCache(): Promise<FolderAchievementSummary[]> {
+  if (_folderCache) return _folderCache;
+  if (_folderCachePromise) return _folderCachePromise;
+  _folderCachePromise = (async () => {
+    try {
+      const { scanAchievementFolders } = await import("../../services/tauri");
+      const rows = await scanAchievementFolders();
+      _folderCache = rows;
+      return rows;
+    } catch {
+      _folderCache = [];
+      return [];
+    }
+  })();
+  return _folderCachePromise;
+}
 
 export function formatBytes(bytes?: number): string {
   if (!bytes || bytes === 0) return "Unknown";
@@ -56,12 +82,49 @@ export function getGameAchievementSummary(game: LibraryGame): {
   let unlocked = game.achievementUnlocked;
   let total = game.achievementTotal;
 
-  // Fallback: read from achievement store for games with appId but missing fields
-  if ((typeof unlocked !== "number" || typeof total !== "number" || total <= 0) && game.appId) {
-    const storeSummary = achievementStore.getSummary(game.appId);
-    if (storeSummary && storeSummary.total > 0) {
+  const needsFallback = (typeof unlocked !== "number" || typeof total !== "number" || total <= 0);
+
+  if (needsFallback) {
+    // For Epic games: extract appName from providerGameId ("ns:catalogId:appName" → "appName")
+    let epicAppName: string | null = null;
+    if (game.source === "epic" && game.providerGameId) {
+      const parts = game.providerGameId.split(":");
+      epicAppName = parts[parts.length - 1] || null;
+    }
+
+    // Try bare keys first: appId, epicAppName, libraryId, id
+    const bareKeys = [game.appId, epicAppName, game.libraryId, game.id].filter((k): k is string => !!k);
+    const KNOWN_PLATFORMS = ["epic-official", "steam-official", "steam"];
+
+    let storeSummary = undefined;
+    for (const k of bareKeys) {
+      storeSummary = achievementStore.getSummary(k);
+      if (storeSummary && storeSummary.total > 0) break;
+      storeSummary = undefined;
+    }
+    // Try composite keys (appId:platform)
+    if (!storeSummary) {
+      for (const k of bareKeys) {
+        for (const platform of KNOWN_PLATFORMS) {
+          storeSummary = achievementStore.getSummary(k, platform);
+          if (storeSummary && storeSummary.total > 0) break;
+          storeSummary = undefined;
+        }
+        if (storeSummary) break;
+      }
+    }
+    if (storeSummary) {
       unlocked = storeSummary.unlocked ?? 0;
       total = storeSummary.total;
+    }
+
+    // Fallback: try folder achievement cache (reads from disk — Epic schema path)
+    if ((!total || total <= 0) && _folderCache) {
+      const matchRow = _folderCache.find((r) => bareKeys.includes(r.appId) && r.total > 0);
+      if (matchRow) {
+        unlocked = matchRow.unlocked;
+        total = matchRow.total;
+      }
     }
   }
 

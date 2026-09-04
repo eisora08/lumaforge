@@ -140,7 +140,7 @@ export default function ConsoleGridLayout({
     effectiveTotal,
     effectivePercent,
     hasData: gridHasAchievements,
-  } = useConsoleAchievements(appIdStr);
+  } = useConsoleAchievements(appIdStr, previewGame);
 
   const [animatedPercent, setAnimatedPercent] = useState(0);
   useEffect(() => {
@@ -494,7 +494,9 @@ export default function ConsoleGridLayout({
                     <p className="mt-0.5 font-semibold text-(--color-text)">
                       {focusedGame.metadata?.release_date
                         ? (() => {
-                            const d = focusedGame.metadata!.release_date!;
+                            const raw = focusedGame.metadata!.release_date!;
+                            const d = typeof raw === "string" ? raw : (raw as any)?.date ?? "";
+                            if (!d) return "—";
                             const m = d.match(/^(\d{4})/);
                             return m ? m[1] : d;
                           })()

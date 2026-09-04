@@ -18,6 +18,7 @@ import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
 import ConsoleSearchOverlay from "./ConsoleSearchOverlay";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleGameRunningOverlay from "./ConsoleGameRunningOverlay";
+import { readEpicOverrides, subscribeEpicOverridesChanged } from "../../services/epicOverrideStore";
 import { useConsoleNavigation } from "./useConsoleNavigation";
 import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setOnGamepadAction } from "./useConsoleGamepadInput";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
@@ -85,6 +86,12 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const settledFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const focusedRailRef = useRef(-1);
+
+  // Force re-enrichment when Epic overrides change (screenshots/movies arrive async)
+  const [overrideVersion, setOverrideVersion] = useState(0);
+  useEffect(() => {
+    return subscribeEpicOverridesChanged(() => setOverrideVersion((v) => v + 1));
+  }, []);
 
   useEffect(() => {
     return () => { mountedRef.current = false; };
@@ -662,9 +669,40 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   // Merge cached metadata into game object — prefer cache (locale-aware) over library metadata
   const enrichWithMetadata = useCallback((game: LibraryGame | null): LibraryGame | null => {
-    if (!game?.appId) return game;
-    const cached = metadataCache.get(game.appId);
-    if (cached && cached.lang === i18n.language) return { ...game, metadata: cached.data };
+    if (!game) return game;
+
+    // Steam games: use metadataCache by appId
+    if (game.appId) {
+      const cached = metadataCache.get(game.appId);
+      if (cached && cached.lang === i18n.language) return { ...game, metadata: cached.data };
+      return game;
+    }
+
+    // Epic games: merge metadata from epicOverrideStore
+    if (game.source === "epic" && game.providerGameId) {
+      const overrides = readEpicOverrides(game.providerGameId);
+      if (overrides) {
+        const hasMedia = overrides.screenshots?.length || overrides.movies?.length;
+        const hasText = overrides.description || overrides.name || overrides.genres?.length;
+        if (hasMedia || hasText) {
+          const existingMeta = (game.metadata ?? {}) as Record<string, unknown>;
+          return {
+            ...game,
+            metadata: {
+              ...existingMeta,
+              ...(overrides.description ? { about_the_game: overrides.description, detailed_description: overrides.description } : {}),
+              ...(overrides.name ? { name: overrides.name } : {}),
+              ...(overrides.genres?.length ? { genres: overrides.genres } : {}),
+              ...(overrides.developers?.length ? { developer: overrides.developers[0], publishers: overrides.publishers ?? [] } : {}),
+              ...(overrides.releaseDate ? { release_date: overrides.releaseDate } : {}),
+              screenshots: overrides.screenshots ?? (existingMeta.screenshots as string[]) ?? [],
+              movies: overrides.movies ?? (existingMeta.movies ?? []) as any[],
+            } as SteamAppMetadata,
+          };
+        }
+      }
+    }
+
     return game;
   }, [metadataCache, i18n.language]);
 
@@ -796,7 +834,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   const enrichedFocusedGame = useMemo(() => enrichWithMetadata(currentFocusedGame), [currentFocusedGame, enrichWithMetadata]);
   const enrichedSettledGame = useMemo(() => enrichWithMetadata(currentSettledFocusedGame), [currentSettledFocusedGame, enrichWithMetadata]);
-  const enrichedDetailGame = useMemo(() => enrichWithMetadata(detailGame), [detailGame, enrichWithMetadata]);
+  const enrichedDetailGame = useMemo(() => enrichWithMetadata(detailGame), [detailGame, enrichWithMetadata, overrideVersion]);
 
   const sharedProps = useMemo(() => ({
     focusedGame: enrichedFocusedGame,

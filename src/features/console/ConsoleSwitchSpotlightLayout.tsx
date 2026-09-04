@@ -158,7 +158,9 @@ export default function ConsoleSwitchSpotlightLayout({
 
   const releaseYear = useMemo(() => {
     if (!focusedGame?.metadata?.release_date) return null;
-    const m = focusedGame.metadata.release_date.match(/^(\d{4})/);
+    const raw = focusedGame.metadata.release_date;
+    const d = typeof raw === "string" ? raw : (raw as any)?.date ?? "";
+    const m = d.match(/^(\d{4})/);
     return m ? m[1] : null;
   }, [focusedGame]);
 

@@ -1,18 +1,21 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { GameAchievementsSummary } from "../../types/gameAchievements";
 import type { SteamReviewSummary } from "../../types/gameReview";
+import type { LibraryGame } from "../../types/libraryGame";
 import { achievementStore } from "../../services/achievementStore";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import { resolveGameReviewSummaries } from "../../services/gameReviewResolver";
+import { scanAchievementFolders } from "../../services/tauri";
+import { setFolderAchievementCache } from "./consoleGameStats";
 
-const DEBUG_CONSOLE_ACH = false;
+const DEBUG_CONSOLE_ACH = true;
 const DEBUG_CONSOLE_REVIEW = false;
 
 const log = (flag: boolean, ...args: unknown[]) => {
   if (flag) console.log(...args);
 };
 
-export function useConsoleAchievements(appIdStr: string | null) {
+export function useConsoleAchievements(appIdStr: string | null, game?: LibraryGame | null) {
   const [state, setState] = useState<{
     appId: string | null;
     summary: GameAchievementsSummary | null;
@@ -26,30 +29,83 @@ export function useConsoleAchievements(appIdStr: string | null) {
 
   const latestAppIdRef = useRef<string | null>(null);
 
+  // Build lookup keys from game object
+  // For Epic games: extract appName from providerGameId ("ns:catalogId:appName" → "appName")
+  const epicAppName = useMemo(() => {
+    if (game?.source !== "epic" || !game?.providerGameId) return null;
+    const parts = game.providerGameId.split(":");
+    return parts[parts.length - 1] || null;
+  }, [game?.source, game?.providerGameId]);
+
+  const lookupKey = useMemo(() => {
+    if (appIdStr) return appIdStr;
+    if (epicAppName) return epicAppName;
+    if (game?.libraryId) return game.libraryId;
+    if (game?.id) return game.id;
+    return null;
+  }, [appIdStr, epicAppName, game?.libraryId, game?.id]);
+
   useEffect(() => {
-    if (!appIdStr) {
+    if (!lookupKey) {
       latestAppIdRef.current = null;
       update(null, null);
       return;
     }
 
-    const current = appIdStr;
+    let cancelled = false;
+    const current = lookupKey;
     latestAppIdRef.current = current;
     loadingRef.current.add(current);
 
-    /* Clear immediately — effects run after render, but the render-time
-       guard (state.appId !== appIdStr) already prevents stale display. */
     update(current, null);
 
-    const fromStore = achievementStore.getSummary(current);
+    // FIRST: try game object fields directly (like getGameAchievementSummary does)
+    if (game && typeof game.achievementUnlocked === "number" && typeof game.achievementTotal === "number" && game.achievementTotal > 0) {
+      const fromGame: GameAchievementsSummary = {
+        appId: current,
+        source: "local-cache",
+        total: game.achievementTotal,
+        unlocked: game.achievementUnlocked,
+        percent: game.achievementTotal > 0 ? Math.round((game.achievementUnlocked / game.achievementTotal) * 100) : 0,
+        progressAvailable: true,
+        updatedAt: game.lastUpdated ?? 0,
+        achievements: [],
+      };
+      loadingRef.current.delete(current);
+      if (latestAppIdRef.current !== current) return;
+      log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][LOAD] key=${current} source=game-fields`);
+      update(current, fromGame);
+    }
+
+    // SECOND: try achievement store — bare keys first, then composite keys with known platforms
+    const KNOWN_PLATFORMS = ["epic-official", "steam-official", "steam"];
+    const bareKeys = [appIdStr, epicAppName, game?.libraryId, game?.id].filter((k): k is string => !!k);
+    log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][STORE] key=${current} bareKeys=${JSON.stringify(bareKeys)} gameSource=${game?.source}`);
+    let fromStore: GameAchievementsSummary | undefined;
+    for (const k of bareKeys) {
+      fromStore = achievementStore.getSummary(k);
+      if (fromStore) break;
+    }
+    // If no match with bare keys, try composite keys (appId:platform)
+    if (!fromStore) {
+      for (const k of bareKeys) {
+        for (const platform of KNOWN_PLATFORMS) {
+          fromStore = achievementStore.getSummary(k, platform);
+          if (fromStore) break;
+        }
+        if (fromStore) break;
+      }
+    }
+    log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][STORE] key=${current} fromStore=${fromStore ? "FOUND" : "MISS"} total=${fromStore?.total ?? 0}`);
     if (fromStore) {
       loadingRef.current.delete(current);
       if (latestAppIdRef.current !== current) return;
-      log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][LOAD] appid=${current} source=store`);
+      log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][LOAD] key=${current} source=store`);
       update(current, fromStore);
     } else {
+      // THIRD: try snapshot — match by appId
       const snap = getCachedSnapshot();
-      const snapGame = snap?.library?.games?.find(g => g.appId === current);
+      const snapGame = appIdStr ? snap?.library?.games?.find(g => g.appId === appIdStr) : undefined;
       if (snapGame?.achievementSummary && snapGame.achievementSummary.total > 0) {
         const a = snapGame.achievementSummary;
         const fromSnap: GameAchievementsSummary = {
@@ -64,29 +120,63 @@ export function useConsoleAchievements(appIdStr: string | null) {
         };
         loadingRef.current.delete(current);
         if (latestAppIdRef.current !== current) return;
-        log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][LOAD] appid=${current} source=snapshot`);
+        log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][LOAD] key=${current} source=snapshot`);
         update(current, fromSnap);
       } else {
-        loadingRef.current.delete(current);
-        if (latestAppIdRef.current !== current) return;
-        log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][MISS] appid=${current} reason=no-store-no-snapshot`);
+        // FOURTH: try scanAchievementFolders (reads from disk — works for Epic schema path)
+        (async () => {
+          try {
+            const folderRows = await scanAchievementFolders();
+            if (cancelled || latestAppIdRef.current !== current) return;
+            setFolderAchievementCache(folderRows);
+            const matchRow = folderRows.find((r) => bareKeys.includes(r.appId) && r.total > 0);
+            if (matchRow) {
+              const fromFolder: GameAchievementsSummary = {
+                appId: matchRow.appId,
+                source: (matchRow.source === "epic" ? "epic-official" : matchRow.source) as GameAchievementsSummary["source"],
+                total: matchRow.total,
+                unlocked: matchRow.unlocked,
+                percent: matchRow.percent,
+                progressAvailable: true,
+                updatedAt: Date.now(),
+                achievements: [],
+              };
+              achievementStore.setSummary(matchRow.appId, fromFolder, matchRow.source === "epic" ? "epic-official" : "steam-official");
+              loadingRef.current.delete(current);
+              if (latestAppIdRef.current !== current) return;
+              log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][LOAD] key=${current} source=folder appId=${matchRow.appId} total=${matchRow.total} unlocked=${matchRow.unlocked}`);
+              update(current, fromFolder);
+            } else {
+              loadingRef.current.delete(current);
+              if (latestAppIdRef.current !== current) return;
+              log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][MISS] key=${current} reason=no-folder-match`);
+              const allKeys = [...achievementStore.getAllSummaries().keys()];
+              log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][STORE_DUMP] allKeys=${JSON.stringify(allKeys.slice(0, 30))}`);
+            }
+          } catch (err) {
+            loadingRef.current.delete(current);
+            if (latestAppIdRef.current !== current) return;
+            log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][MISS] key=${current} reason=folder-scan-error err=${err}`);
+          }
+        })();
       }
     }
 
     const unsub = achievementStore.subscribe((subAppId, subSummary) => {
       if (subAppId !== current) return;
       if (latestAppIdRef.current !== current) {
-        log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][IGNORE_STALE] updateAppId=${subAppId} currentAppId=${latestAppIdRef.current}`);
+        log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][IGNORE_STALE] updateKey=${subAppId} currentKey=${latestAppIdRef.current}`);
         return;
       }
-      log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][SUB] appid=${subAppId} unlocked=${subSummary?.unlocked}/${subSummary?.total}`);
+      log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][SUB] key=${subAppId} unlocked=${subSummary?.unlocked}/${subSummary?.total}`);
       update(subAppId, subSummary);
     });
     return () => {
+      cancelled = true;
       unsub();
       loadingRef.current.delete(current);
     };
-  }, [appIdStr, update]);
+  }, [lookupKey, appIdStr, epicAppName, game?.libraryId, game?.id, game?.achievementUnlocked, game?.achievementTotal, game?.lastUpdated, update]);
 
   useEffect(() => {
     if (!appIdStr || !state.summary) return;
@@ -105,13 +195,15 @@ export function useConsoleAchievements(appIdStr: string | null) {
       percent,
       progressAvailable: true,
     };
-    log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
-    achievementStore.setSummary(appIdStr, patched, "steam-official");
-    update(appIdStr, patched);
-  }, [appIdStr, state, update]);
+    log(DEBUG_CONSOLE_ACH, `[CONSOLE_ACH][DERIVED] key=${lookupKey} unlocked=${unlocked}/${total} percent=${percent}`);
+    if (lookupKey) {
+      achievementStore.setSummary(lookupKey, patched, "steam-official");
+    }
+    update(lookupKey, patched);
+  }, [lookupKey, state, update]);
 
-  /* ── Render-time guard: only return data if it belongs to current appId ── */
-  const achievementsSummary = state.appId === appIdStr ? state.summary : null;
+  /* ── Render-time guard: only return data if it belongs to current lookup key ── */
+  const achievementsSummary = state.appId === lookupKey ? state.summary : null;
 
   const derivedUnlocked = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
   const effectiveUnlocked = achievementsSummary?.unlocked ?? derivedUnlocked;
