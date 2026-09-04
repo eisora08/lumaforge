@@ -67,7 +67,7 @@ import type { SyncIndexItem } from "../../types/syncIndex";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
-import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey, formatPlaytime, subscribePlaytimeStore } from "../../services/playtimeService";
 import GameEditDialog from "./GameEditDialog";
 import ToolsModal from "../tools/ToolsModal";
 import DepotPickerModal from "../library/DepotPickerModal";
@@ -233,14 +233,33 @@ function GameLauncherTileInner({
 
   const developer = game.metadata?.developer || game.metadata?.publishers?.[0];
 
+  // Playtime — provider-aware key first, then appId fallback, then LibraryGame DB fields
+  const [, setPlaytimeVersion] = useState(0);
+  useEffect(() => {
+    const unsub = subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+    return unsub;
+  }, []);
   const cardPlaytime = useMemo(() => {
-    const entry = getPlaytimeEntryByAppId(game.appId ?? "");
-    if (!entry || entry.totalPlaytimeSeconds <= 0) return null;
-    return {
-      total: formatPlaytime(entry.totalPlaytimeSeconds),
-      lastPlayed: formatRelativeTime(entry.lastPlayedAt),
-    };
-  }, [game.appId]);
+    const byKey = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+    const entry = byKey ?? getPlaytimeEntryByAppId(game.appId ?? "");
+    if (entry && entry.totalPlaytimeSeconds > 0) {
+      return {
+        total: formatPlaytime(entry.totalPlaytimeSeconds),
+        lastPlayed: formatRelativeTime(entry.lastPlayedAt),
+      };
+    }
+    // Fallback to DB fields already on LibraryGame (from games_v2)
+    const fallbackSeconds = ((game.steamPlaytimeMinutes ?? game.localPlaytimeMinutes ?? 0) * 60);
+    const fallbackLastPlayed = game.localLastPlayedAt ?? game.steamLastPlayedAt ?? null;
+    const fallbackLastPlayedSec = fallbackLastPlayed ? Math.floor(fallbackLastPlayed / 1000) : null;
+    if (fallbackSeconds > 0 || fallbackLastPlayedSec) {
+      return {
+        total: formatPlaytime(fallbackSeconds),
+        lastPlayed: formatRelativeTime(fallbackLastPlayedSec),
+      };
+    }
+    return null;
+  }, [game.id, game.appId, game.libraryId, game.source, game.steamPlaytimeMinutes, game.localPlaytimeMinutes, game.steamLastPlayedAt, game.localLastPlayedAt]);
 
   // Source trace log â€” emitted once per instance per game
   const DEBUG_NAME_SOURCE_TRACE = false;
