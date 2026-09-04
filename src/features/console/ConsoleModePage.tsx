@@ -164,8 +164,28 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     });
   }, [enrichedGames, favoriteIds]);
 
+  const _seedCompletedAt = Number(localStorage.getItem("_lumaforge_seed_completed_at") ?? "0");
+  const NEW_THRESHOLD_MS = 48 * 60 * 60 * 1000;
+  const newGames = useMemo(() => {
+    return enrichedGames
+      .filter((g) =>
+        _seedCompletedAt > 0
+        && g.createdAt != null
+        && g.createdAt > _seedCompletedAt
+        && (Date.now() - g.createdAt) < NEW_THRESHOLD_MS
+      )
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }, [enrichedGames]);
+
   const allGames = useMemo(() => {
-    return enrichedGames;
+    return [...enrichedGames].sort((a, b) => {
+      const ca = a.createdAt ?? 0;
+      const cb = b.createdAt ?? 0;
+      if (ca && cb) return cb - ca;
+      if (ca) return -1;
+      if (cb) return 1;
+      return a.title.localeCompare(b.title);
+    });
   }, [enrichedGames]);
 
   const session = useGameSession();
@@ -201,14 +221,14 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     return scored.map((s) => s.game);
   }, [enrichedGames, session.sessions, session.getState]);
 
-  const rails = useMemo(() => [continuePlaying, installed, luaOrInLibrary, favorites, allGames], [
-    continuePlaying, installed, luaOrInLibrary, favorites, allGames,
+  const rails = useMemo(() => [newGames, continuePlaying, installed, luaOrInLibrary, favorites, allGames], [
+    newGames, continuePlaying, installed, luaOrInLibrary, favorites, allGames,
   ]);
 
   const railLengths = useMemo(() => rails.map((r) => r.length), [rails]);
 
   if (DEBUG_CONSOLE_MODE) {
-    console.log(`[CONSOLE][RAIL_COUNTS] continue=${railLengths[0]} installed=${railLengths[1]} lua=${railLengths[2]} favorites=${railLengths[3]} all=${railLengths[4]}`);
+    console.log(`[CONSOLE][RAIL_COUNTS] new=${railLengths[0]} continue=${railLengths[1]} installed=${railLengths[2]} lua=${railLengths[3]} favorites=${railLengths[4]} all=${railLengths[5]}`);
   }
 
   const onGoBack = useCallback(() => {
@@ -729,7 +749,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const handleSelectCategory = useCallback((index: number) => {
     const isEmpty = (rails[index]?.length ?? 0) === 0;
     if (DEBUG_CONSOLE_ENTRY) {
-      const CATEGORY_ORDER = ["continue", "installed", "lua", "favorites", "all"];
+      const CATEGORY_ORDER = ["new", "continue", "installed", "lua", "favorites", "all"];
       console.log(`[CONSOLE_ENTRY][CATEGORY_VALIDATE] selected=${CATEGORY_ORDER[index] ?? index} count=${rails[index]?.length ?? 0} isEmpty=${isEmpty}`);
     }
     userSelectedEmptyRef.current = isEmpty;
@@ -747,9 +767,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       return;
     }
 
-    const CATEGORY_ORDER = ["continue", "installed", "lua", "favorites", "all"];
+    const CATEGORY_ORDER = ["new", "continue", "installed", "lua", "favorites", "all"];
     const startIdx = CATEGORY_ORDER.indexOf(consoleSettings.startCategory);
-    const preferredRail = startIdx >= 0 ? startIdx : 4;
+    const preferredRail = startIdx >= 0 ? startIdx : 5;
 
     if (DEBUG_CONSOLE_ENTRY) {
       console.log(`[CONSOLE_ENTRY][CATEGORY] selected=${consoleSettings.startCategory} preferredRail=${preferredRail}`);
@@ -813,7 +833,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
 
     // Auto-fallback to first non-empty category
-    const CATEGORY_ORDER = ["continue", "installed", "lua", "favorites", "all"];
+    const CATEGORY_ORDER = ["new", "continue", "installed", "lua", "favorites", "all"];
     for (let i = 0; i < rails.length; i++) {
       if (rails[i].length > 0) {
         if (DEBUG_CONSOLE_ENTRY) {

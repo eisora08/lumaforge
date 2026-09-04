@@ -1103,6 +1103,13 @@ export async function runBootTasks(): Promise<void> {
           backgroundJobQueue.setBootCompleted(true);
           logBoot("phase=idle-ready");
 
+          // Set _seedCompletedAt marker if not exists (for NEW badge logic in ConsoleMode)
+          // Only set once — represents the moment when all initial games are loaded
+          if (!localStorage.getItem("_lumaforge_seed_completed_at")) {
+            localStorage.setItem("_lumaforge_seed_completed_at", String(Date.now()));
+            logBoot("_seedCompletedAt marker set");
+          }
+
           // Evaluate launcher achievements after boot (initialize from SQLite first)
           setTimeout(() => {
             import("../features/activity/achievements/achievementStore").then(({ initLauncherAchievementStore }) => {

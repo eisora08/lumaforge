@@ -50,7 +50,7 @@ import { isAppIdInFlight } from "../services/mediaDownloadQueue";
 import { detectAndQueueMissingMedia, isSystemToolApp } from "../services/gameCacheService";
 import { isBootReady } from "../services/appBootCoordinator";
 import { isSidebarInstalledGame } from "../services/gameCacheService";
-import { consumePendingLibraryFocus } from "../services/libraryNavigationService";
+import { consumePendingLibraryFocus, setPendingLibraryFocus } from "../services/libraryNavigationService";
 import { setAmbientSource, clearAmbientSource, getLastLibraryDetailsUrl } from "../services/ambientBackgroundStore";
 import { saveManualGame } from "../services/manualGameStore";
 import type { ManualGameEntry } from "../services/manualGameStore";
@@ -570,6 +570,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   }, [setSelectedGame, onNavigate]);
 
   const handleScanAdd = useCallback((programs: ScannedProgram[]) => {
+    let lastId: string | null = null;
     for (const p of programs) {
       const entry: ManualGameEntry = {
         id: crypto.randomUUID(),
@@ -580,6 +581,11 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
         updatedAt: Date.now(),
       };
       saveManualGame(entry);
+      lastId = `manual:${entry.id}`;
+    }
+    // Auto-scroll to the last added game
+    if (lastId) {
+      setPendingLibraryFocus(lastId);
     }
     setScannerOpen(false);
   }, []);

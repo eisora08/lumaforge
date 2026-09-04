@@ -60,6 +60,7 @@ import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { setPendingLibraryFocus } from "../../services/libraryNavigationService";
 import UninstallGameDialog from "../games/UninstallGameDialog";
 import { useConfirm } from "../../services/confirmService";
 
@@ -1011,6 +1012,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   if (variant === "add-button") {
     if (isCompactMode || isCollapsedMode) return null;
     const handleScanAdd = (programs: ScannedProgram[]) => {
+      let lastId: string | null = null;
       for (const p of programs) {
         const entry: ManualGameEntry = {
           id: crypto.randomUUID(),
@@ -1021,6 +1023,11 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           updatedAt: Date.now(),
         };
         saveManualGame(entry);
+        lastId = `manual:${entry.id}`;
+      }
+      // Auto-scroll to the last added game
+      if (lastId) {
+        setPendingLibraryFocus(lastId);
       }
       setScannerOpen(false);
     };

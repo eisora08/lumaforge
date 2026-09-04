@@ -168,6 +168,7 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
     isFavorite: game.isFavorite,
     isStandalone: game.standalone,
     sizeOnDisk: game.installSize,
+    createdAt: game.createdAt ?? undefined,
 
     // Playtime — restore to both steam and local fields so every consumer finds data regardless of source
     // DB may hold ns (epic launcher timestamps), ms (manual/epic via local session), or legacy seconds (steam via old importExternalPlaytime)
@@ -215,6 +216,7 @@ export function manualGameEntryToGameV2(entry: {
   releaseDate?: string;
   isFavorite?: boolean;
   sizeOnDisk?: number;
+  createdAt?: number;
 }): GameV2 {
   const now = Date.now();
   const libraryId = `manual:${entry.id}`;
@@ -268,7 +270,7 @@ export function manualGameEntryToGameV2(entry: {
 
     hasLua: false,
 
-    createdAt: now,
+    createdAt: entry.createdAt ?? now,
     updatedAt: now,
   };
 }
@@ -387,6 +389,7 @@ export function epicGameToGameV2(entry: {
   isInstalled?: boolean;
   isFavorite?: boolean;
   isHidden?: boolean;
+  createdAt?: number;
 }): GameV2 {
   const now = Date.now();
   const appName = entry.appName ?? "";
@@ -447,7 +450,7 @@ export function epicGameToGameV2(entry: {
 
     hasLua: false,
 
-    createdAt: now,
+    createdAt: entry.createdAt ?? now,
     updatedAt: now,
   };
 }
@@ -475,6 +478,7 @@ export function debridGameToGameV2(entry: {
   // State
   isFavorite?: boolean;
   isHidden?: boolean;
+  createdAt?: number;
 }): GameV2 {
   const now = Date.now();
   const providerGameId = entry.id;
@@ -512,7 +516,7 @@ export function debridGameToGameV2(entry: {
       repacker: entry.repacker,
     }),
 
-    createdAt: now,
+    createdAt: entry.createdAt ?? now,
     updatedAt: entry.updatedAt ?? now,
   };
 }

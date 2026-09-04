@@ -223,24 +223,26 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
         const poll = await checkInstallerStatus({ pid, installDir });
 
         if (poll.status === "ready") {
+          // DON'T auto-install. Show modal so user can click "Install Now".
+          markDebridGameExtracted(providerGameId, "", installDir, { title, appId });
           persistDebridIdentity(providerGameId, title, appId);
-          updateDebridGame(providerGameId, installDir, poll.executablePath ?? undefined);
+          // The modal will appear via _pendingCompletion subscription
           updateJobRef.current(jobId, {
             status: "done",
             progress: 100,
-            message: "Installed \u00b7 Ready to play",
+            message: "Extraction complete \u00b7 Setup required",
             progressMode: "determinate",
             installedSize: 0,
             installDir,
           });
           if (DEBUG_DEBRID_INSTALL) {
-            console.log(`[DEBRID_INSTALL] installer-done jobId=${jobId} exe=${poll.executablePath}`);
+            console.log(`[DEBRID_INSTALL] installer-done-show-modal jobId=${jobId} exe=${poll.executablePath}`);
           }
           return;
         }
 
         if (poll.status === "needs-path") {
-          // Try registry auto-detect first before showing the file picker modal
+          // Try registry auto-detect first — if found, show modal with pre-filled info
           try {
             const registryMatch = await detectInstallPathFromRegistry(title);
             if (registryMatch?.installLocation) {
@@ -255,18 +257,19 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
                     !/^UnityCrashHandler64/i.test(e.file_name),
                 ) ?? exes[0];
               if (best) {
-                updateDebridGame(providerGameId, registryMatch.installLocation, best.exe_path);
+                // Registry found exe — show modal with pre-filled path for user confirmation
+                markDebridGameExtracted(providerGameId, "", registryMatch.installLocation, { title, appId });
                 persistDebridIdentity(providerGameId, title, appId);
                 updateJobRef.current(jobId, {
                   status: "done",
                   progress: 100,
-                  message: "Installed \u00b7 Ready to play",
+                  message: "Installer finished \u00b7 Select game executable",
                   progressMode: "determinate",
                   installedSize: 0,
                   installDir: registryMatch.installLocation,
                 });
                 if (DEBUG_DEBRID_INSTALL) {
-                  console.log(`[DEBRID_INSTALL] registry-detect jobId=${jobId} location=${registryMatch.installLocation} exe=${best.exe_path}`);
+                  console.log(`[DEBRID_INSTALL] registry-detect-show-modal jobId=${jobId} location=${registryMatch.installLocation} exe=${best.exe_path}`);
                 }
                 return;
               }

@@ -74,6 +74,8 @@ export type LibraryGame = {
   steamInstalled: boolean;
   sizeOnDisk?: number;
   lastUpdated?: number;
+  /** Timestamp when this game was first added to the library (ms since epoch) */
+  createdAt?: number;
   luaScripts: InstalledLuaScript[];
   hasLua: boolean;
   isLuaActive: boolean;

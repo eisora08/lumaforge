@@ -28,6 +28,13 @@ function ConsoleGameCardRaw({ game, isFocused, isRunning, onClick, compact, vari
 
   const src = getConsoleCardSrc(game, variant);
 
+  const _seedCompletedAt = Number(localStorage.getItem("_lumaforge_seed_completed_at") ?? "0");
+  const NEW_THRESHOLD_MS = 48 * 60 * 60 * 1000;
+  const isNew = _seedCompletedAt > 0
+    && game.createdAt != null
+    && game.createdAt > _seedCompletedAt
+    && (Date.now() - game.createdAt) < NEW_THRESHOLD_MS;
+
   const widthStyle = cardWidth ? { width: `${cardWidth}px` } : undefined;
 
   const spotlightFocusStyle = isFocused && isSpotlight ? {
@@ -106,6 +113,11 @@ function ConsoleGameCardRaw({ game, isFocused, isRunning, onClick, compact, vari
 
         {/* Badges */}
         <div className="absolute bottom-2 left-2 flex flex-wrap items-center gap-1">
+          {isNew && (
+            <span className="rounded-full bg-blue-500/80 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+              NEW
+            </span>
+          )}
           {isRunning && (
             <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 animate-pulse" />

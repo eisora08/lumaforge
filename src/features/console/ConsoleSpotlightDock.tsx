@@ -1,6 +1,7 @@
-import { Play, HardDrive, Code, Heart, LayoutGrid } from "lucide-react";
+import { Sparkles, Play, HardDrive, Code, Heart, LayoutGrid } from "lucide-react";
 
 const CATEGORIES = [
+  { label: "New", key: "new", icon: Sparkles, fullLabel: "New Games" },
   { label: "Continue", key: "continue", icon: Play, fullLabel: "Continue Playing" },
   { label: "Installed", key: "installed", icon: HardDrive, fullLabel: "Installed Games" },
   { label: "Lua", key: "lua", icon: Code, fullLabel: "Lua / In Library" },

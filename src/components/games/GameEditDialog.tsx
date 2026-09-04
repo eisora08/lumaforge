@@ -32,6 +32,7 @@ import { createMediaAdapter } from "../../services/mediaAdapter";
 import { invalidateResolvedMediaCache, refreshGameDetailsArtwork } from "../../services/gameCacheService";
 import { notifyMediaUpdated } from "../../services/startupSnapshotService";
 import { resolveGameMetadata } from "../../services/gameMetadataResolver";
+import { setPendingLibraryFocus } from "../../services/libraryNavigationService";
 import { fetchIgdbArtworkDeduped, fetchRawgArtworkDeduped, fetchIgdbMetadataByName } from "../../services/storeArtworkResolver";
 import { showSuccess, showError } from "../toast/GameToast";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
@@ -61,6 +62,7 @@ export type GameEditDialogProps = {
   initialTab?: TabId;
   game?: LibraryGame | null;
   onMediaChanged?: () => void;
+  onNavigateToLibrary?: (appId?: string) => void;
   settings?: {
     rawgApiKey?: string;
     igdbClientId?: string;
@@ -154,6 +156,7 @@ export default function GameEditDialog({
   initialTab = "details",
   game,
   onMediaChanged,
+  onNavigateToLibrary,
   settings,
 }: GameEditDialogProps) {
   const { t } = useTranslation();
@@ -1048,6 +1051,10 @@ export default function GameEditDialog({
           setCreatedManualId(newId);
           setManualEntry(newEntry);
           showSuccess(t("game_edit.manual_created", "Manual game created"));
+
+          // Auto-scroll to the newly created game in the library
+          setPendingLibraryFocus(`manual:${newId}`);
+          onNavigateToLibrary?.(`manual:${newId}`);
 
           // Calculate sizeOnDisk if installDir exists
           const installDirForSize = installDirDraft.trim().replace(/^["']|["']$/g, "");

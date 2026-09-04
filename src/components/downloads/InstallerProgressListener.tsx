@@ -11,6 +11,8 @@ import { libraryCheckFixInstallations, libraryApplyGoldberg, libraryApplySteamle
 import { updateConfigForCrack } from "../../services/achievementConfigService";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
 import { saveDepotManifests } from "../../services/depotUpdateStore";
+import { setPendingLibraryFocus } from "../../services/libraryNavigationService";
+import { showSuccess } from "../toast/GameToast";
 
 export default function InstallerProgressListener() {
   const { updateJob, jobs } = useDownloadQueue();
@@ -118,6 +120,10 @@ async function handleDepotDownloadComplete(job: DownloadJob): Promise<void> {
   try {
     saveManualGame(entry);
     console.log(`[DepotComplete] registered manual game: ${entry.id}`);
+
+    // Toast notification + auto-scroll to the new game
+    showSuccess(`"${gameTitle}" downloaded and ready to play`);
+    setPendingLibraryFocus(`manual:${entry.id}`);
   } catch (err) {
     console.error("[DepotComplete] saveManualGame failed:", err);
     return;
