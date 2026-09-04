@@ -920,7 +920,7 @@ export async function resolveSteamAchievements(params: {
       const libcacheResult = await invoke<{
         n_total: number | null;
         n_achieved: number | null;
-        entries: Array<{ str_id?: string; b_achieved?: boolean; rt_unlocked?: number }>;
+        entries: Array<{ str_id?: string; str_name?: string; str_description?: string; str_image?: string; b_achieved?: boolean; rt_unlocked?: number }>;
       } | null>(
         "parse_librarycache_achievements",
         { steamPath: effectiveSteamPath, steamAccountId: effectiveAccountId, appId: appIdNum }
@@ -966,17 +966,17 @@ export async function resolveSteamAchievements(params: {
           });
         } else {
           // First boot: no KV binary schema — build achievements from librarycache entries alone
-          // str_id is the achievement API name; unlock status from b_achieved
-          // Icons/names will be enriched on next boot via ensureSchemaGenerated
+          // Use str_name for human-readable names, str_description for descriptions, str_image for icons
+          // These fields are available in the library cache JSON even when the KV binary doesn't exist
           const builtFromLibcache: GameAchievement[] = [];
           for (const entry of libcacheResult.entries ?? []) {
             if (!entry.str_id) continue;
             builtFromLibcache.push({
               id: entry.str_id,
               apiName: entry.str_id,
-              name: entry.str_id,
-              description: undefined,
-              iconUrl: undefined,
+              name: entry.str_name ?? entry.str_id,
+              description: entry.str_description,
+              iconUrl: entry.str_image,
               iconGrayUrl: undefined,
               unlocked: entry.b_achieved === false ? false : true,
               unlockTime: entry.rt_unlocked ? entry.rt_unlocked * 1000 : undefined,
@@ -984,7 +984,7 @@ export async function resolveSteamAchievements(params: {
             });
           }
           achievements = builtFromLibcache;
-          console.log(`[ACH][LIBCACHE_SCHEMA] appid=${appIdStr} built ${achievements.length} achievements from librarycache (no schema available)`);
+          console.log(`[ACH][LIBCACHE_SCHEMA] appid=${appIdStr} built ${achievements.length} achievements from librarycache (names=${achievements.filter(a => a.name !== a.apiName).length}/${achievements.length} icons=${achievements.filter(a => a.iconUrl).length}/${achievements.length})`);
         }
 
         let computedUnlocked = achievements.filter(a => a.unlocked).length;
