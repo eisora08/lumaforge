@@ -156,7 +156,7 @@ export const SPOTLIGHT_CARD_DEFAULTS: SpotlightCardStyle = {
 
 export const DEFAULT_CONSOLE_SETTINGS: ConsoleSettings = {
   layoutMode: "grid",
-  startCategory: "all",
+  startCategory: "continue",
   themeMode: "follow-app",
   backgroundTexture: "none",
   inputHints: "xbox",
