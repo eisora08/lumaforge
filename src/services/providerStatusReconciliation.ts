@@ -33,8 +33,15 @@ export function schedulePostSnapshotSteamReconciliation(
         return;
       }
 
+      const { checkSteamScanAllowed, markSteamScanComplete } = await import("./libraryGameResolver");
+      if (!checkSteamScanAllowed()) {
+        console.log("[PROVIDER][RECONCILE_SKIP] reason=ttl-valid");
+        return;
+      }
+
       const { scanSteamInstalledGames: doScan } = await import("./tauri");
       const scanResult = await doScan({ steamPath: steamRoot });
+      markSteamScanComplete();
       const installedAppIds = new Set(scanResult.map((g) => String(g.appId)));
 
       let updatedCount = 0;
@@ -106,6 +113,13 @@ export async function refreshSingleGameSteamStatus(
     const steamRoot = options.steamRoot;
     if (!steamRoot) {
       console.log(`[PROVIDER][REFRESH_SKIP] appid=${appId} reason=no-steam-root`);
+      return null;
+    }
+
+    // Check TTL — if we recently did a full scan, skip this single-app scan
+    const { checkSteamScanAllowed } = await import("./libraryGameResolver");
+    if (!checkSteamScanAllowed()) {
+      console.log(`[PROVIDER][REFRESH_SKIP] appid=${appId} reason=ttl-valid`);
       return null;
     }
 

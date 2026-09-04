@@ -168,13 +168,19 @@ export async function resolveLauncherGames(
   // ---- Step 1: Steam game detection ----
   let steamApps: Awaited<ReturnType<typeof scanSteamInstalledGames>> = [];
   try {
-    steamApps = await scanSteamInstalledGames({
-      steamPath: settings.steamRoot || undefined,
-      luaPath: settings.luaPath || undefined,
-      depotcachePath: settings.depotcachePath || undefined,
-      gameScanFolders: settings.gameScanFolders.length > 0 ? settings.gameScanFolders : undefined,
-    });
-    console.log(`[gameDetectionResolver] Steam apps found: ${steamApps.length}`);
+    const { checkSteamScanAllowed, markSteamScanComplete } = await import("./libraryGameResolver");
+    if (!checkSteamScanAllowed()) {
+      console.log("[gameDetectionResolver] Steam scan skipped — TTL valid");
+    } else {
+      steamApps = await scanSteamInstalledGames({
+        steamPath: settings.steamRoot || undefined,
+        luaPath: settings.luaPath || undefined,
+        depotcachePath: settings.depotcachePath || undefined,
+        gameScanFolders: settings.gameScanFolders.length > 0 ? settings.gameScanFolders : undefined,
+      });
+      markSteamScanComplete();
+      console.log(`[gameDetectionResolver] Steam apps found: ${steamApps.length}`);
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Steam scan failed";
     console.error("[gameDetectionResolver] Steam scan error:", error);
