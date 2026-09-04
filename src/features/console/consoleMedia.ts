@@ -62,7 +62,6 @@ export function getConsoleCardSrc(
       game.imageUrl,
     ];
     const result = candidates.find((c) => !!c && !isRawDirectoryPath(c)) ?? null;
-    if (!result) console.log(`[CONSOLE_CARD_SRC][MISS] title="${game.title}" variant=${variant} _consoleMedia=${JSON.stringify(cm ?? "undefined")}`);
     return result;
   }
 
@@ -74,7 +73,6 @@ export function getConsoleCardSrc(
       game.imageUrl,
     ];
     const result = candidates.find((c) => !!c && !isRawDirectoryPath(c)) ?? null;
-    if (!result) console.log(`[CONSOLE_CARD_SRC][MISS] title="${game.title}" variant=${variant} _consoleMedia=${JSON.stringify(cm ?? "undefined")}`);
     return result;
   }
 
@@ -86,7 +84,6 @@ export function getConsoleCardSrc(
     game.imageUrl,
   ];
   const result = candidates.find((c) => !!c && !isRawDirectoryPath(c)) ?? null;
-  if (!result) console.log(`[CONSOLE_CARD_SRC][MISS] title="${game.title}" variant=${variant} _consoleMedia=${JSON.stringify(cm ?? "undefined")}`);
   return result;
 }
 

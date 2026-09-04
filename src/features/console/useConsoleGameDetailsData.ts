@@ -7,8 +7,8 @@ import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import { resolveGameReviewSummaries } from "../../services/gameReviewResolver";
 import { scanAchievementFolders } from "../../services/tauri";
 import { setFolderAchievementCache } from "./consoleGameStats";
+import { DEBUG_CONSOLE_ACH } from "../../config/debug";
 
-const DEBUG_CONSOLE_ACH = true;
 const DEBUG_CONSOLE_REVIEW = false;
 
 const log = (flag: boolean, ...args: unknown[]) => {

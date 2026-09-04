@@ -104,12 +104,8 @@ export async function resolveConsoleMedia(appId: string): Promise<ConsoleMedia> 
 export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame[] {
   const [enriched, setEnriched] = useState<ConsoleLibraryGame[]>(() => {
     if (_mediaCache.size === 0 && games.length > 0) {
-      const seeded = seedMediaCacheFromSessionCache(games);
-      console.log(`[CONSOLE_MEDIA][SEED] seeded=${seeded} from session cache (total games=${games.length})`);
+      seedMediaCacheFromSessionCache(games);
     }
-    const hits = games.filter((g) => !!getSyncMedia(g.appId || g.id)).length;
-    const misses = games.length - hits;
-    console.log(`[CONSOLE_MEDIA][INIT] games=${games.length} cacheHits=${hits} cacheMisses=${misses} cacheSize=${_mediaCache.size}`);
     return games.map((g) => {
       const key = g.appId || g.id;
       const syncMedia = getSyncMedia(key);
@@ -225,18 +221,6 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
           return out;
         }),
       );
-
-      // Log per-game resolution result
-      for (const g of currentGames) {
-        const key = g.appId || g.id;
-        const m = mediaMap.get(key);
-        console.log(`[CONSOLE_MEDIA][RESOLVE] key=${key} title="${g.title}" source=${g.source} hasMedia=${!!m} cover=${!!m?.coverSrc} landscape=${!!m?.landscapeSrc} background=${!!m?.backgroundSrc} logo=${!!m?.logoSrc}`);
-        if (m?.coverSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} coverSrc=${m.coverSrc}`);
-        if (m?.landscapeSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} landscapeSrc=${m.landscapeSrc}`);
-        if (m?.backgroundSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} backgroundSrc=${m.backgroundSrc}`);
-        if (m?.logoSrc) console.log(`[CONSOLE_MEDIA][PATH] key=${key} logoSrc=${m.logoSrc}`);
-        if (!m) console.log(`[CONSOLE_MEDIA][MISS] key=${key} title="${g.title}" source=${g.source} coverPath=${g.coverPath ?? "null"} landscapePath=${g.landscapePath ?? "null"} backgroundPath=${g.backgroundPath ?? "null"} logoPath=${g.logoPath ?? "null"}`);
-      }
 
       if (DEBUG_EPIC_CONSOLE_MEDIA) {
         for (const g of currentGames) {
