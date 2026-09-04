@@ -101,10 +101,15 @@ function getContinueDisplayGames(
     return b.totalPlaytimeSeconds - a.totalPlaytimeSeconds;
   });
 
-  // Include games that are running, have a real lastPlayed, OR have any playtime.
-  // Steam games may have playtime from localconfig.vdf but no lastPlayed timestamp
-  // on first load — they should still appear in Continue Playing.
-  const played = result.filter((g) => g.isRunning || (g.lastPlayedAt != null && g.lastPlayedAt > 0) || g.totalPlaytimeSeconds > 0);
+  // Include games that are running, have a real lastPlayed, have any playtime,
+  // OR are installed non-Steam games (Epic/Debrid/Manual) — they don't track
+  // playtime locally but should still appear in Continue Playing.
+  const played = result.filter((g) =>
+    g.isRunning ||
+    (g.lastPlayedAt != null && g.lastPlayedAt > 0) ||
+    g.totalPlaytimeSeconds > 0 ||
+    (g.installed && g.source !== "steam" && g.source !== "lua")
+  );
 
   return played.slice(0, maxItems ?? 10);
 }

@@ -2716,6 +2716,8 @@ export async function batchUpsertGamesV2(games: GameV2[]): Promise<void> {
     console.log(`[GAMES_V2][WRITE] batch_upsert count=${games.length} bySource=${JSON.stringify(bySource)}`);
     await invoke("batch_upsert_games_v2", { games });
     console.log(`[GAMES_V2][WRITE] batch_upsert OK count=${games.length}`);
+    _allGamesV2Cache = null;
+    _allGamesV2CacheTs = 0;
   } catch (e) {
     console.warn(`[GAMES_V2][WRITE] batch_upsert FAILED count=${games.length}:`, e);
   }
@@ -2751,17 +2753,37 @@ export async function getGamesV2ByAppId(appId: string): Promise<GameV2[]> {
   }
 }
 
+// ── Session-level read cache for getAllGamesV2 ──
+// Coalesces concurrent IPC calls and caches for 5s to avoid redundant reads
+// from multiple components re-rendering on boot.
+let _allGamesV2Cache: GameV2[] | null = null;
+let _allGamesV2CacheTs = 0;
+let _allGamesV2Pending: Promise<GameV2[]> | null = null;
+const ALL_GAMES_V2_CACHE_TTL_MS = 5000;
+
 export async function getAllGamesV2(): Promise<GameV2[]> {
-  try {
-    const result = await invoke<GameV2[]>("get_all_games_v2");
-    const bySource: Record<string, number> = {};
-    for (const g of result) { const s = g.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
-    console.log(`[GAMES_V2][READ] get_all_games_v2 count=${result.length} bySource=${JSON.stringify(bySource)}`);
-    return result;
-  } catch (e) {
-    console.warn("[GAMES_V2][READ] get_all_games_v2 FAILED:", e);
-    return [];
+  const now = Date.now();
+  if (_allGamesV2Cache && (now - _allGamesV2CacheTs < ALL_GAMES_V2_CACHE_TTL_MS)) {
+    return _allGamesV2Cache;
   }
+  if (_allGamesV2Pending) return _allGamesV2Pending;
+  _allGamesV2Pending = (async () => {
+    try {
+      const result = await invoke<GameV2[]>("get_all_games_v2");
+      const bySource: Record<string, number> = {};
+      for (const g of result) { const s = g.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
+      console.log(`[GAMES_V2][READ] get_all_games_v2 count=${result.length} bySource=${JSON.stringify(bySource)}`);
+      _allGamesV2Cache = result;
+      _allGamesV2CacheTs = Date.now();
+      return result;
+    } catch (e) {
+      console.warn("[GAMES_V2][READ] get_all_games_v2 FAILED:", e);
+      return [];
+    } finally {
+      _allGamesV2Pending = null;
+    }
+  })();
+  return _allGamesV2Pending;
 }
 
 export async function getGamesV2BySource(source: string): Promise<GameV2[]> {

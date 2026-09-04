@@ -971,7 +971,26 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             });
             const enriched = await enrichWithStats(result.games);
             reportLibraryProgress({ phase: "updating-cache", source: "unknown" });
-            await saveCachedGames(enriched, result.warnings);
+
+            // Merge Steam scan with existing non-Steam games from games_v2
+            // to avoid wiping Epic/Debrid/Manual during background scan.
+            try {
+              const { getAllGamesV2, batchUpsertGamesV2 } = await import("../services/tauri");
+              const { libraryGameToGameV2 } = await import("../services/gameV2Mapper");
+              const { dedupeLibraryGames } = await import("../services/gameCacheService");
+              const existingV2 = await getAllGamesV2();
+              const nonSteamExisting = existingV2.filter((g) => g.source !== "steam" && g.source !== "lua");
+              const steamEntries = dedupeLibraryGames(enriched)
+                .filter((g) => g.appId || g.id)
+                .map((g) => libraryGameToGameV2(g));
+              const merged = [...nonSteamExisting, ...steamEntries];
+              if (merged.length > 0) {
+                await batchUpsertGamesV2(merged);
+                console.log(`[LIBRARY_CONTEXT][MERGED_PERSIST] steam=${steamEntries.length} nonSteam=${nonSteamExisting.length} total=${merged.length}`);
+              }
+            } catch (err) {
+              console.warn("[LIBRARY_CONTEXT] merged persist failed:", err);
+            }
 
             // Re-read ALL games from games_v2 (not just Steam) to avoid wiping Epic/Debrid/Manual
             const { getAllGamesV2 } = await import("../services/tauri");
@@ -1303,7 +1322,24 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         reportLibraryProgress({ phase: "done", source: "steam", itemsFound: 0 });
         return;
       }
-      await saveCachedGames(enriched, result.warnings);
+      // Merge Steam scan with existing non-Steam games from games_v2
+      try {
+        const { getAllGamesV2, batchUpsertGamesV2 } = await import("../services/tauri");
+        const { libraryGameToGameV2 } = await import("../services/gameV2Mapper");
+        const { dedupeLibraryGames } = await import("../services/gameCacheService");
+        const existingV2 = await getAllGamesV2();
+        const nonSteamExisting = existingV2.filter((g) => g.source !== "steam" && g.source !== "lua");
+        const steamEntries = dedupeLibraryGames(enriched)
+          .filter((g) => g.appId || g.id)
+          .map((g) => libraryGameToGameV2(g));
+        const merged = [...nonSteamExisting, ...steamEntries];
+        if (merged.length > 0) {
+          await batchUpsertGamesV2(merged);
+          console.log(`[LIBRARY_CONTEXT][MERGED_PERSIST] steam=${steamEntries.length} nonSteam=${nonSteamExisting.length} total=${merged.length}`);
+        }
+      } catch (err) {
+        console.warn("[LIBRARY_CONTEXT] merged persist failed:", err);
+      }
       // Re-read ALL games from games_v2 (not just Steam) to avoid wiping Epic/Debrid/Manual
       const { getAllGamesV2 } = await import("../services/tauri");
       const { gameV2ToLibraryGame: g2l } = await import("../services/gameV2Mapper");
