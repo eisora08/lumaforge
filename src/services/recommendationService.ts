@@ -83,7 +83,7 @@ export function getRecommendedGames(
   const profile = buildUserProfile(games, favoriteIds, playtimeStore);
 
   if (profile.genres.size === 0 && profile.categories.size === 0) {
-    return getFallbackRecommendations(games, favoriteIds, continuePlayingAppIds, limit);
+    return getFallbackRecommendations(games, favoriteIds, continuePlayingAppIds, playtimeStore, limit);
   }
 
   const excludeIds = new Set<string>();
@@ -96,6 +96,11 @@ export function getRecommendedGames(
     if (!game.appId) continue;
     if (excludeIds.has(game.appId)) continue;
     if (game.steamInstalled) continue;
+
+    // Skip games the user has already played significantly (>30 min)
+    const ptEntry = playtimeStore?.games[`app-${game.appId}`];
+    if (ptEntry && ptEntry.totalPlaytimeSeconds > 1800) continue;
+    if ((game.steamPlaytimeMinutes ?? 0) > 30) continue;
 
     const matchCount = scoreGame(game, profile);
     if (matchCount === 0) continue;
@@ -127,6 +132,7 @@ function getFallbackRecommendations(
   games: LibraryGame[],
   favoriteIds: Set<string>,
   continuePlayingAppIds: Set<string>,
+  playtimeStore: PlaytimeStore | null,
   limit = 10,
 ): LibraryGame[] {
   const excludeIds = new Set<string>();
@@ -134,7 +140,14 @@ function getFallbackRecommendations(
   for (const id of continuePlayingAppIds) excludeIds.add(id);
 
   const scored = games
-    .filter((g) => g.appId && !excludeIds.has(g.appId) && !g.steamInstalled)
+    .filter((g) => {
+      if (!g.appId || excludeIds.has(g.appId) || g.steamInstalled) return false;
+      // Skip games the user has already played significantly (>30 min)
+      const ptEntry = playtimeStore?.games[`app-${g.appId}`];
+      if (ptEntry && ptEntry.totalPlaytimeSeconds > 1800) return false;
+      if ((g.steamPlaytimeMinutes ?? 0) > 30) return false;
+      return true;
+    })
     .map((g) => ({
       game: g,
       playtime: g.steamPlaytimeMinutes ?? 0,

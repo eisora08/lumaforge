@@ -60,6 +60,34 @@ export function getIconCandidate(game: {
   return game.iconPath ?? game.coverPath ?? null;
 }
 
+// ── Shared formatting helpers ──
+
+/** Format playtime seconds into a human-readable string: "12h 30m", "45m", "2h" */
+export function formatPlaytimeLong(seconds: number): string {
+  if (seconds <= 0) return "";
+  const totalMins = Math.floor(seconds / 60);
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hours === 0) return `${mins}m`;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
+}
+
+/** Format a unix timestamp (seconds) into a relative "ago" string: "2h ago", "3d ago", "Just now" */
+export function formatLastAgo(ts: number | null): string | null {
+  if (ts == null || ts <= 0) return null;
+  const diff = Date.now() - ts * 1000;
+  if (diff < 0) return null;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts * 1000).toLocaleDateString();
+}
+
 /**
  * Lightweight display game that both SnapshotGame and manual LibraryGame
  * can map to. Used by dashboard sections for unified rendering.

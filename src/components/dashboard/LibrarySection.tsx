@@ -4,6 +4,9 @@ import { useTranslation } from "react-i18next";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
+import { resolvePlaytimeKey, getPlaytimeEntryByGameKey, subscribePlaytimeStore } from "../../services/playtimeService";
+import { formatPlaytimeLong } from "../../services/dashboardManualGames";
+import type { LibraryGame } from "../../types/libraryGame";
 
 const DEBUG_MEDIA_DASH = false;
 const DEBUG_NAME_DASH = false;
@@ -18,13 +21,18 @@ type Props = {
   excludeAppIds?: string[];
 };
 
-export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: Props) {
+export default function LibrarySection({ onNavigate, excludeAppIds }: Props) {
   const { t } = useTranslation();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string | null>>({});
+  const [playtimeVersion, setPlaytimeVersion] = useState(0);
 
   const [titleMap, setTitleMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+  }, []);
 
   const displayGames = useMemo(() => {
     const exclude = new Set(excludeAppIds ?? []);
@@ -57,7 +65,7 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
     const resolveAll = async () => {
       const urls: Record<string, string | null> = {};
       const titles: Record<string, string> = {};
-      const resolvedTitles = displayGames.length > 0 ? await resolveDashboardTitles(displayGames) : {};
+      const resolvedTitles = displayGames.length > 0 ? await resolveDashboardTitles(displayGames.filter((g): g is LibraryGame & { appId: string } => !!g.appId)) : {};
       for (const appId of ids) {
         if (cancelled) break;
         const game = gameById.get(appId);
@@ -85,7 +93,7 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
     };
     resolveAll();
     return () => { cancelled = true; };
-  }, [gameIdsKey]);
+  }, [gameIdsKey, playtimeVersion]);
 
   if (displayGames.length === 0) return null;
 
@@ -122,6 +130,9 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
         {deduplicateByAppId(displayGames).map((game) => {
           const imgUrl = game.appId ? (resolvedUrls[game.appId] ?? null) : null;
           const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
+          const ptKey = game.appId ? resolvePlaytimeKey(game as any) : null;
+          const ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+          const playtimeStr = ptEntry && ptEntry.totalPlaytimeSeconds > 0 ? formatPlaytimeLong(ptEntry.totalPlaytimeSeconds) : null;
 
           return (
             <div
@@ -170,6 +181,11 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
                   <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {displayTitle}
                   </h3>
+                  {playtimeStr && (
+                    <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
+                      {playtimeStr} played
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

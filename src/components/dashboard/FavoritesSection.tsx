@@ -13,6 +13,7 @@ import {
   getCardImageCandidate,
   getIconCandidate,
   resolveCanonicalGameIdentity,
+  formatPlaytimeLong,
 } from "../../services/dashboardManualGames";
 import { resolvePlaytimeKey, getPlaytimeEntryByGameKey, subscribePlaytimeStore } from "../../services/playtimeService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
@@ -241,6 +242,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {displayGames.map((game) => {
           const imgUrl = mediaUrlMap[game.stableId] ?? null;
+          const playtimeStr = game.totalPlaytimeSeconds > 0 ? formatPlaytimeLong(game.totalPlaytimeSeconds) : null;
 
           return (
             <div
@@ -300,6 +302,11 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
                   <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
+                  {playtimeStr && (
+                    <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
+                      {playtimeStr} played
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

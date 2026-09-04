@@ -17,7 +17,8 @@ import LazySectionWrapper from "../components/store/LazySectionWrapper";
 
 import { getCachedSnapshot, subscribeSnapshotUpdated } from "../services/startupSnapshotService";
 import type { StartupSnapshot } from "../services/startupSnapshotService";
-import { importSnapshotPlaytime } from "../services/playtimeService";
+import { importSnapshotPlaytime, getCachedPlaytimeStore, subscribePlaytimeStore } from "../services/playtimeService";
+import { useLibraryGames } from "../context/LibraryGamesContext";
 
 import { useGameSession } from "../context/GameSessionContext";
 import { useSettings } from "../context/SettingsContext";
@@ -63,9 +64,16 @@ export default function Home({ onNavigate }: Props) {
   const [snapshot, setSnapshot] = useState<StartupSnapshot | null>(() => getCachedSnapshot());
   
   const { sessions } = useGameSession();
+  const { games: libraryGames } = useLibraryGames();
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
   const [orchestratorHasData, setOrchestratorHasData] = useState(() => getCachedCatalogSections().length > 0);
   const { settings } = useSettings();
+  const [playtimeVersion, setPlaytimeVersion] = useState(0);
+
+  // Recompute continuePlayingAppIds when playtime store updates
+  useEffect(() => {
+    return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+  }, []);
 
   // Re-read snapshot when it's written/updated (one-shot check after boot)
   useEffect(() => {
@@ -158,16 +166,38 @@ export default function Home({ onNavigate }: Props) {
   }, [sessions]);
 
   const continuePlayingAppIds = useMemo(() => {
-    const snapshotGames = snapshot?.library?.games || [];
     const ids = new Set<string>();
+
+    // From snapshot: games with lastPlayed or installed
+    const snapshotGames = snapshot?.library?.games || [];
     for (const g of snapshotGames) {
       if (g.appId && (g.lastPlayed || g.installed)) {
         ids.add(g.appId);
       }
     }
+
+    // From playtime store: games with any playtime
+    const ptStore = getCachedPlaytimeStore();
+    if (ptStore) {
+      for (const [key, entry] of Object.entries(ptStore.games)) {
+        if (entry.totalPlaytimeSeconds > 0) {
+          // Extract appId from key formats: "app-{appId}", "steam-{id}", etc.
+          const appId = key.startsWith("app-") ? key.slice(4) : null;
+          if (appId) ids.add(appId);
+        }
+      }
+    }
+
+    // From libraryGames: installed non-Steam games (Epic/Debrid/Manual)
+    for (const g of libraryGames) {
+      if (g.appId && g.isInstalled && g.source !== "steam" && g.source !== "lua") {
+        ids.add(g.appId);
+      }
+    }
+
     if (runningAppId) ids.add(runningAppId);
     return ids;
-  }, [snapshot, runningAppId]);
+  }, [snapshot, runningAppId, libraryGames, playtimeVersion]);
 
   
 

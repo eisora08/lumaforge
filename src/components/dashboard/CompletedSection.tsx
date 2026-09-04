@@ -8,6 +8,7 @@ import {
   type DashboardDisplayGame,
   manualToDisplayGame,
   getCardImageCandidate,
+  formatPlaytimeLong,
 } from "../../services/dashboardManualGames";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
@@ -30,20 +31,6 @@ function isCompleted(game: LibraryGame): boolean {
     ? getManualGame(game.libraryId)?.completionStatus
     : undefined;
   return getEffectiveCompletionStatus(game, userStatus) === "completed";
-}
-
-function formatLastPlayed(ts: number | null): string | null {
-  if (ts == null || ts <= 0) return null;
-  const diff = Date.now() - ts * 1000;
-  if (diff < 0) return null;
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins} min`;
-  if (hours < 24) return `${hours}h`;
-  if (days < 7) return `${days}d`;
-  return new Date(ts * 1000).toLocaleDateString();
 }
 
 export default function CompletedSection({ onNavigate, maxItems }: Props) {
@@ -143,7 +130,7 @@ export default function CompletedSection({ onNavigate, maxItems }: Props) {
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {displayGames.map((game) => {
           const imgUrl = mediaUrlMap[game.stableId] ?? null;
-          const lastPlayedStr = formatLastPlayed(game.lastPlayedAt);
+          const playtimeStr = game.totalPlaytimeSeconds > 0 ? formatPlaytimeLong(game.totalPlaytimeSeconds) : null;
 
           return (
             <div
@@ -190,9 +177,9 @@ export default function CompletedSection({ onNavigate, maxItems }: Props) {
                   <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
-                  {lastPlayedStr && (
+                  {playtimeStr && (
                     <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
-                      {lastPlayedStr}
+                      {playtimeStr} total
                     </span>
                   )}
                 </div>

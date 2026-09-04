@@ -12,6 +12,7 @@ import {
   manualToDisplayGame,
   getNonSnapshotGamesForDashboard,
   getCardImageCandidate,
+  formatPlaytimeLong,
 } from "../../services/dashboardManualGames";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
@@ -64,16 +65,6 @@ function getTopPlayedGames(
   result.sort((a, b) => b.totalPlaytimeSeconds - a.totalPlaytimeSeconds);
 
   return result.slice(0, maxItems ?? 10);
-}
-
-function formatPlaytime(seconds: number): string {
-  if (seconds <= 0) return "";
-  const mins = Math.floor(seconds / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const rem = mins % 60;
-  if (rem === 0) return `${hours}h`;
-  return `${hours}h ${rem}m`;
 }
 
 export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, maxItems }: Props) {
@@ -172,7 +163,7 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, 
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {displayGames.map((game) => {
           const imgUrl = mediaUrlMap[game.stableId] ?? null;
-          const totalStr = formatPlaytime(game.totalPlaytimeSeconds);
+          const playtimeStr = formatPlaytimeLong(game.totalPlaytimeSeconds);
 
           return (
             <div
@@ -216,9 +207,9 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, 
                   <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
-                  {totalStr && (
+                  {playtimeStr && (
                     <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
-                      {totalStr} {t("store.badges.played", "played")}
+                      {playtimeStr} played
                     </span>
                   )}
                 </div>

@@ -12,6 +12,8 @@ import {
   manualToDisplayGame,
   getNonSnapshotGamesForDashboard,
   getCardImageCandidate,
+  formatPlaytimeLong,
+  formatLastAgo,
 } from "../../services/dashboardManualGames";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { resolveGameMediaUrl } from "../../services/gameCacheService";
@@ -112,20 +114,6 @@ function getContinueDisplayGames(
   );
 
   return played.slice(0, maxItems ?? 10);
-}
-
-function formatLastPlayed(ts: number | null): string | null {
-  if (ts == null || ts <= 0) return null;
-  const diff = Date.now() - ts * 1000;
-  if (diff < 0) return null; // future timestamp — invalid
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins} min`;
-  if (hours < 24) return `${hours}h`;
-  if (days < 7) return `${days}d`;
-  return new Date(ts * 1000).toLocaleDateString();
 }
 
 export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAppId, maxItems }: Props) {
@@ -300,10 +288,9 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {displayGames.map((game) => {
           const imgUrl = mediaUrlMap[game.stableId] ?? null;
-          const lastPlayedStr = formatLastPlayed(game.lastPlayedAt);
-          const totalMinutes = game.totalPlaytimeSeconds > 0
-            ? Math.floor(game.totalPlaytimeSeconds / 60)
-            : null;
+          const lastAgoStr = formatLastAgo(game.lastPlayedAt);
+          const playtimeStr = game.totalPlaytimeSeconds > 0 ? formatPlaytimeLong(game.totalPlaytimeSeconds) : null;
+          const hasPlaytime = game.totalPlaytimeSeconds > 0;
 
           return (
             <div
@@ -341,16 +328,19 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                   <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    {lastPlayedStr && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    {lastAgoStr && (
                       <span className="text-[11px] text-(--color-muted)">
-                        {lastPlayedStr}
+                        {hasPlaytime ? `Played ${lastAgoStr}` : lastAgoStr}
                       </span>
                     )}
-                    {totalMinutes != null && totalMinutes > 0 && (
-                      <span className="text-[11px] text-(--color-muted)">
-                        {totalMinutes}m
-                      </span>
+                    {playtimeStr && (
+                      <>
+                        <span className="text-[11px] text-(--color-muted)">·</span>
+                        <span className="text-[11px] text-(--color-muted)">
+                          {playtimeStr} total
+                        </span>
+                      </>
                     )}
                   </div>
                   <button
@@ -358,7 +348,9 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                     className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent)/10 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
                   >
                     <Play className="h-3 w-3" />
-                    {t("dashboard.game_hero.play", "Play")}
+                    {hasPlaytime
+                      ? t("dashboard.resume", "Resume")
+                      : t("dashboard.game_hero.play", "Play")}
                   </button>
                 </div>
               </div>
