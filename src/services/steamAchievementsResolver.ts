@@ -1028,15 +1028,14 @@ export async function resolveSteamAchievements(params: {
             let isUnlocked = false;
             let unlockTime: number | undefined;
             if (entry.stat_id != null && entry.bit != null) {
-              const ts = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
-              if (ts) {
-                // Timestamp is authoritative (matches Rust generate_achievement_schema logic)
+              // Bitmask is authoritative — Steam clears bits when resetting achievements
+              const statValue = statsMap.get(entry.stat_id) ?? 0;
+              const bitSet = ((statValue >>> entry.bit) & 1) === 1;
+              if (bitSet) {
                 isUnlocked = true;
-                unlockTime = ts * 1000;
-              } else {
-                // Fallback: bitmask check
-                const statValue = statsMap.get(entry.stat_id) ?? 0;
-                isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
+                // Timestamp is supplementary (provides unlock time, not unlock status)
+                const ts = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
+                if (ts) unlockTime = ts * 1000;
               }
             }
             if (isUnlocked) unlocked++;
@@ -1158,6 +1157,7 @@ export async function resolveSteamAchievements(params: {
               iconGrayUrl: schema.icongray,
               unlocked: crackState?.unlocked ?? false,
               unlockTime: crackState?.unlockTime,
+              rarityPercent: globalPctMap[apiName] ?? undefined,
             });
           }
           const oldCount = crackData.achievements.length;
@@ -1169,6 +1169,12 @@ export async function resolveSteamAchievements(params: {
 
         // Crack reader found real data — force platform to "steam"
         readPlatform = "steam";
+        // Enrich crack achievements with rarity from globalPctMap (fetched at line ~989)
+        for (const ach of crackData.achievements) {
+          if (ach.rarityPercent == null && globalPctMap[ach.apiName] != null) {
+            ach.rarityPercent = globalPctMap[ach.apiName];
+          }
+        }
         localProgressSummary = {
           appId: appIdStr,
           achievements: crackData.achievements,
@@ -1357,8 +1363,11 @@ export async function resolveSteamAchievements(params: {
 
   // CRITICAL GUARD: Never overwrite existing progress with schema-only data.
   // If the store already has progress_available=true data, keep it.
+  // EXCEPTION: crack-sourced data (crack-stale, crack-tenoke-user-stats, etc.) is NOT
+  // preserved — if the crack file is gone/empty, stale progress must be cleared.
   const existingStore = achievementStore.getSummary(appIdStr, params.platform);
-  if (existingStore?.progressAvailable && !summary.progressAvailable && !params.forceRefresh) {
+  if (existingStore?.progressAvailable && !summary.progressAvailable && !params.forceRefresh
+      && !existingStore.source?.startsWith("crack")) {
     console.log(`[ACH][PROGRESS_PRESERVE] appid=${appIdStr} keeping existing ${existingStore.unlocked}/${existingStore.total} source=${existingStore.source} over schema-only ${summary.unlocked}/${summary.total}`);
     // Still write the enriched metadata (icons, names) from the new summary to the store,
     // but preserve the progress counts from the existing store
@@ -1388,10 +1397,12 @@ export async function resolveSteamAchievements(params: {
     // Protect against overwriting cache with no-progress result when valid progress exists
     // Covers: schema-only, appcache-unparseable, any source with progressAvailable=false
     // SKIP when forceRefresh=true — manual refresh should NOT preserve stale progress
+    // EXCEPTION: crack-sourced data — if the crack file is gone/empty, stale progress must be cleared
     if (!summary.progressAvailable && !params.forceRefresh) {
       try {
         const existing = await readAchievementCache(appIdNum, readPlatform);
-        if (existing?.summary?.progress_available === true) {
+        if (existing?.summary?.progress_available === true
+            && !(existing.summary.source ?? "").startsWith("crack")) {
           const existingUnlocked = existing.summary.unlocked ?? 0;
           const existingTotal = existing.summary.total ?? 0;
           console.debug(`[ACH][CACHE] write protected reason=would-downgrade-progress appid=${appIdStr} (existing progress_available=true source=${existing.summary.source} unlocked=${existingUnlocked}/${existingTotal} new-source=${summary.source})`);

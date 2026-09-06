@@ -861,7 +861,7 @@ class AchievementStoreImpl {
           // Trust incoming unlock state — never downgrade from stale disk cache
           unlocked: entry.unlocked,
           unlock_time: entry.unlockTime ? Math.floor(entry.unlockTime / 1000) : existingAch?.unlockTime ?? entry.unlockTime,
-          rarity_percent: entry.rarityPercent,
+          rarity_percent: entry.rarityPercent ?? diskAch?.rarity_percent ?? existingAch?.rarityPercent,
           // Preserve schema fields from disk when entry is missing them
           stat_id: entry.statId ?? diskAch?.stat_id ?? existingAch?.statId,
           bit: entry.bit ?? diskAch?.bit ?? existingAch?.bit,

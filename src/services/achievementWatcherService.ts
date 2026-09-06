@@ -1090,6 +1090,7 @@ class AchievementWatcherService {
       // Build ProgressPatch from crack data
       const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
       const nameMap = new Map<string, string>();
+      const rarityMap = new Map<string, number>();
       for (const ach of crackData.achievements) {
         progressMap.set(ach.apiName, {
           unlocked: ach.unlocked,
@@ -1099,6 +1100,21 @@ class AchievementWatcherService {
         });
         if (ach.name && ach.name !== ach.apiName) {
           nameMap.set(ach.apiName, ach.name);
+        }
+        if (ach.rarityPercent != null) {
+          rarityMap.set(ach.apiName, ach.rarityPercent);
+        }
+      }
+
+      // Also pull rarity from the in-memory store if crack data lacks it
+      if (rarityMap.size === 0) {
+        const existing = achievementStore.getSummary(appId, "steam");
+        if (existing?.achievements) {
+          for (const a of existing.achievements) {
+            if (a.rarityPercent != null) {
+              rarityMap.set(a.apiName, a.rarityPercent);
+            }
+          }
         }
       }
 
@@ -1110,6 +1126,7 @@ class AchievementWatcherService {
         authoritative: true,
         source: "crack",
         ...(nameMap.size > 0 ? { nameMap } : {}),
+        ...(rarityMap.size > 0 ? { rarityMap } : {}),
       };
 
       const result = achievementStore.applyProgressPatch(appId, patch, traceId, this.resolvePlatform(appId, "steam"));
@@ -1311,19 +1328,20 @@ class AchievementWatcherService {
 
             for (const entry of schemaEntries) {
               if (entry.stat_id == null || entry.bit == null) continue;
-              const timestamp = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
-              let isUnlocked: boolean;
-              if (timestamp) {
-                // Timestamp is authoritative (matches Rust generate_achievement_schema logic)
+              // Bitmask is authoritative — Steam clears bits when resetting achievements
+              const statValue = statsMap.get(entry.stat_id) ?? 0;
+              const bitSet = ((statValue >>> entry.bit) & 1) === 1;
+              let isUnlocked = false;
+              let unlockTime: number | undefined;
+              if (bitSet) {
                 isUnlocked = true;
-              } else {
-                const statValue = statsMap.get(entry.stat_id) ?? 0;
-                isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
+                // Timestamp is supplementary (provides unlock time, not unlock status)
+                unlockTime = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
               }
               if (isUnlocked) unlocked++;
               progressMap.set(entry.api_name, {
                 unlocked: isUnlocked,
-                unlockTime: timestamp,
+                unlockTime,
               });
             }
 
