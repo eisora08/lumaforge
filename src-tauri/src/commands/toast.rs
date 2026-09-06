@@ -274,7 +274,7 @@ pub fn show_session_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0, 320.0)
+                .inner_size(480.0, 380.0)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
