@@ -1021,8 +1021,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       } catch { return undefined; }
     }
 
-    let imageUrl: string | undefined;   // background-first for overlay card (360×160, object-fit: cover)
-    let heroUrl: string | undefined;    // background-first (summary overlay hero)
+    let imageUrl: string | undefined;   // landscape-first for overlay card (420×200, object-fit: cover)
+    let heroUrl: string | undefined;    // landscape-first (summary overlay hero)
     let iconUrl: string | undefined;    // icon-first (HUD chip)
 
     if (game.source === "manual" && game.providerGameId) {
@@ -1040,9 +1040,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
       // HUD chip: icon first (compact thumbnail)
       iconUrl = resolvedIcon ?? resolvedLandscape ?? resolvedBackground;
-      // Overlay card (360×160): background first, landscape second — NO cover
-      heroUrl = resolvedBackground ?? resolvedLandscape;
-      imageUrl = resolvedBackground ?? resolvedLandscape;
+      // Overlay card: landscape first, background second — NO cover
+      heroUrl = resolvedLandscape ?? resolvedBackground;
+      imageUrl = resolvedLandscape ?? resolvedBackground;
 
       // Fallback: manual game with appId — local appinfo media (work offline)
       if (game.appId && (!imageUrl || !heroUrl || !iconUrl)) {
@@ -1050,8 +1050,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           const { loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
           const appInfo = await loadGameAppInfoWithMediaFallback(String(game.appId));
           if (appInfo?.media) {
-            if (!imageUrl) imageUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
-            if (!heroUrl) heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
+            if (!imageUrl) imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
+            if (!heroUrl) heroUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
             if (!iconUrl) iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
           }
         } catch { /* non-critical */ }
@@ -1074,8 +1074,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       ]);
 
       iconUrl = resolvedIcon ?? resolvedLandscape ?? resolvedBackground;
-      heroUrl = resolvedBackground ?? resolvedLandscape;
-      imageUrl = resolvedBackground ?? resolvedLandscape;
+      heroUrl = resolvedLandscape ?? resolvedBackground;
+      imageUrl = resolvedLandscape ?? resolvedBackground;
     } else if (game.source === "debrid") {
       // Debrid games: prefer local media (work offline), fall back to Steam CDN.
       const { buildSteamCdnUrl, loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
@@ -1088,19 +1088,19 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         try {
           const appInfo = await loadGameAppInfoWithMediaFallback(appIdStr);
           if (appInfo?.media) {
-            imageUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
-            heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
+            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
+            heroUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
             iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
           }
         } catch { /* non-critical */ }
       }
       // Fallback to CDN URLs (require internet)
       if (!imageUrl) {
-        const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || cdnCapsule || cdnHero || undefined;
+        const rawBestUrl = game.metadata?.header_image || game.metadata?.background_image || game.metadata?.library_hero_image || game.metadata?.hero_image || game.metadata?.capsule_image_v5 || game.imageUrl || cdnCapsule || cdnHero || undefined;
         imageUrl = (await resolveUrl(rawBestUrl, "steam")) ?? cdnCapsule ?? cdnHero;
       }
       if (!heroUrl) {
-        const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || cdnHero || cdnCapsule || undefined;
+        const rawBestUrl = game.metadata?.header_image || game.metadata?.background_image || game.metadata?.library_hero_image || game.metadata?.hero_image || game.metadata?.capsule_image_v5 || game.imageUrl || cdnHero || cdnCapsule || undefined;
         heroUrl = (await resolveUrl(rawBestUrl, "steam")) ?? cdnHero ?? cdnCapsule;
       }
       if (!iconUrl) iconUrl = (await resolveUrl(game.iconPath, "steam")) ?? cdnLogo ?? imageUrl;
@@ -1111,15 +1111,15 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         try {
           const appInfo = await loadGameAppInfoWithMediaFallback(appIdStr);
           if (appInfo?.media) {
-            imageUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
-            heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
+            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
+            heroUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
             iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
           }
         } catch { /* non-critical */ }
       }
       // Fallback to metadata HTTP URLs (require internet)
       if (!imageUrl) {
-        const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
+        const rawBestUrl = game.metadata?.header_image || game.metadata?.background_image || game.metadata?.library_hero_image || game.metadata?.hero_image || game.metadata?.capsule_image_v5 || game.imageUrl || undefined;
         imageUrl = await resolveUrl(rawBestUrl, "steam");
       }
       if (!heroUrl) heroUrl = imageUrl;

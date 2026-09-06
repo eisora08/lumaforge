@@ -203,6 +203,8 @@
     "overlay_window_desc": "Use a transparent always-on-top overlay window for notifications.",
     "overlay_position": "Overlay position",
     "overlay_position_desc": "Choose where overlay notifications appear.",
+    "overlay_scale": "Overlay size",
+    "overlay_scale_desc": "Scale the overlay notification window. 1.0x is the default.",
     "test_overlay": "Test overlay",
     "test_overlay_desc": "Preview how the overlay looks with your current theme and surface style.",
     "test_overlay_btn": "Test",

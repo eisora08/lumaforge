@@ -12,9 +12,11 @@ pub fn show_achievement_overlay(
     duration: Option<u64>,
     theme_vars: Option<serde_json::Value>,
     overlay_position: Option<String>,
+    overlay_scale: Option<f64>,
 ) -> Result<(), String> {
     eprintln!("[ACH][OVERLAY][RUST] command_start");
 
+    let scale = overlay_scale.unwrap_or(1.0).clamp(0.5, 2.0);
     let dur = duration.unwrap_or(4500);
     let mut data = serde_json::json!({
         "name": name,
@@ -30,6 +32,7 @@ pub fn show_achievement_overlay(
     }
     let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
     data["overlayPosition"] = serde_json::Value::String(position.clone());
+    data["scale"] = serde_json::json!(scale);
     let js = format!(
         "window.__showAchievementToast({})",
         serde_json::to_string(&data).unwrap()
@@ -59,7 +62,7 @@ pub fn show_achievement_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0, 140.0)
+                .inner_size(420.0 * scale, 140.0 * scale)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
@@ -124,9 +127,11 @@ pub fn show_achievement_overlay_batch(
     max_duration: u64,
     theme_vars: Option<serde_json::Value>,
     overlay_position: Option<String>,
+    overlay_scale: Option<f64>,
 ) -> Result<(), String> {
     eprintln!("[ACH][OVERLAY_BATCH][RUST] command_start count={}", toasts.len());
 
+    let scale = overlay_scale.unwrap_or(1.0).clamp(0.5, 2.0);
     let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
     let batch_data = serde_json::json!({
         "toasts": toasts,
@@ -137,6 +142,7 @@ pub fn show_achievement_overlay_batch(
         data["themeVars"] = vars;
     }
     data["overlayPosition"] = serde_json::Value::String(position.clone());
+    data["scale"] = serde_json::json!(scale);
     let js = format!(
         "window.__showAchievementBatchToast({})",
         serde_json::to_string(&data).unwrap()
@@ -166,7 +172,7 @@ pub fn show_achievement_overlay_batch(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0, 140.0)
+                .inner_size(420.0 * scale, 140.0 * scale)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
@@ -228,9 +234,11 @@ pub fn show_session_overlay(
     duration: Option<u64>,
     theme_vars: Option<serde_json::Value>,
     overlay_position: Option<String>,
+    overlay_scale: Option<f64>,
 ) -> Result<(), String> {
     eprintln!("[SESSION][OVERLAY][RUST] command_start type={}", session_type);
 
+    let scale = overlay_scale.unwrap_or(1.0).clamp(0.5, 2.0);
     let dur = duration.unwrap_or(if session_type == "launch" { 3000 } else { 4000 });
     let mut data = serde_json::json!({
         "sessionType": session_type,
@@ -245,6 +253,7 @@ pub fn show_session_overlay(
     }
     let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
     data["overlayPosition"] = serde_json::Value::String(position.clone());
+    data["scale"] = serde_json::json!(scale);
     let js = format!(
         "window.__showSessionToast({})",
         serde_json::to_string(&data).unwrap()
@@ -274,7 +283,7 @@ pub fn show_session_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(480.0, 380.0)
+                .inner_size(420.0 * scale, 340.0 * scale)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)

@@ -46,6 +46,7 @@ export type AppSettings = {
   gameSessionOverlayEnabled: boolean;
   gameSessionHudEnabled: boolean;
   overlayNotificationPosition: "top-right" | "top-left" | "bottom-right" | "bottom-left" | "top-center" | "bottom-center";
+  overlayNotificationScale: number;
   achievementAutoSyncEnabled: boolean;
   achievementAutoSyncIntervalSeconds: number;
   libraryCardArtworkMode: "landscape" | "poster";

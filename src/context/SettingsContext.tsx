@@ -60,6 +60,7 @@ export const defaultSettings: AppSettings = {
   gameSessionOverlayEnabled: true,
   gameSessionHudEnabled: false,
   overlayNotificationPosition: "top-center",
+  overlayNotificationScale: 1,
   achievementAutoSyncEnabled: true,
   achievementAutoSyncIntervalSeconds: 10,
   libraryCardArtworkMode: "poster",

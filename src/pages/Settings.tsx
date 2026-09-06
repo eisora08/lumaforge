@@ -784,6 +784,31 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       </div>
                     </div>
 
+                    <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
+                      <div className="space-y-0.5">
+                        <label className="text-sm font-medium text-(--color-text)">
+                          {t("settings.overlay_scale")}
+                        </label>
+                        <p className="text-xs text-(--color-muted)">
+                          {t("settings.overlay_scale_desc")}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={0.7}
+                          max={1.5}
+                          step={0.05}
+                          value={settings.overlayNotificationScale ?? 1}
+                          onChange={(e) => updateSetting("overlayNotificationScale", Number(e.target.value))}
+                          className="w-24 accent-(--color-accent)"
+                        />
+                        <span className="min-w-[3ch] text-right text-xs font-medium text-(--color-text)">
+                          {(settings.overlayNotificationScale ?? 1).toFixed(2)}x
+                        </span>
+                      </div>
+                    </div>
+
                     <ToggleOption
                       label={t("settings.hud")}
                       description={t("settings.hud_desc")}

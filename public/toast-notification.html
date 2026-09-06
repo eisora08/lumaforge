@@ -63,9 +63,9 @@
     }
 
     .toast.achieve {
-      width: 320px;
-      min-width: 320px;
-      max-width: 320px;
+      width: var(--ach-card-width, 320px);
+      min-width: var(--ach-card-width, 320px);
+      max-width: var(--ach-card-width, 320px);
       border-radius: 16px;
       padding: 12px 16px;
       background: color-mix(in srgb, var(--ach-bg) 95%, transparent);
@@ -233,9 +233,10 @@
     }
 
     .toast.session {
-      width: 420px;
-      min-width: 420px;
-      max-width: 420px;
+      width: var(--card-width, 420px);
+      min-width: var(--card-width, 420px);
+      max-width: var(--card-width, 420px);
+      height: var(--card-height, 340px);
       border-radius: 18px;
       padding: 0;
       overflow: hidden;
@@ -246,6 +247,8 @@
       -webkit-backdrop-filter: blur(24px);
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
       animation: achToastEntry 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      display: flex;
+      flex-direction: column;
     }
 
     .toast.session.exit {
@@ -280,7 +283,8 @@
     }
 
     .session-image-wrap {
-      height: 220px;
+      flex: 1;
+      min-height: var(--img-min-height, 140px);
       overflow: hidden;
       background: rgba(255, 255, 255, 0.03);
       position: relative;
@@ -301,7 +305,8 @@
     }
 
     .session-icon-fallback {
-      height: 120px;
+      flex: 1;
+      min-height: var(--img-min-height, 100px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -310,8 +315,14 @@
     }
 
     .session-body {
-      padding: 14px 20px 16px;
+      padding: 18px 22px 20px;
       text-align: center;
+      min-height: 100px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
 
     .session-title {
@@ -356,29 +367,6 @@
     .session-duration {
       font-weight: 600;
       color: var(--ach-text, #fff);
-    }
-
-    .session-close-btn {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      width: 28px;
-      height: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 8px;
-      border: none;
-      background: rgba(0, 0, 0, 0.4);
-      color: rgba(255, 255, 255, 0.5);
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-      z-index: 20;
-    }
-
-    .session-close-btn:hover {
-      background: rgba(255, 255, 255, 0.15);
-      color: #fff;
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -752,6 +740,15 @@
       setOverlayPosition(data.overlayPosition);
       applyThemeVars(data.themeVars);
 
+      // Apply scale — base card 420×140
+      var scale = Number(data.scale) || 1;
+      if (scale < 0.5) scale = 0.5;
+      if (scale > 2) scale = 2;
+      var root = document.documentElement;
+      root.style.setProperty('--card-width', Math.round(420 * scale) + 'px');
+      root.style.setProperty('--card-height', Math.round(140 * scale) + 'px');
+      root.style.setProperty('--ach-card-width', Math.round(320 * scale) + 'px');
+
       var duration = data.duration || 4500;
       var rarity = (data.rarity != null && Number.isFinite(data.rarity)) ? data.rarity : null;
 
@@ -880,6 +877,15 @@
 
       setOverlayPosition(data.overlayPosition);
       applyThemeVars(data.themeVars);
+
+      // Apply scale — base card 420×140
+      var scale = Number(data.scale) || 1;
+      if (scale < 0.5) scale = 0.5;
+      if (scale > 2) scale = 2;
+      var root = document.documentElement;
+      root.style.setProperty('--card-width', Math.round(420 * scale) + 'px');
+      root.style.setProperty('--card-height', Math.round(140 * scale) + 'px');
+      root.style.setProperty('--ach-card-width', Math.round(320 * scale) + 'px');
 
       var toasts = data.toasts || [];
       var perToastDuration = data.maxDuration || 4500;
@@ -1015,6 +1021,15 @@
       setOverlayPosition(data.overlayPosition);
       applyThemeVars(data.themeVars);
 
+      // Apply scale — base card 420×340, image ~200px
+      var scale = Number(data.scale) || 1;
+      if (scale < 0.5) scale = 0.5;
+      if (scale > 2) scale = 2;
+      var root = document.documentElement;
+      root.style.setProperty('--card-width', Math.round(420 * scale) + 'px');
+      root.style.setProperty('--card-height', Math.round(340 * scale) + 'px');
+      root.style.setProperty('--img-min-height', Math.round(140 * scale) + 'px');
+
       var duration = data.duration || 4000;
       var isLaunch = data.sessionType === 'launch';
 
@@ -1084,9 +1099,6 @@
       var toast = document.createElement('div');
       toast.className = 'toast session';
       toast.innerHTML =
-        '<button type="button" class="session-close-btn" onclick="dismissToast(this.closest(\'.toast\'))" aria-label="Dismiss">' +
-          '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-        '</button>' +
         imageHtml +
         '<div class="session-body">' +
           '<div class="session-title">' + escapeHtml(data.gameTitle) + providerStr + '</div>' +
@@ -1145,6 +1157,39 @@
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
     }
+
+    // ESC key dismiss
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' || e.code === 'Escape') {
+        var toast = document.querySelector('.toast');
+        if (toast) dismissToast(toast);
+      }
+    });
+
+    // Gamepad B (Xbox) / O (PlayStation) dismiss — polls only while toast visible
+    var gamepadPrevState = {};
+    function pollGamepadDismiss() {
+      var toast = document.querySelector('.toast');
+      if (toast) {
+        var gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (var i = 0; i < gamepads.length; i++) {
+          var gp = gamepads[i];
+          if (!gp) continue;
+          // Button 0 = A (Xbox) / × (PS), Button 1 = B (Xbox) / O (PS)
+          // We use button 1 for "back/dismiss" (matches console convention)
+          var btn = gp.buttons[1];
+          if (!btn) continue;
+          var pressed = btn.pressed || btn.value > 0.5;
+          var key = 'gp' + i + '_b';
+          if (pressed && !gamepadPrevState[key]) {
+            dismissToast(toast);
+          }
+          gamepadPrevState[key] = pressed;
+        }
+      }
+      requestAnimationFrame(pollGamepadDismiss);
+    }
+    requestAnimationFrame(pollGamepadDismiss);
   </script>
 </body>
 

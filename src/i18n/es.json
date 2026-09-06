@@ -203,6 +203,8 @@
     "overlay_window_desc": "Usa una ventana overlay transparente siempre visible para notificaciones.",
     "overlay_position": "Posición del overlay",
     "overlay_position_desc": "Elige dónde aparecen las notificaciones de overlay.",
+    "overlay_scale": "Tamaño del overlay",
+    "overlay_scale_desc": "Escala la ventana de notificaciones del overlay. 1.0x es el valor predeterminado.",
     "test_overlay": "Probar overlay",
     "test_overlay_desc": "Vista previa del overlay con tu tema y estilo de superficie actual.",
     "test_overlay_btn": "Probar",

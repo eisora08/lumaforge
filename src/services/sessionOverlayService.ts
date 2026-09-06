@@ -14,6 +14,17 @@ function readOverlayPosition(): OverlayPosition {
   }
 }
 
+function readOverlayScale(): number {
+  try {
+    const raw = localStorage.getItem("lumaforge-settings");
+    const settings = raw ? JSON.parse(raw) : {};
+    const s = Number(settings.overlayNotificationScale);
+    return Number.isFinite(s) && s >= 0.5 && s <= 2 ? s : 1;
+  } catch {
+    return 1;
+  }
+}
+
 const THEME_VAR_NAMES = [
   "--color-bg",
   "--color-text",
@@ -45,6 +56,7 @@ export async function showSessionOverlay(event: {
   try {
     const themeVars = collectThemeVars();
     const overlayPosition = readOverlayPosition();
+    const overlayScale = readOverlayScale();
     const durationMs = event.type === "launch" ? 3000 : 4000;
     await Promise.race([
       invoke("show_session_overlay", {
@@ -56,6 +68,7 @@ export async function showSessionOverlay(event: {
         duration: durationMs,
         themeVars,
         overlayPosition,
+        overlayScale,
       }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("invoke timed out after 5s")), 5000),
