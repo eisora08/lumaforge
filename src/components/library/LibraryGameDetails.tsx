@@ -47,6 +47,7 @@ import {
   Play,
   Puzzle,
   Heart,
+  ChevronDown,
   RefreshCw,
   Square,
   Trophy,
@@ -2243,64 +2244,24 @@ export default function LibraryGameDetails({
                         </div>
                       )}
 
-                      {/* Source selector + refresh — shown for crack save, not Debrid/Manual */}
+                      {/* Source selector — shown for crack save, not Debrid/Manual */}
                       {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center gap-2">
-                            <select
-                              value={achSource}
-                              onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                              className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                            >
-                              <option value="steam-official">{t("library_details.steamOfficial")}</option>
-                              <option value="steam">{t("library_details.crackSave")}</option>
-                            </select>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
-                              if (!appIdStr) return;
-                              setAchievementsLoading(true);
-                              try {
-                                achievementStore.deleteSummary(appIdStr, achSource);
-                                const { deleteAchievementCache } = await import("../../services/tauri");
-                                const appIdNum = numericAppIdHash(appIdStr);
-                                if (Number.isFinite(appIdNum)) {
-                                  await deleteAchievementCache(appIdNum, achSource).catch(() => { });
-                                }
-                                const gameSource = achSource === "steam" ? "debrid" : achSource === "epic-official" ? "epic" : "steam";
-                                const s = await resolveSteamAchievements({
-                                  appId: appIdStr,
-                                  steamWebApiKey: settings.steamWebApiKey || undefined,
-                                  steamId64: settings.steamId64 || undefined,
-                                  accountId: settings.steamAccountId || undefined,
-                                  steamPath: settings.steamRoot || undefined,
-                                  forceRefresh: true,
-                                  steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                                  achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                                                                    gameSource,
-                                  platform: achSource,
-                                  installDir: game.installDir,
-                                  epicNamespace,
-                                });
-                                if (appIdStr) {
-                                  setAchievementsSummary(s);
-
-
-                                  achievementStore.setSummary(appIdStr, s, achSource);
-                                  const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
-                                  notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
-                                }
-                              } catch (err) {
-                                console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
-                              } finally {
-                                setAchievementsLoading(false);
+                        <div className="flex items-center justify-center">
+                          <SourceDropdown
+                            value={achSource}
+                            onChange={(v) => {
+                              const val = v as "steam-official" | "steam" | "epic-official";
+                              if (appIdStr) {
+                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
+                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
                               }
+                              setAchSource(val);
                             }}
-                            className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[10px] text-(--color-muted) transition hover:bg-white/10"
-                            title={t("library_details.refreshFromSource")}
-                          >
-                            {achievementsLoading ? "..." : "↻"}
-                          </button>
+                            options={[
+                              { value: "steam-official", label: t("library_details.steamOfficial") },
+                              { value: "steam", label: t("library_details.crackSave") },
+                            ]}
+                          />
                         </div>
                       )}
 
@@ -2399,62 +2360,22 @@ export default function LibraryGameDetails({
                     <div className="mt-3 space-y-3">
                       {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
                       {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center gap-2">
-                            <select
-                              value={achSource}
-                              onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                              className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                            >
-                              <option value="steam-official">Steam Official</option>
-                              <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
-                            </select>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
-                              if (!appIdStr) return;
-                              setAchievementsLoading(true);
-                              try {
-                                achievementStore.deleteSummary(appIdStr, achSource);
-                                const { deleteAchievementCache } = await import("../../services/tauri");
-                                const appIdNum = numericAppIdHash(appIdStr);
-                                if (Number.isFinite(appIdNum)) {
-                                  await deleteAchievementCache(appIdNum, achSource).catch(() => { });
-                                }
-                                const gameSource = achSource === "steam" ? "debrid" : achSource === "epic-official" ? "epic" : "steam";
-                                const s = await resolveSteamAchievements({
-                                  appId: appIdStr,
-                                  steamWebApiKey: settings.steamWebApiKey || undefined,
-                                  steamId64: settings.steamId64 || undefined,
-                                  accountId: settings.steamAccountId || undefined,
-                                  steamPath: settings.steamRoot || undefined,
-                                  forceRefresh: true,
-                                  steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                                  achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                                                                    gameSource,
-                                  platform: achSource,
-                                  installDir: game.installDir,
-                                  epicNamespace,
-                                });
-                                if (appIdStr) {
-                                  setAchievementsSummary(s);
-
-
-                                  achievementStore.setSummary(appIdStr, s, achSource);
-                                  const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
-                                  notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
-                                }
-                              } catch (err) {
-                                console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
-                              } finally {
-                                setAchievementsLoading(false);
+                        <div className="flex items-center justify-center">
+                          <SourceDropdown
+                            value={achSource}
+                            onChange={(v) => {
+                              const val = v as "steam-official" | "steam" | "epic-official";
+                              if (appIdStr) {
+                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
+                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
                               }
+                              setAchSource(val);
                             }}
-                            className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[10px] text-(--color-muted) transition hover:bg-white/10"
-                            title="Refresh from selected source"
-                          >
-                            {achievementsLoading ? "..." : "↻"}
-                          </button>
+                            options={[
+                              { value: "steam-official", label: t("library_details.steamOfficial") },
+                              { value: "steam", label: t("library_details.crackSave") },
+                            ]}
+                          />
                         </div>
                       )}
 
@@ -2532,18 +2453,25 @@ export default function LibraryGameDetails({
                     <div className="mt-3 space-y-3">
                       {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
                       {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center gap-2">
-                           <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{t("library_details.source")}:</label>
-                             <select
-                               value={achSource}
-                               onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                               className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                             >
-                               <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
-                               <option value="steam">{t("library_details.crackSave")}</option>
-                             </select>
-                         </div>
-                       )}
+                        <div className="flex items-center justify-center">
+                          <SourceDropdown
+                            value={achSource}
+                            onChange={(v) => {
+                              const val = v as "steam-official" | "steam" | "epic-official";
+                              if (appIdStr) {
+                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
+                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
+                              }
+                              setAchSource(val);
+                            }}
+                            options={[
+                              { value: "steam-official", label: t("library_details.steamOfficialAppcache") },
+                              { value: "steam", label: t("library_details.crackSave") },
+                            ]}
+                            label={t("library_details.source") + ":"}
+                          />
+                        </div>
+                      )}
                         <p className="text-xs text-(--color-muted)">
                           {achSource === "steam"
                             ? t("library_details.noAchievementDataCrack")
@@ -2622,16 +2550,23 @@ export default function LibraryGameDetails({
                     <div className="mt-3 space-y-3">
                       {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
                       {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center gap-2">
-                          <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{t("library_details.source")}:</label>
-                            <select
-                              value={achSource}
-                              onChange={(e) => { const v = e.target.value as "steam-official" | "steam" | "epic-official"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
-                              className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
-                            >
-                              <option value="steam-official">{t("library_details.steamOfficialAppcache")}</option>
-                              <option value="steam">{t("library_details.crackSave")}</option>
-                            </select>
+                        <div className="flex items-center justify-center">
+                          <SourceDropdown
+                            value={achSource}
+                            onChange={(v) => {
+                              const val = v as "steam-official" | "steam" | "epic-official";
+                              if (appIdStr) {
+                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
+                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
+                              }
+                              setAchSource(val);
+                            }}
+                            options={[
+                              { value: "steam-official", label: t("library_details.steamOfficialAppcache") },
+                              { value: "steam", label: t("library_details.crackSave") },
+                            ]}
+                            label={t("library_details.source") + ":"}
+                          />
                         </div>
                       )}
                       <p className="text-xs text-(--color-muted)">
@@ -3148,6 +3083,65 @@ function DropdownItem({
         <span className="text-[10px] text-(--color-muted)">{subtitle}</span>
       )}
     </button>
+  );
+}
+
+/**
+ * Custom animated dropdown for achievement source selection.
+ * Replaces native <select> for a premium feel.
+ */
+function SourceDropdown({ value, onChange, options, label }: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const selected = options.find(o => o.value === value);
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      {label && (
+        <span className="mr-1.5 text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">{label}</span>
+      )}
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2.5 py-1 text-[10px] text-(--color-text) backdrop-blur-sm transition hover:bg-white/[0.06] focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50 cursor-pointer"
+      >
+        <span>{selected?.label}</span>
+        <ChevronDown className={`h-3 w-3 text-(--color-muted) transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="lf-dropdown-menu absolute z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-(--surface-active-border) bg-(--color-surface) shadow-lg backdrop-blur-md">
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              className={`flex w-full items-center whitespace-nowrap px-2.5 py-1.5 text-[10px] transition-colors duration-100 cursor-pointer ${
+                opt.value === value
+                  ? "text-(--color-accent) bg-(--color-accent)/10"
+                  : "text-(--color-text) hover:bg-white/[0.06]"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
