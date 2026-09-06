@@ -87,21 +87,9 @@ impl AchievementWatcher {
       );
     }
 
-    // Also watch librarycache for real-time achievement updates
-    if librarycache_path.is_dir() {
-      watcher
-        .watch(&librarycache_path, RecursiveMode::NonRecursive)
-        .map_err(|e| format!("Failed to watch librarycache: {}", e))?;
-      eprintln!(
-        "[ACH][WATCHER] watching librarycache={}",
-        librarycache_path.display()
-      );
-    } else {
-      eprintln!(
-        "[ACH][WATCHER] librarycache path not found: {}",
-        librarycache_path.display()
-      );
-    }
+    // librarycache watching removed — achievement data comes from appcache/stats/ bins only.
+    // The frontend already filters out librarycache events (accepted=false),
+    // so watching that directory just wastes CPU on constant JSON changes.
 
     // Watch crack save directories (RUNE, CODEX, GSE, OnlineFix, Goldberg, etc.)
     let crack_bases = resolve_crack_save_bases();
@@ -438,8 +426,39 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path, dir_map: &
   let raw_path = path.to_string_lossy().to_string();
   let fname = path.file_name()?.to_string_lossy().to_string();
 
-  // Handle appcache/stats files (UserGameStats_*.bin)
+  // Handle appcache/stats files
   if parent == stats_path {
+    // UserGameStatsSchema_<appId>.bin — schema file (must check BEFORE UserGameStats_*)
+    if fname.starts_with("UserGameStatsSchema_") && fname.ends_with(".bin") {
+      let without_ext = fname.trim_end_matches(".bin");
+      let parts: Vec<&str> = without_ext.split('_').collect();
+      // ["UserGameStatsSchema", "<appId>"] → 2 parts
+      if parts.len() == 2 {
+        if let Ok(appid) = parts[1].parse::<u32>() {
+          eprintln!(
+            "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=schema",
+            raw_path, fname, appid
+          );
+          let meta = std::fs::metadata(path).ok()?;
+          let modified = meta
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+          return Some(FileInfo {
+            appid,
+            source: "schema".to_string(),
+            modified_at: modified,
+            size: meta.len(),
+            save_path: None,
+          });
+        }
+      }
+    }
+
+    // UserGameStats_<accountId>_<appId>.bin — binary stats
     if fname.starts_with("UserGameStats_") && fname.ends_with(".bin") {
       let without_ext = fname.trim_end_matches(".bin");
       let parts: Vec<&str> = without_ext.split('_').collect();

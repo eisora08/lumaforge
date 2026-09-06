@@ -10,7 +10,7 @@ let _sessionWatcherInitialized = false;
 
 export default function AchievementWatcherInit() {
   const { settings } = useSettings();
-  const prevSettingsRef = useRef({ steamRoot: "", steamAccountId: "" });
+  const prevSettingsRef = useRef({ steamRoot: "", steamAccountId: "", steamWebApiKey: "" });
   const startedRef = useRef(false);
   const disabledLoggedRef = useRef(false);
 
@@ -27,13 +27,15 @@ export default function AchievementWatcherInit() {
     const curr = {
       steamRoot: settings.steamRoot,
       steamAccountId: settings.steamAccountId,
+      steamWebApiKey: settings.steamWebApiKey,
     };
 
     if (_sessionWatcherInitialized && startedRef.current) {
       const prev = prevSettingsRef.current;
       const settingsChanged =
         prev.steamRoot !== curr.steamRoot ||
-        prev.steamAccountId !== curr.steamAccountId;
+        prev.steamAccountId !== curr.steamAccountId ||
+        prev.steamWebApiKey !== curr.steamWebApiKey;
       if (!settingsChanged) {
         prevSettingsRef.current = curr;
         return;
@@ -45,7 +47,8 @@ export default function AchievementWatcherInit() {
 
     const settingsChanged =
       prev.steamRoot !== curr.steamRoot ||
-      prev.steamAccountId !== curr.steamAccountId;
+      prev.steamAccountId !== curr.steamAccountId ||
+      prev.steamWebApiKey !== curr.steamWebApiKey;
 
     // Start or restart if settings changed or first mount
     if (
@@ -59,7 +62,7 @@ export default function AchievementWatcherInit() {
       startedRef.current = true;
       _sessionWatcherInitialized = true;
       // Don't await — fire and forget to avoid blocking render
-      achievementWatcherService.start(curr.steamRoot, curr.steamAccountId);
+      achievementWatcherService.start(curr.steamRoot, curr.steamAccountId, curr.steamWebApiKey);
     }
 
     // Stop if settings become invalid
@@ -71,7 +74,7 @@ export default function AchievementWatcherInit() {
       startedRef.current = false;
       achievementWatcherService.stop();
     }
-  }, [settings.steamRoot, settings.steamAccountId]);
+  }, [settings.steamRoot, settings.steamAccountId, settings.steamWebApiKey]);
 
   // Do NOT stop on unmount — watcher must stay alive in background
   // It only stops when settings change or the app closes

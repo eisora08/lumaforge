@@ -84,6 +84,8 @@ export type ProgressPatch = {
   iconMap?: Map<string, { icon?: string; iconGray?: string }>;
   /** Per-apiName display name override (from schema enrichment, e.g. Tenoke watcher) */
   nameMap?: Map<string, string>;
+  /** Per-apiName description override (from KV binary / v7 cache) */
+  descriptionMap?: Map<string, string>;
   /** When true, patch comes from binary-stats (authoritative). Replace per-achievement states directly — no OR merge. */
   authoritative?: boolean;
   /** Explicit source override (e.g. "crack" from processCrackIniChange). When set, used instead of inferring from authoritative. */
@@ -211,6 +213,26 @@ class AchievementStoreImpl {
         console.log(`[ACH][COUNT_GUARD] appid=${appId} platform=${platform ?? "none"} REJECTED reason=count-decreased existing=${existing.unlocked}/${existing.total} source=${existing.source} incoming=${safeSummary.unlocked}/${safeSummary.total} source=${safeSummary.source}`);
         return;
       }
+      // ── SOURCE QUALITY GUARD ──
+      // Prevent lower-quality sources from overwriting higher-quality cache data.
+      // schema-generated (API display names, descriptions, rarity) > schema-only (KV-only, token names) > unavailable.
+      // This fixes a race where schema-only/unavailable writes overwrite the v7 cache
+      // that generateAchievementSchema wrote with real display names from the Steam API.
+      const SOURCE_QUALITY: Record<string, number> = {
+        "schema-generated": 3,
+        "kv+api": 3,
+        "schema-only": 2,
+        "binary-stats": 2,
+        "crack": 2,
+        "librarycache": 1,
+        "unavailable": 0,
+      };
+      const existingQuality = SOURCE_QUALITY[existing.source] ?? 0;
+      const incomingQuality = SOURCE_QUALITY[safeSummary.source ?? ""] ?? 0;
+      if (existingQuality > incomingQuality) {
+        console.log(`[ACH][QUALITY_GUARD] appid=${appId} platform=${platform ?? "none"} REJECTED reason=lower-quality existing="${existing.source}" (q=${existingQuality}) incoming="${safeSummary.source}" (q=${incomingQuality})`);
+        return;
+      }
       if (!isExplicitPlatform) {
         const accepted = isSourceNewerOrEqual(
           safeSummary.source, safeSummary.updatedAt,
@@ -242,6 +264,7 @@ class AchievementStoreImpl {
           unlockTime: a.unlockTime ?? existingAch?.unlockTime,
           progress: a.progress ?? existingAch?.progress,
           maxProgress: a.maxProgress ?? existingAch?.maxProgress,
+          rarityPercent: a.rarityPercent ?? existingAch?.rarityPercent,
         };
       });
       // Use incoming unlock count — trust the latest source
@@ -329,6 +352,7 @@ class AchievementStoreImpl {
 
     // Debounce: skip if wrote recently (prevent overwriting fresh librarycache data)
     // BUT: never skip when the patch has a real unlock delta (new achievement unlocked)
+    // OR when the patch brings display names, rarity, or descriptions the store doesn't have yet.
     const now = Date.now();
     const lastWrite = this._lastWriteTime.get(key) ?? 0;
     const debounceActive = now - lastWrite < 1000;
@@ -336,25 +360,31 @@ class AchievementStoreImpl {
       const currentInStore = this.summariesByAppId.get(key);
       const currentUnlocked = currentInStore?.unlocked ?? 0;
       const hasNewUnlocks = patch.unlocked > currentUnlocked;
-      if (!hasNewUnlocks) {
+      const hasNewNames = patch.nameMap && patch.nameMap.size > 0;
+      const hasNewRarity = !!patch.rarityMap && patch.rarityMap.size > 0;
+      const hasNewDescriptions = !!patch.descriptionMap && patch.descriptionMap.size > 0;
+      if (!hasNewUnlocks && !hasNewNames && !hasNewRarity && !hasNewDescriptions) {
         console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} platform=${platform ?? "none"} reason=debounce (${now - lastWrite}ms since last write)`);
         return null;
       }
-      // Patch has genuinely new unlocks — process despite debounce
-      console.debug(`[ACH][STORE_PATCH][${tid}] debounce-bypassed appid=${appId} platform=${platform ?? "none"} reason=new-unlocks patch=${patch.unlocked} current=${currentUnlocked}`);
+      // Patch has genuinely new unlocks, display names, rarity, or descriptions — process despite debounce
+      console.debug(`[ACH][STORE_PATCH][${tid}] debounce-bypassed appid=${appId} platform=${platform ?? "none"} reason=${hasNewUnlocks ? "new-unlocks" : hasNewNames ? "new-names" : hasNewRarity ? "new-rarity" : "new-descriptions"} patch=${patch.unlocked} current=${currentUnlocked}`);
     }
 
     // Guard: skip if setSummary is currently writing to disk
-    // BUT: never skip when the patch has a real unlock delta
+    // BUT: never skip when the patch has a real unlock delta, new display names, rarity, or descriptions
     if (this._writingToDisk.has(key)) {
       const currentInStore = this.summariesByAppId.get(key);
       const currentUnlocked = currentInStore?.unlocked ?? 0;
       const hasNewUnlocks = patch.unlocked > currentUnlocked;
-      if (!hasNewUnlocks) {
+      const hasNewNames = patch.nameMap && patch.nameMap.size > 0;
+      const hasNewRarity = !!patch.rarityMap && patch.rarityMap.size > 0;
+      const hasNewDescriptions = !!patch.descriptionMap && patch.descriptionMap.size > 0;
+      if (!hasNewUnlocks && !hasNewNames && !hasNewRarity && !hasNewDescriptions) {
         console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} platform=${platform ?? "none"} reason=writing-in-progress`);
         return null;
       }
-      console.debug(`[ACH][STORE_PATCH][${tid}] writing-in-progress-bypassed appid=${appId} platform=${platform ?? "none"} reason=new-unlocks`);
+      console.debug(`[ACH][STORE_PATCH][${tid}] writing-in-progress-bypassed appid=${appId} platform=${platform ?? "none"} reason=${hasNewUnlocks ? "new-unlocks" : hasNewNames ? "new-names" : hasNewRarity ? "new-rarity" : "new-descriptions"}`);
     }
 
     const RT = appId === "268910";
@@ -367,7 +397,7 @@ class AchievementStoreImpl {
     }
 
     if (DEBUG_ACH_VERBOSE) console.log(
-      `[ACH][SUMMARY_SOURCE] appid=${appId} source=librarycache(patch) ` +
+      `[ACH][SUMMARY_SOURCE] appid=${appId} source=${patch.source ?? "unknown"} ` +
       `unlocked=${patch.unlocked}/${patch.total} progressMap=${patch.progressMap.size} trace=${tid}`
     );
 
@@ -408,10 +438,20 @@ class AchievementStoreImpl {
       const minimalAchievements: GameAchievement[] = [];
       for (const [apiName, progress] of patch.progressMap) {
         const rawIcon = patch.iconMap?.get(apiName);
+        let resolvedName = patch.nameMap?.get(apiName);
+        if (!resolvedName || resolvedName === apiName) {
+          for (const [, s] of this.summariesByAppId) {
+            if (s.appId === appId) {
+              const found = s.achievements?.find((a) => a.apiName === apiName && a.name && a.name !== a.apiName);
+              if (found) { resolvedName = found.name; break; }
+            }
+          }
+        }
         minimalAchievements.push({
           id: apiName,
           apiName,
-          name: patch.nameMap?.get(apiName) ?? apiName,
+          name: resolvedName && resolvedName !== apiName ? resolvedName : apiName,
+          description: patch.descriptionMap?.get(apiName),
           unlocked: progress.unlocked,
           unlockTime: progress.unlockTime,
           rarityPercent: patch.rarityMap?.get(apiName),
@@ -470,8 +510,23 @@ class AchievementStoreImpl {
       // Non-authoritative (librarycache): OR merge — librarycache is partial, can't un-unlock
       const unlocked = patch.authoritative ? progress.unlocked : (progress.unlocked || ach.unlocked);
 
+      // Update name from patch.nameMap if current name is just the api_name
+      const patchName = patch.nameMap?.get(ach.apiName);
+      const name = (patchName && ach.name === ach.apiName) ? patchName : ach.name;
+      // Update description from patch.descriptionMap if current description is missing
+      const patchDescription = patch.descriptionMap?.get(ach.apiName);
+      const description = patchDescription ?? ach.description;
+      // Update icon from patch.iconMap if current icon is missing
+      const patchIcon = patch.iconMap?.get(ach.apiName);
+      const iconUrl = patchIcon?.icon ?? ach.iconUrl;
+      const iconGrayUrl = patchIcon?.iconGray ?? ach.iconGrayUrl;
+
       return {
         ...ach,
+        name,
+        description,
+        iconUrl,
+        iconGrayUrl,
         unlocked,
         unlockTime: progress.unlockTime ?? ach.unlockTime,
         rarityPercent: patch.rarityMap?.get(ach.apiName) ?? ach.rarityPercent,
@@ -494,10 +549,22 @@ class AchievementStoreImpl {
     for (const [apiName, progress] of patch.progressMap) {
       if (!mergedAchievements.find((a) => a.apiName === apiName)) {
         const rawIcon = patch.iconMap?.get(apiName);
+        // Look up name: patch nameMap → existing store (any platform) → apiName
+        let resolvedName = patch.nameMap?.get(apiName);
+        if (!resolvedName || resolvedName === apiName) {
+          // Search all summaries for this appId across platforms
+          for (const [, s] of this.summariesByAppId) {
+            if (s.appId === appId) {
+              const found = s.achievements?.find((a) => a.apiName === apiName && a.name && a.name !== a.apiName);
+              if (found) { resolvedName = found.name; break; }
+            }
+          }
+        }
         mergedAchievements.push({
           id: apiName,
           apiName,
-          name: apiName,
+          name: resolvedName && resolvedName !== apiName ? resolvedName : apiName,
+          description: patch.descriptionMap?.get(apiName),
           unlocked: progress.unlocked,
           unlockTime: progress.unlockTime,
           rarityPercent: patch.rarityMap?.get(apiName),
@@ -752,6 +819,7 @@ class AchievementStoreImpl {
       // First, try to read existing disk cache to preserve schema fields (stat_id, bit, name, icons)
       let diskCacheMap: Map<string, any> | null = null;
       let diskPercentages: { name: string; percent: number }[] = [];
+      let diskSource: string | undefined;
       try {
         const { readAchievementCache } = await import("./tauri");
         const diskCache = await readAchievementCache(appIdNum, effectivePlatform);
@@ -761,7 +829,21 @@ class AchievementStoreImpl {
         if (diskCache?.achievement_percentages?.length) {
           diskPercentages = diskCache.achievement_percentages;
         }
+        diskSource = diskCache?.summary?.source;
       } catch { /* disk cache read failed — proceed without merge */ }
+
+      // ── DISK CACHE QUALITY GUARD ──
+      // If existing disk cache has higher-quality source, skip this write entirely.
+      // Prevents schema-only/unavailable data from overwriting schema-generated cache on disk.
+      const DISK_QUALITY: Record<string, number> = {
+        "schema-generated": 3, "kv+api": 3, "schema-only": 2, "binary-stats": 2, "crack": 2, "librarycache": 1, "unavailable": 0,
+      };
+      const diskQ = DISK_QUALITY[diskSource ?? ""] ?? 0;
+      const writeQ = DISK_QUALITY[summary.source ?? ""] ?? 0;
+      if (diskQ > writeQ) {
+        console.debug(`[ACH][CACHE] skipped write appid=${appId} — disk="${diskSource}" (q=${diskQ}) > incoming="${summary.source}" (q=${writeQ})`);
+        return;
+      }
 
       const achievements = summary.achievements.map(entry => {
         const existingAch = inMemory.achievements?.find((a) => a.apiName === entry.apiName);

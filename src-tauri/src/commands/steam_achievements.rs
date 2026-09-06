@@ -2509,7 +2509,19 @@ pub fn resolve_achievement_image_paths(
     });
     let icon_gray_exists = entry.icon_gray_url.as_ref().map_or(false, |path| {
       let fname = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
-      img_dir.join(fname).is_file() || official_img_dir.join(fname).is_file()
+      // The TS download logic saves gray icons as "hash_gray.jpg" (adds _gray suffix).
+      // The icon_gray_url field may contain the original CDN URL without _gray.
+      // Check both the original filename and the _gray variant.
+      let gray_fname = if fname.ends_with(".jpg") || fname.ends_with(".png") {
+        let stem = &fname[..fname.rfind('.').unwrap_or(fname.len())];
+        let ext = &fname[fname.rfind('.').unwrap_or(fname.len())..];
+        format!("{}_gray{}", stem, ext)
+      } else {
+        String::new()
+      };
+      img_dir.join(fname).is_file()
+        || official_img_dir.join(fname).is_file()
+        || (!gray_fname.is_empty() && (img_dir.join(&gray_fname).is_file() || official_img_dir.join(&gray_fname).is_file()))
     });
     results.push(AchievementImageStatus {
       api_name: entry.api_name.clone(),
@@ -2695,28 +2707,12 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
     entry
   }).collect();
 
-  // Guard: skip write when existing cache has higher cache_version (schema tool writes v7)
-  // BUT: always allow overwriting "schema-generated" (skeleton with no real unlock data)
-  let summary_path = cache_dir.join("summary.json");
-  if summary_path.exists() {
-    if let Ok(existing) = fs::read_to_string(&summary_path) {
-      if let Ok(existing_summary) = serde_json::from_str::<crate::models::steam_appcache_achievements::AppAchievementSummary>(&existing) {
-        let existing_ver = existing_summary.cache_version.unwrap_or(0);
-        let is_schema_skeleton = existing_summary.source == "schema-generated" || existing_summary.source == "schema-only";
-        if existing_ver >= 7 && !is_schema_skeleton {
-          diag_log(format!("Skipping write_achievement_cache app_id={} reason=higher-cache-version exist={} source={}", app_id, existing_ver, existing_summary.source));
-          return Ok(());
-        }
-        if is_schema_skeleton {
-          diag_log(format!("Overwriting schema skeleton app_id={} exist_ver={} exist_source={} new_source={}", app_id, existing_ver, existing_summary.source, data.summary.source));
-        }
-      }
-    }
-  }
-
   // Write summary.json
   let mut summary = data.summary;
-  summary.cache_version = Some(6);
+  // Preserve caller-provided cache_version (TS sets 7, schema gen sets 7)
+  if summary.cache_version.is_none() {
+    summary.cache_version = Some(6);
+  }
   let summary_path = cache_dir.join("summary.json");
   let summary_content =
     serde_json::to_string_pretty(&summary).map_err(|e| format!("Failed to serialize summary: {}", e))?;
@@ -3858,6 +3854,19 @@ pub fn generate_achievement_schema(
   let schema_path = stats_dir.join(format!("UserGameStatsSchema_{}.bin", app_id));
 
   let kv_entries = if schema_path.is_file() {
+    // Steam creates the bin file immediately on game launch but writes content asynchronously.
+    // If the file is too small, Steam hasn't finished writing yet — tell the caller to retry.
+    let file_size = schema_path.metadata().map(|m| m.len()).unwrap_or(0);
+    if file_size < 100 {
+      schema_log!("[ACH][SCHEMA_GEN] schema file too small ({} bytes), Steam still writing: {}", file_size, schema_path.display());
+      return Ok(GenerateSchemaResult {
+        entries_count: 0,
+        source: "schema-not-ready".to_string(),
+        icons_downloaded: 0,
+        progress_available: false,
+        error: Some(format!("Schema file too small ({} bytes) — Steam still writing {}", file_size, schema_path.display())),
+      });
+    }
     match read_and_parse_schema(&schema_path) {
       Ok(entries) => {
         let with_stat_id = entries.iter().filter(|e| e.stat_id.is_some()).count();
@@ -4011,10 +4020,12 @@ pub fn generate_achievement_schema(
 
   // Step 3: Enrich with Steam Web API (display names, icons, descriptions)
   let mut api_enriched = false;
+  eprintln!("[ACH][SCHEMA_GEN] appid={} api_key_present={} api_key_len={}", app_id, steam_web_api_key.is_some(), steam_web_api_key.as_deref().unwrap_or("").len());
   if let Some(ref api_key) = steam_web_api_key {
     if !api_key.trim().is_empty() {
       match fetch_schema_from_api(app_id, api_key) {
         Ok(api_schema) => {
+          eprintln!("[ACH][SCHEMA_GEN] API SUCCESS appid={} entries_returned={}", app_id, api_schema.len());
           schema_log!("[ACH][SCHEMA_GEN] API enrichment: {} entries", api_schema.len());
           // Merge API data into kv_entries — API takes priority for display fields
           // We'll use a separate merge loop below
@@ -4142,10 +4153,15 @@ pub fn generate_achievement_schema(
           });
         }
         Err(e) => {
+          eprintln!("[ACH][SCHEMA_GEN] API FAILED appid={} error={}", app_id, e);
           schema_log!("[ACH][SCHEMA_GEN] API enrichment failed: {}", e);
         }
       }
+    } else {
+      eprintln!("[ACH][SCHEMA_GEN] API SKIPPED appid={} reason=api-key-empty", app_id);
     }
+  } else {
+    eprintln!("[ACH][SCHEMA_GEN] API SKIPPED appid={} reason=no-api-key", app_id);
   }
 
   // Fallback: KV-only (no API enrichment)

@@ -250,6 +250,11 @@ class AchievementWatcherService {
   private static CONTENT_RETRY_DELAY_MS = 2500;
   private static CONTENT_RETRY_MAX = 2;
 
+  // Binary wait retry: poll for UserGameStatsSchema/UserGameStats bins before giving up
+  private _binaryWaitRetries = new Map<string, number>();
+  private static BINARY_WAIT_MAX_RETRIES = 5;
+  private static BINARY_WAIT_DELAYS_MS = [2000, 3000, 5000, 8000, 12000];
+
   private isToastRecentlyShown(appId: string, apiName: string): boolean {
     const key = `${appId}:${apiName}`;
     return this._toastDedupTimers.has(key);
@@ -465,8 +470,8 @@ class AchievementWatcherService {
           // Update poll metadata
           this._lastFileMeta.set(path, { size, modified: modified_at });
 
-          // Process usergamestats (binary stats), librarycache (Steam achievement data), and crack-ini
-          const isAcceptedSource = source === "usergamestats" || (LIBRARYCACHE_PROCESSING_ENABLED && source === "librarycache") || (LIBRARYCACHE_PROCESSING_ENABLED && source === "achievement-progress") || source === "crack-ini" || source === "crack-json";
+          // Process usergamestats (binary stats), schema (KV binary), and crack-ini
+          const isAcceptedSource = source === "usergamestats" || source === "schema" || (LIBRARYCACHE_PROCESSING_ENABLED && source === "librarycache") || (LIBRARYCACHE_PROCESSING_ENABLED && source === "achievement-progress") || source === "crack-ini" || source === "crack-json";
           console.log(`[ACH][PIPELINE] source_check appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
 
           // Special handling for global achievement_progress.json changes
@@ -1209,12 +1214,13 @@ class AchievementWatcherService {
       // Cracked game achievements are handled exclusively by processCrackIniChange.
       let effectivePatch: ProgressPatch | null = null;
       const isCrackedGame = this._platformByAppId.get(appId) === "steam";
-      const runBinaryStats = !isCrackedGame && (source === "usergamestats" || source === "librarycache");
+      // Process usergamestats (binary stats) and schema (KV binary) sources
+      const runBinaryStats = !isCrackedGame && (source === "usergamestats" || source === "schema");
       if (runBinaryStats) {
         console.log(`[ACH][PIPELINE] binary-stats appid=${appId} source=${source} cracked=${isCrackedGame} reading-schema+binary-stats`);
         try {
           // Step 1: Read schema binary for achievement metadata (stat_id + bit)
-          let schemaEntries: { api_name: string; stat_id?: number; bit?: number; progress_stat_id?: number; progress_min?: number; progress_max?: number; name?: string; icon?: string; description?: string }[] = [];
+          let schemaEntries: { api_name: string; stat_id?: number; bit?: number; progress_stat_id?: number; progress_min?: number; progress_max?: number; display_name?: string; icon?: string; icon_gray?: string; description?: string }[] = [];
           try {
             const scanResult = await scanSteamAppcacheAchievements({
               steamPath: this._steamPath,
@@ -1242,8 +1248,8 @@ class AchievementWatcherService {
             if (statsResult.stat_pairs.length > 0) {
               for (const pair of statsResult.stat_pairs) {
                 statsMap.set(pair.stat_id, pair.value);
-                if (pair.unlock_times) {
-                  for (const [bit, ts] of Object.entries(pair.unlock_times)) {
+                if (pair.times) {
+                  for (const [bit, ts] of Object.entries(pair.times)) {
                     timestampMap.set(`${pair.stat_id}:${bit}`, ts);
                   }
                 }
@@ -1256,6 +1262,49 @@ class AchievementWatcherService {
 
           // Step 3: Bitmask extraction — same as reference app
           // Reference: earned = ((data_u32 >>> bit) & 1) === 1
+
+          // Build nameMap + iconMap from schema entries and disk cache so
+          // applyProgressPatch doesn't fall back to api_name for new entries.
+          const nameMap = new Map<string, string>();
+          const iconMap = new Map<string, { icon?: string; iconGray?: string }>();
+          const rarityMap = new Map<string, number>();
+          const descriptionMap = new Map<string, string>();
+          for (const entry of schemaEntries) {
+            if (entry.display_name && entry.display_name !== entry.api_name) {
+              nameMap.set(entry.api_name, entry.display_name);
+            }
+            if (entry.icon || entry.icon_gray) {
+              iconMap.set(entry.api_name, { icon: entry.icon, iconGray: entry.icon_gray });
+            }
+            if (entry.description) {
+              descriptionMap.set(entry.api_name, entry.description);
+            }
+          }
+          // Enrich from existing disk cache (has real display names from API)
+          try {
+            const { readAchievementCache } = await import("./tauri");
+            const numAppId = Number(appId);
+            const diskCache = await readAchievementCache(numAppId, "steam-official");
+            if (diskCache?.achievements?.length) {
+              for (const ach of diskCache.achievements) {
+                if (ach.name && ach.name !== ach.api_name && !nameMap.has(ach.api_name)) {
+                  nameMap.set(ach.api_name, ach.name);
+                }
+                const ic = ach.icon ?? ach.icon_url;
+                const icG = ach.icon_gray ?? ach.icon_gray_url;
+                if ((ic || icG) && (ic?.includes("/") || icG?.includes("/"))) {
+                  iconMap.set(ach.api_name, { icon: ic, iconGray: icG });
+                }
+                if (ach.rarity_percent != null && !rarityMap.has(ach.api_name)) {
+                  rarityMap.set(ach.api_name, ach.rarity_percent);
+                }
+                if (ach.description && !descriptionMap.has(ach.api_name)) {
+                  descriptionMap.set(ach.api_name, ach.description);
+                }
+              }
+            }
+          } catch { /* non-critical — proceed without disk names */ }
+
           if (schemaEntries.length > 0 && statsMap.size > 0) {
             const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
             let unlocked = 0;
@@ -1283,9 +1332,16 @@ class AchievementWatcherService {
               total: schemaEntries.length,
               unlocked,
               progressMap,
+              nameMap: nameMap.size > 0 ? nameMap : undefined,
+              iconMap: iconMap.size > 0 ? iconMap : undefined,
+              rarityMap: rarityMap.size > 0 ? rarityMap : undefined,
+              descriptionMap: descriptionMap.size > 0 ? descriptionMap : undefined,
+              source: "binary-stats",
               authoritative: source === "usergamestats",
             };
             console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats authoritative=${source === "usergamestats"}`);
+            // Binary wait succeeded — clear retry counter
+            this._binaryWaitRetries.delete(appId);
           } else if (schemaEntries.length > 0) {
             const progressMap = new Map<string, { unlocked: boolean }>();
             for (const entry of schemaEntries) {
@@ -1296,10 +1352,91 @@ class AchievementWatcherService {
               total: schemaEntries.length,
               unlocked: 0,
               progressMap,
+              nameMap: nameMap.size > 0 ? nameMap : undefined,
+              iconMap: iconMap.size > 0 ? iconMap : undefined,
+              descriptionMap: descriptionMap.size > 0 ? descriptionMap : undefined,
+              source: "schema-only",
             };
             console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${schemaEntries.length} unlocked=0 source=schema-only`);
+            this._binaryWaitRetries.delete(appId);
           } else {
             console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} no-schema-entries`);
+          }
+
+          // Generate full schema (icons + rarity + display names from Steam API) AWAITED.
+          // The schema binary is confirmed present (pipeline just read schemaEntries above).
+          // Awaiting here ensures the v7 cache is written to disk BEFORE applyProgressPatch
+          // triggers writeCacheInBackground — preventing the race where schema-only data
+          // overwrites the API-enriched cache.
+          if (schemaEntries.length > 0) {
+            const detectedPlatform = this.resolvePlatform(appId, "steam-official");
+            const { ensureSchemaGenerated } = await import("./steamAchievementsResolver");
+            try {
+              const generated = await ensureSchemaGenerated(appId, this._steamPath, this._steamAccountId, this._steamWebApiKey, detectedPlatform);
+              if (generated) {
+                console.log(`[ACH][SCHEMA_GEN] appid=${appId} watcher-triggered: ${generated.achievements.length} entries source=${generated.summary.source}`);
+                import("./backgroundJobQueue")
+                  .then(({ enqueueAchievementImageJobs }) => {
+                    enqueueAchievementImageJobs([appId], "normal");
+                  })
+                  .catch(() => {});
+
+                // Re-enrich nameMap + iconMap from the freshly-written v7 cache.
+                // The nameMap built earlier (from KV binary + old disk cache) is stale —
+                // it didn't have the API display names that generateAchievementSchema just wrote.
+                for (const ach of generated.achievements) {
+                  if (ach.name && ach.name !== ach.api_name && !nameMap.has(ach.api_name)) {
+                    nameMap.set(ach.api_name, ach.name);
+                  }
+                  const ic = ach.icon ?? ach.icon_url;
+                  const icGray = ach.icon_gray ?? ach.icon_gray_url;
+                  if (ic || icGray) {
+                    iconMap.set(ach.api_name, { icon: ic, iconGray: icGray });
+                  }
+                  if (ach.rarity_percent != null) {
+                    rarityMap.set(ach.api_name, ach.rarity_percent);
+                  }
+                  if (ach.description && !descriptionMap.has(ach.api_name)) {
+                    descriptionMap.set(ach.api_name, ach.description);
+                  }
+                }
+                // Update the patch with enriched maps
+                if (effectivePatch) {
+                  effectivePatch.nameMap = nameMap.size > 0 ? nameMap : undefined;
+                  effectivePatch.iconMap = iconMap.size > 0 ? iconMap : undefined;
+                  effectivePatch.rarityMap = rarityMap.size > 0 ? rarityMap : undefined;
+                  effectivePatch.descriptionMap = descriptionMap.size > 0 ? descriptionMap : undefined;
+                  console.log(`[ACH][SCHEMA_GEN] appid=${appId} re-enriched nameMap=${nameMap.size} iconMap=${iconMap.size} rarityMap=${rarityMap.size} descriptionMap=${descriptionMap.size}`);
+                }
+
+                // Fallback: if v7 cache had no rarity (Rust fetch_global_percentages silently fails),
+                // fetch directly via TS-side Tauri command which handles errors properly.
+                if (rarityMap.size === 0 && schemaEntries.length > 0) {
+                  try {
+                    const { fetchSteamGlobalAchievementPercentages } = await import("./tauri");
+                    const globalData = await fetchSteamGlobalAchievementPercentages(Number(appId));
+                    const d = globalData as { achievementpercentages?: { achievements?: { name: string; percent: unknown }[] } };
+                    const list = d?.achievementpercentages?.achievements;
+                    if (list) {
+                      for (const a of list) {
+                        const p = Number(a.percent);
+                        if (Number.isFinite(p)) {
+                          rarityMap.set(a.name, p);
+                        }
+                      }
+                    }
+                    if (rarityMap.size > 0 && effectivePatch) {
+                      effectivePatch.rarityMap = rarityMap;
+                      console.log(`[ACH][RARITY_FALLBACK] appid=${appId} fetched ${rarityMap.size} global percentages via TS-side`);
+                    }
+                  } catch (err) {
+                    console.warn(`[ACH][RARITY_FALLBACK] appid=${appId} failed: ${err}`);
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn(`[ACH][SCHEMA_GEN] appid=${appId} watcher-triggered failed: ${err}`);
+            }
           }
         } catch (e) {
           console.warn(`[ACH][PIPELINE] usergamestats_direct appid=${appId} error=${e}`);
@@ -1309,13 +1446,26 @@ class AchievementWatcherService {
       // No binary stats patch produced.
       // For cracked games on librarycache source: skip binary stats entirely (crack data
       // comes from processCrackIniChange, not from appcache/stats/).
-      // Schedule resolver refresh to get authoritative data when binary stats unavailable.
+      // For official Steam games: check if .bin files exist before falling back to librarycache.
+      // Steam creates UserGameStatsSchema_<appId>.bin and UserGameStats_<accountId>_<appId>.bin
+      // when the game runs for the first time. If they don't exist yet, wait and retry
+      // instead of immediately giving up (per reference implementation: no librarycache fallback).
       if (!effectivePatch) {
         if (isCrackedGame) {
           console.log(`[ACH][PIPELINE] binary-stats-skipped appid=${appId} reason=cracked-game platform=steam`);
-        } else {
-          console.log(`[ACH][PIPELINE] no-binary-stats appid=${appId} scheduling-resolver-refresh`);
+          this._scheduleResolverRefresh(appId, traceId).catch(() => {});
+          return false;
         }
+
+        // Check if KV binary schema exists — if not, game may not have been run yet
+        const binsExist = await this._checkBinaryFilesExist(appId);
+        if (!binsExist) {
+          console.log(`[ACH][PIPELINE] no-binary-stats appid=${appId} reason=bins-not-found scheduling-binary-wait`);
+          this._scheduleBinaryWaitRetry(appId, source, traceId);
+          return false;
+        }
+
+        console.log(`[ACH][PIPELINE] no-binary-stats appid=${appId} bins-exist scheduling-resolver-refresh`);
         this._scheduleResolverRefresh(appId, traceId).catch(() => {});
         return false;
       }
@@ -1435,6 +1585,50 @@ class AchievementWatcherService {
     }, delay);
   }
 
+  // ── Binary wait retry: poll for .bin files before falling back to librarycache ──
+
+  /**
+   * Check if the KV binary schema and stats bins exist in appcache/stats/.
+   * These are created by Steam when the game runs for the first time.
+   * Returns true if at least the schema bin exists (sufficient for full schema generation).
+   */
+  private async _checkBinaryFilesExist(appId: string): Promise<boolean> {
+    try {
+      const scanResult = await scanSteamAppcacheAchievements({
+        steamPath: this._steamPath,
+        steamAccountId: this._steamAccountId,
+        appId: Number(appId),
+      });
+      return scanResult.schema_file_found;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Schedule a retry to check for binary files before giving up.
+   * Uses progressive backoff (2s, 3s, 5s, 8s, 12s) since Steam may take time
+   * to create the bins on first game launch. No librarycache fallback —
+   * if .bin never appears, the game shows as unavailable (per reference implementation).
+   */
+  private _scheduleBinaryWaitRetry(appId: string, source: string, traceId: string): void {
+    const retryCount = this._binaryWaitRetries.get(appId) ?? 0;
+    if (retryCount >= AchievementWatcherService.BINARY_WAIT_MAX_RETRIES) {
+      console.log(`[ACH][BINARY_WAIT] appid=${appId} max-retries=${AchievementWatcherService.BINARY_WAIT_MAX_RETRIES} reached, falling back to resolver`);
+      this._binaryWaitRetries.delete(appId);
+      this._scheduleResolverRefresh(appId, traceId).catch(() => {});
+      return;
+    }
+    const delay = AchievementWatcherService.BINARY_WAIT_DELAYS_MS[retryCount] ?? 12000;
+    this._binaryWaitRetries.set(appId, retryCount + 1);
+    console.log(`[ACH][BINARY_WAIT] appid=${appId} retry=${retryCount + 1}/${AchievementWatcherService.BINARY_WAIT_MAX_RETRIES} delay=${delay}ms`);
+    window.setTimeout(() => {
+      this.processLibrarycacheChange(appId, `binary-wait://${appId}`, source, traceId).catch((err) => {
+        console.warn(`[ACH][BINARY_WAIT] appid=${appId} error=${err}`);
+      });
+    }, delay);
+  }
+
   // ── Resolver refresh fallback for stale/partial librarycache data ──
 
   private _pendingResolverAppIds = new Set<string>();
@@ -1447,8 +1641,8 @@ class AchievementWatcherService {
     this._pendingResolverAppIds.add(appId);
 
     try {
-      // Wait 3s for librarycache to stabilize before using resolver
-      await sleep(500);
+      // Wait for bins to stabilize before running resolver (ensureSchemaGenerated needs time)
+      await sleep(3000);
 
       const { resolveSteamAchievements } = await import("./steamAchievementsResolver");
       const detectedPlatform = this._platformByAppId.get(appId);
@@ -1480,9 +1674,13 @@ class AchievementWatcherService {
           progress: a.progress,
           maxProgress: a.maxProgress,
         }])),
+        nameMap: new Map(summary.achievements.filter(a => a.name && a.name !== a.apiName).map(a => [a.apiName, a.name])),
+        rarityMap: new Map(summary.achievements.filter(a => a.rarityPercent != null).map(a => [a.apiName, a.rarityPercent!])),
+        iconMap: new Map(summary.achievements.filter(a => a.iconUrl || a.iconGrayUrl).map(a => [a.apiName, { icon: a.iconUrl, iconGray: a.iconGrayUrl }])),
       };
 
       console.log(`[ACH][RT_RESOLVER_REFRESH] appid=${appId} total=${patch.total} unlocked=${patch.unlocked} platform=${detectedPlatform}`);
+      this._binaryWaitRetries.delete(appId);
       achievementStore.applyProgressPatch(appId, patch, _traceId, detectedPlatform);
 
       // Enqueue image downloads for this game immediately after schema resolution
