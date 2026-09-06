@@ -763,6 +763,36 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       </div>
                     </div>
 
+                    <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
+                      <div className="space-y-0.5">
+                        <label className="text-sm font-medium text-(--color-text)">
+                          {t("settings.test_overlay")}
+                        </label>
+                        <p className="text-xs text-(--color-muted)">
+                          {t("settings.test_overlay_desc")}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const { showSessionOverlay } = await import("../services/sessionOverlayService");
+                            await showSessionOverlay({
+                              type: "launch",
+                              gameTitle: "Test Game",
+                              provider: "Steam",
+                            });
+                          } catch (err) {
+                            console.warn("Test overlay failed:", err);
+                          }
+                        }}
+                        className="flex shrink-0 items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                      >
+                        <Play className="h-4 w-4" />
+                        {t("settings.test_overlay_btn")}
+                      </button>
+                    </div>
+
                     <ToggleOption
                       label={t("settings.hud")}
                       description={t("settings.hud_desc")}
