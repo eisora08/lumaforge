@@ -6,11 +6,11 @@ function readOverlayPosition(): OverlayPosition {
   try {
     const raw = localStorage.getItem("lumaforge-settings");
     const settings = raw ? JSON.parse(raw) : {};
-    const pos = settings.overlayNotificationPosition;
+    const pos = settings.sessionOverlayNotificationPosition;
     const valid: OverlayPosition[] = ["top-right", "top-left", "bottom-right", "bottom-left", "top-center", "bottom-center"];
-    return valid.includes(pos) ? pos : "top-right";
+    return valid.includes(pos) ? pos : "top-center";
   } catch {
-    return "top-right";
+    return "top-center";
   }
 }
 
@@ -18,7 +18,7 @@ function readOverlayScale(): number {
   try {
     const raw = localStorage.getItem("lumaforge-settings");
     const settings = raw ? JSON.parse(raw) : {};
-    const s = Number(settings.overlayNotificationScale);
+    const s = Number(settings.sessionOverlayNotificationScale);
     return Number.isFinite(s) && s >= 0.5 && s <= 2 ? s : 1;
   } catch {
     return 1;

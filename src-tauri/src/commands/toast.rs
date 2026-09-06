@@ -12,9 +12,11 @@ pub fn show_achievement_overlay(
     duration: Option<u64>,
     theme_vars: Option<serde_json::Value>,
     overlay_position: Option<String>,
+    overlay_scale: Option<f64>,
 ) -> Result<(), String> {
     eprintln!("[ACH][OVERLAY][RUST] command_start");
 
+    let scale = overlay_scale.unwrap_or(1.0).clamp(0.5, 2.0);
     let dur = duration.unwrap_or(4500);
     let mut data = serde_json::json!({
         "name": name,
@@ -30,6 +32,7 @@ pub fn show_achievement_overlay(
     }
     let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
     data["overlayPosition"] = serde_json::Value::String(position.clone());
+    data["scale"] = serde_json::json!(scale);
     let js = format!(
         "window.__showAchievementToast({})",
         serde_json::to_string(&data).unwrap()
@@ -45,8 +48,8 @@ pub fn show_achievement_overlay(
 
         let window = match app_clone.get_webview_window(label) {
             Some(w) => {
-                eprintln!("[ACH][OVERLAY][RUST] window_exists=true resizing_to=420x140");
-                let _ = w.set_size(LogicalSize::new(420.0, 140.0));
+                eprintln!("[ACH][OVERLAY][RUST] window_exists=true resizing_to={}x{}", 420.0 * scale, 140.0 * scale);
+                let _ = w.set_size(LogicalSize::new(420.0 * scale, 140.0 * scale));
                 w
             }
             None => {
@@ -60,7 +63,7 @@ pub fn show_achievement_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0, 140.0)
+                .inner_size(420.0 * scale, 140.0 * scale)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
@@ -79,7 +82,7 @@ pub fn show_achievement_overlay(
                 w
             }
         };
-        let _ = position_window(&app_clone, &window, &pos);
+        let _ = position_window(&app_clone, &window, &pos, Some((420.0 * scale, 140.0 * scale)));
 
         // Brief pause for page JS to initialize before eval
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -125,9 +128,11 @@ pub fn show_achievement_overlay_batch(
     max_duration: u64,
     theme_vars: Option<serde_json::Value>,
     overlay_position: Option<String>,
+    overlay_scale: Option<f64>,
 ) -> Result<(), String> {
     eprintln!("[ACH][OVERLAY_BATCH][RUST] command_start count={}", toasts.len());
 
+    let scale = overlay_scale.unwrap_or(1.0).clamp(0.5, 2.0);
     let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
     let batch_data = serde_json::json!({
         "toasts": toasts,
@@ -138,6 +143,7 @@ pub fn show_achievement_overlay_batch(
         data["themeVars"] = vars;
     }
     data["overlayPosition"] = serde_json::Value::String(position.clone());
+    data["scale"] = serde_json::json!(scale);
     let js = format!(
         "window.__showAchievementBatchToast({})",
         serde_json::to_string(&data).unwrap()
@@ -153,8 +159,8 @@ pub fn show_achievement_overlay_batch(
 
         let window = match app_clone.get_webview_window(label) {
             Some(w) => {
-                eprintln!("[ACH][OVERLAY_BATCH][RUST] window_exists=true resizing_to=420x140");
-                let _ = w.set_size(LogicalSize::new(420.0, 140.0));
+                eprintln!("[ACH][OVERLAY_BATCH][RUST] window_exists=true resizing_to={}x{}", 420.0 * scale, 140.0 * scale);
+                let _ = w.set_size(LogicalSize::new(420.0 * scale, 140.0 * scale));
                 w
             }
             None => {
@@ -168,7 +174,7 @@ pub fn show_achievement_overlay_batch(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0, 140.0)
+                .inner_size(420.0 * scale, 140.0 * scale)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
@@ -185,12 +191,12 @@ pub fn show_achievement_overlay_batch(
             }
         };
 
-        // Resize window based on toast count: each toast ~95px + 20px padding top/bottom
+        // Resize window based on toast count: each toast ~110px + 36px padding top/bottom
         let toast_count = toasts.len().max(1) as f64;
-        let window_height = (20.0 + toast_count * 95.0).min(600.0);
-        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(420.0, window_height)));
+        let window_height = (36.0 + toast_count * 110.0).min(600.0) * scale;
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(420.0 * scale, window_height)));
 
-        let _ = position_window(&app_clone, &window, &pos);
+        let _ = position_window(&app_clone, &window, &pos, Some((420.0 * scale, window_height)));
 
         // Brief pause for page JS to initialize
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -265,8 +271,8 @@ pub fn show_session_overlay(
 
         let window = match app_clone.get_webview_window(label) {
             Some(w) => {
-                eprintln!("[SESSION][OVERLAY][RUST] window_exists=true resizing_to={}x{}", 420.0 * scale, 340.0 * scale);
-                let _ = w.set_size(LogicalSize::new(420.0 * scale, 340.0 * scale));
+                eprintln!("[SESSION][OVERLAY][RUST] window_exists=true resizing_to={}x{}", 468.0 * scale, 308.0 * scale);
+                let _ = w.set_size(LogicalSize::new(468.0 * scale, 308.0 * scale));
                 w
             }
             None => {
@@ -280,7 +286,7 @@ pub fn show_session_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0 * scale, 340.0 * scale)
+                    .inner_size(468.0 * scale, 308.0 * scale)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
@@ -299,7 +305,7 @@ pub fn show_session_overlay(
                 w
             }
         };
-        let _ = position_window(&app_clone, &window, &pos);
+        let _ = position_window(&app_clone, &window, &pos, Some((468.0 * scale, 308.0 * scale)));
 
         std::thread::sleep(std::time::Duration::from_millis(500));
 
@@ -394,7 +400,7 @@ pub fn show_toast_notification(
             .build()
             .map_err(|e| format!("Failed to create toast window: {}", e))?;
 
-            position_window(&app_handle, &w, "top-right")?;
+            position_window(&app_handle, &w, "top-right", Some((440.0, 130.0)))?;
 
             w
         }
@@ -433,28 +439,35 @@ fn position_window(
     app_handle: &tauri::AppHandle,
     window: &tauri::WebviewWindow,
     position: &str,
+    known_size: Option<(f64, f64)>,
 ) -> Result<(), String> {
     if let Some(main) = app_handle.get_webview_window("main") {
         if let Ok(Some(monitor)) = main.current_monitor() {
             let scale = monitor.scale_factor();
             let logical_size: tauri::LogicalSize<f64> = monitor.size().to_logical(scale);
-            let window_size = window.outer_size().map_err(|e| e.to_string())?;
-            let logical_window: tauri::LogicalSize<f64> = window_size.to_logical(scale);
+
+            let (w, h) = if let Some((lw, lh)) = known_size {
+                (lw, lh)
+            } else {
+                let window_size = window.outer_size().map_err(|e| e.to_string())?;
+                let logical_window: tauri::LogicalSize<f64> = window_size.to_logical(scale);
+                (logical_window.width, logical_window.height)
+            };
 
             let pad: i32 = 18;
-            let w = logical_window.width as i32;
-            let h = logical_window.height as i32;
+            let wi = w as i32;
+            let hi = h as i32;
             let mw = logical_size.width as i32;
             let mh = logical_size.height as i32;
 
             let (x, y) = match position {
                 "top-left" => (pad, pad),
-                "top-right" => ((mw - w).max(0) - pad, pad),
-                "bottom-left" => (pad, (mh - h).max(0) - pad),
-                "bottom-right" => ((mw - w).max(0) - pad, (mh - h).max(0) - pad),
-                "top-center" => (((mw - w) / 2).max(0), pad),
-                "bottom-center" => (((mw - w) / 2).max(0), (mh - h).max(0) - pad),
-                _ => ((mw - w).max(0) - pad, pad),
+                "top-right" => ((mw - wi).max(0) - pad, pad),
+                "bottom-left" => (pad, (mh - hi).max(0) - pad),
+                "bottom-right" => ((mw - wi).max(0) - pad, (mh - hi).max(0) - pad),
+                "top-center" => (((mw - wi) / 2).max(0), pad),
+                "bottom-center" => (((mw - wi) / 2).max(0), (mh - hi).max(0) - pad),
+                _ => ((mw - wi).max(0) - pad, pad),
             };
 
             window

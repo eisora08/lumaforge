@@ -752,60 +752,123 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       }
                     />
 
-                    <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          {t("settings.overlay_position")}
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {t("settings.overlay_position_desc")}
-                        </p>
+                    <div className="lf-surface flex flex-col rounded-2xl border p-4">
+                      {/* Session overlay position */}
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium text-(--color-text)">
+                            {t("settings.session_overlay_position")}
+                          </label>
+                          <p className="text-xs text-(--color-muted)">
+                            {t("settings.session_overlay_position_desc")}
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-0.5 overflow-hidden rounded-lg border border-(--surface-active-border)">
+                          {(["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"] as const).map((pos) => (
+                            <button
+                              key={`session-${pos}`}
+                              type="button"
+                              onClick={() => updateSetting("sessionOverlayNotificationPosition", pos)}
+                              className={`cursor-pointer px-2 py-1.5 text-[11px] font-medium transition ${
+                                settings.sessionOverlayNotificationPosition === pos
+                                  ? "bg-(--color-accent) text-(--color-accent-text)"
+                                  : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                              }`}
+                            >
+                              {pos === "top-left" ? "TL" :
+                               pos === "top-center" ? "TC" :
+                               pos === "top-right" ? "TR" :
+                               pos === "bottom-left" ? "BL" :
+                               pos === "bottom-center" ? "BC" :
+                               "BR"}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-0.5 overflow-hidden rounded-lg border border-(--surface-active-border)">
-                        {(["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"] as const).map((pos) => (
-                          <button
-                            key={pos}
-                            type="button"
-                            onClick={() => updateSetting("overlayNotificationPosition", pos)}
-                            className={`cursor-pointer px-2 py-1.5 text-[11px] font-medium transition ${
-                              settings.overlayNotificationPosition === pos
-                                ? "bg-(--color-accent) text-(--color-accent-text)"
-                                : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
-                            }`}
-                          >
-                            {pos === "top-left" ? "TL" :
-                             pos === "top-center" ? "TC" :
-                             pos === "top-right" ? "TR" :
-                             pos === "bottom-left" ? "BL" :
-                             pos === "bottom-center" ? "BC" :
-                             "BR"}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
 
-                    <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          {t("settings.overlay_scale")}
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {t("settings.overlay_scale_desc")}
-                        </p>
+                      {/* Session overlay scale */}
+                      <div className="flex items-center justify-between gap-4 border-t border-(--surface-active-border) pt-3 mt-3">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium text-(--color-text)">
+                            {t("settings.session_overlay_scale")}
+                          </label>
+                          <p className="text-xs text-(--color-muted)">
+                            {t("settings.session_overlay_scale_desc")}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={0.7}
+                            max={1.5}
+                            step={0.05}
+                            value={settings.sessionOverlayNotificationScale ?? 1}
+                            onChange={(e) => updateSetting("sessionOverlayNotificationScale", Number(e.target.value))}
+                            className="w-24 accent-(--color-accent)"
+                          />
+                          <span className="min-w-[3ch] text-right text-xs font-medium text-(--color-text)">
+                            {(settings.sessionOverlayNotificationScale ?? 1).toFixed(2)}x
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min={0.7}
-                          max={1.5}
-                          step={0.05}
-                          value={settings.overlayNotificationScale ?? 1}
-                          onChange={(e) => updateSetting("overlayNotificationScale", Number(e.target.value))}
-                          className="w-24 accent-(--color-accent)"
-                        />
-                        <span className="min-w-[3ch] text-right text-xs font-medium text-(--color-text)">
-                          {(settings.overlayNotificationScale ?? 1).toFixed(2)}x
-                        </span>
+
+                      {/* Achievement overlay position */}
+                      <div className="flex items-center justify-between gap-4 border-t border-(--surface-active-border) pt-3 mt-3">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium text-(--color-text)">
+                            {t("settings.achievement_overlay_position")}
+                          </label>
+                          <p className="text-xs text-(--color-muted)">
+                            {t("settings.achievement_overlay_position_desc")}
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-0.5 overflow-hidden rounded-lg border border-(--surface-active-border)">
+                          {(["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"] as const).map((pos) => (
+                            <button
+                              key={`ach-${pos}`}
+                              type="button"
+                              onClick={() => updateSetting("overlayNotificationPosition", pos)}
+                              className={`cursor-pointer px-2 py-1.5 text-[11px] font-medium transition ${
+                                settings.overlayNotificationPosition === pos
+                                  ? "bg-(--color-accent) text-(--color-accent-text)"
+                                  : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                              }`}
+                            >
+                              {pos === "top-left" ? "TL" :
+                               pos === "top-center" ? "TC" :
+                               pos === "top-right" ? "TR" :
+                               pos === "bottom-left" ? "BL" :
+                               pos === "bottom-center" ? "BC" :
+                               "BR"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Achievement overlay scale */}
+                      <div className="flex items-center justify-between gap-4 border-t border-(--surface-active-border) pt-3 mt-3">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium text-(--color-text)">
+                            {t("settings.achievement_overlay_scale")}
+                          </label>
+                          <p className="text-xs text-(--color-muted)">
+                            {t("settings.achievement_overlay_scale_desc")}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={0.7}
+                            max={1.5}
+                            step={0.05}
+                            value={settings.overlayNotificationScale ?? 1}
+                            onChange={(e) => updateSetting("overlayNotificationScale", Number(e.target.value))}
+                            className="w-24 accent-(--color-accent)"
+                          />
+                          <span className="min-w-[3ch] text-right text-xs font-medium text-(--color-text)">
+                            {(settings.overlayNotificationScale ?? 1).toFixed(2)}x
+                          </span>
+                        </div>
                       </div>
                     </div>
 
