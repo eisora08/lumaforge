@@ -63,9 +63,9 @@
     }
 
     .toast.achieve {
-      width: var(--ach-card-width, 320px);
-      min-width: var(--ach-card-width, 320px);
-      max-width: var(--ach-card-width, 320px);
+      width: 320px;
+      min-width: 320px;
+      max-width: 320px;
       border-radius: 16px;
       padding: 12px 16px;
       background: color-mix(in srgb, var(--ach-bg) 95%, transparent);
@@ -740,15 +740,6 @@
       setOverlayPosition(data.overlayPosition);
       applyThemeVars(data.themeVars);
 
-      // Apply scale — base card 420×140
-      var scale = Number(data.scale) || 1;
-      if (scale < 0.5) scale = 0.5;
-      if (scale > 2) scale = 2;
-      var root = document.documentElement;
-      root.style.setProperty('--card-width', Math.round(420 * scale) + 'px');
-      root.style.setProperty('--card-height', Math.round(140 * scale) + 'px');
-      root.style.setProperty('--ach-card-width', Math.round(320 * scale) + 'px');
-
       var duration = data.duration || 4500;
       var rarity = (data.rarity != null && Number.isFinite(data.rarity)) ? data.rarity : null;
 
@@ -877,15 +868,6 @@
 
       setOverlayPosition(data.overlayPosition);
       applyThemeVars(data.themeVars);
-
-      // Apply scale — base card 420×140
-      var scale = Number(data.scale) || 1;
-      if (scale < 0.5) scale = 0.5;
-      if (scale > 2) scale = 2;
-      var root = document.documentElement;
-      root.style.setProperty('--card-width', Math.round(420 * scale) + 'px');
-      root.style.setProperty('--card-height', Math.round(140 * scale) + 'px');
-      root.style.setProperty('--ach-card-width', Math.round(320 * scale) + 'px');
 
       var toasts = data.toasts || [];
       var perToastDuration = data.maxDuration || 4500;

@@ -188,11 +188,6 @@ function readOverlayPosition(): OverlayPosition {
   return valid.includes(pos) ? pos : "top-right";
 }
 
-function readOverlayScale(): number {
-  const s = Number(readSettings().overlayNotificationScale);
-  return Number.isFinite(s) && s >= 0.5 && s <= 2 ? s : 1;
-}
-
 // ── Batch toast collector ──
 // Collects all toasts within a short window and sends them as a single batch
 // so multiple simultaneous unlocks are all shown at once in a vertical stack.
@@ -262,7 +257,6 @@ export async function showAchievementOverlay(params: {
   try {
     const themeVars = collectThemeVars();
     const overlayPosition = readOverlayPosition();
-    const overlayScale = readOverlayScale();
     const invokePayload = {
       name: params.name,
       description: params.description ?? null,
@@ -273,7 +267,6 @@ export async function showAchievementOverlay(params: {
       duration: params.duration ?? null,
       themeVars,
       overlayPosition,
-      overlayScale,
     };
     await Promise.race([
       invoke("show_achievement_overlay", invokePayload),
@@ -334,13 +327,11 @@ export async function showAchievementOverlayBatch(
   try {
     const themeVars = collectThemeVars();
     const overlayPosition = readOverlayPosition();
-    const overlayScale = readOverlayScale();
     const invokePayload = {
       toasts: resolved,
       maxDuration,
       themeVars,
       overlayPosition,
-      overlayScale,
     };
     await Promise.race([
       invoke("show_achievement_overlay_batch", invokePayload),

@@ -1,4 +1,4 @@
-use tauri::{LogicalPosition, Manager};
+use tauri::{LogicalPosition, LogicalSize, Manager};
 
 #[tauri::command]
 pub fn show_achievement_overlay(
@@ -12,11 +12,9 @@ pub fn show_achievement_overlay(
     duration: Option<u64>,
     theme_vars: Option<serde_json::Value>,
     overlay_position: Option<String>,
-    overlay_scale: Option<f64>,
 ) -> Result<(), String> {
     eprintln!("[ACH][OVERLAY][RUST] command_start");
 
-    let scale = overlay_scale.unwrap_or(1.0).clamp(0.5, 2.0);
     let dur = duration.unwrap_or(4500);
     let mut data = serde_json::json!({
         "name": name,
@@ -32,7 +30,6 @@ pub fn show_achievement_overlay(
     }
     let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
     data["overlayPosition"] = serde_json::Value::String(position.clone());
-    data["scale"] = serde_json::json!(scale);
     let js = format!(
         "window.__showAchievementToast({})",
         serde_json::to_string(&data).unwrap()
@@ -48,7 +45,8 @@ pub fn show_achievement_overlay(
 
         let window = match app_clone.get_webview_window(label) {
             Some(w) => {
-                eprintln!("[ACH][OVERLAY][RUST] window_exists=true");
+                eprintln!("[ACH][OVERLAY][RUST] window_exists=true resizing_to=420x140");
+                let _ = w.set_size(LogicalSize::new(420.0, 140.0));
                 w
             }
             None => {
@@ -62,7 +60,7 @@ pub fn show_achievement_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0 * scale, 140.0 * scale)
+                .inner_size(420.0, 140.0)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
@@ -127,11 +125,9 @@ pub fn show_achievement_overlay_batch(
     max_duration: u64,
     theme_vars: Option<serde_json::Value>,
     overlay_position: Option<String>,
-    overlay_scale: Option<f64>,
 ) -> Result<(), String> {
     eprintln!("[ACH][OVERLAY_BATCH][RUST] command_start count={}", toasts.len());
 
-    let scale = overlay_scale.unwrap_or(1.0).clamp(0.5, 2.0);
     let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
     let batch_data = serde_json::json!({
         "toasts": toasts,
@@ -142,7 +138,6 @@ pub fn show_achievement_overlay_batch(
         data["themeVars"] = vars;
     }
     data["overlayPosition"] = serde_json::Value::String(position.clone());
-    data["scale"] = serde_json::json!(scale);
     let js = format!(
         "window.__showAchievementBatchToast({})",
         serde_json::to_string(&data).unwrap()
@@ -158,7 +153,8 @@ pub fn show_achievement_overlay_batch(
 
         let window = match app_clone.get_webview_window(label) {
             Some(w) => {
-                eprintln!("[ACH][OVERLAY_BATCH][RUST] window_exists=true");
+                eprintln!("[ACH][OVERLAY_BATCH][RUST] window_exists=true resizing_to=420x140");
+                let _ = w.set_size(LogicalSize::new(420.0, 140.0));
                 w
             }
             None => {
@@ -172,7 +168,7 @@ pub fn show_achievement_overlay_batch(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0 * scale, 140.0 * scale)
+                .inner_size(420.0, 140.0)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
@@ -269,7 +265,8 @@ pub fn show_session_overlay(
 
         let window = match app_clone.get_webview_window(label) {
             Some(w) => {
-                eprintln!("[SESSION][OVERLAY][RUST] window_exists=true");
+                eprintln!("[SESSION][OVERLAY][RUST] window_exists=true resizing_to={}x{}", 420.0 * scale, 340.0 * scale);
+                let _ = w.set_size(LogicalSize::new(420.0 * scale, 340.0 * scale));
                 w
             }
             None => {
