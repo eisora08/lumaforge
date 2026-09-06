@@ -11,8 +11,6 @@ const THEME_VAR_NAMES = [
   "--color-accent",
   "--surface-active-border",
   "--surface-active",
-  "--surface-active-blur",
-  "--surface-active-hover",
 ] as const;
 
 type ThemeVars = Record<string, string>;

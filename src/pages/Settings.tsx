@@ -729,6 +729,27 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       description={t("settings.overlay_window_desc")}
                       enabled={settings.gameSessionOverlayEnabled}
                       onChange={(enabled) => updateSetting("gameSessionOverlayEnabled", enabled)}
+                      trailing={
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const { showSessionOverlay } = await import("../services/sessionOverlayService");
+                              await showSessionOverlay({
+                                type: "launch",
+                                gameTitle: "Test Game",
+                                provider: "Steam",
+                              });
+                            } catch (err) {
+                              console.warn("Test overlay failed:", err);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-[11px] font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                        >
+                          <Play className="h-3 w-3" />
+                          {t("settings.test_overlay_btn")}
+                        </button>
+                      }
                     />
 
                     <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
@@ -763,36 +784,6 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       </div>
                     </div>
 
-                    <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          {t("settings.test_overlay")}
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {t("settings.test_overlay_desc")}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            const { showSessionOverlay } = await import("../services/sessionOverlayService");
-                            await showSessionOverlay({
-                              type: "launch",
-                              gameTitle: "Test Game",
-                              provider: "Steam",
-                            });
-                          } catch (err) {
-                            console.warn("Test overlay failed:", err);
-                          }
-                        }}
-                        className="flex shrink-0 items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-                      >
-                        <Play className="h-4 w-4" />
-                        {t("settings.test_overlay_btn")}
-                      </button>
-                    </div>
-
                     <ToggleOption
                       label={t("settings.hud")}
                       description={t("settings.hud_desc")}
@@ -812,6 +803,28 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       description={t("settings.achievement_overlay_desc")}
                       enabled={settings.achievementOverlayNotificationsEnabled}
                       onChange={(enabled) => updateSetting("achievementOverlayNotificationsEnabled", enabled)}
+                      trailing={
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const { showAchievementOverlay } = await import("../services/achievementNotificationService");
+                              await showAchievementOverlay({
+                                name: "TEST_ACHIEVEMENT",
+                                description: "This is a test achievement unlock.",
+                                gameTitle: "Test Game",
+                                duration: 5000,
+                              });
+                            } catch (err) {
+                              console.warn("Test achievement overlay failed:", err);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-[11px] font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                        >
+                          <Play className="h-3 w-3" />
+                          {t("settings.test_overlay_btn")}
+                        </button>
+                      }
                     />
 
                     <ToggleOption
@@ -819,6 +832,28 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       description={t("settings.launcher_overlay_desc")}
                       enabled={settings.launcherAchievementOverlayEnabled}
                       onChange={(enabled) => updateSetting("launcherAchievementOverlayEnabled", enabled)}
+                      trailing={
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const { showAchievementOverlay } = await import("../services/achievementNotificationService");
+                              await showAchievementOverlay({
+                                name: "LAUNCHER_META_TEST",
+                                description: "Test launcher meta-achievement.",
+                                gameTitle: "LumaForge",
+                                duration: 5000,
+                              });
+                            } catch (err) {
+                              console.warn("Test launcher overlay failed:", err);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-[11px] font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                        >
+                          <Play className="h-3 w-3" />
+                          {t("settings.test_overlay_btn")}
+                        </button>
+                      }
                     />
                   </div>
                 </SettingsSection>
