@@ -17,8 +17,6 @@ import {
   RefreshCw,
   Code,
   HardDrive,
-  Info,
-  Globe,
   ChevronDown,
   ExternalLink,
   Video,
@@ -256,6 +254,9 @@ export default function GameEditDialog({
   // Browse source menu state per role
   const [browseOpenFor, setBrowseOpenFor] = useState<MediaRole | null>(null);
   const [browsingRole, setBrowsingRole] = useState<MediaRole | null>(null);
+
+  // Fullscreen preview modal for saved media
+  const [previewModalRole, setPreviewModalRole] = useState<MediaRole | null>(null);
 
   // Media preview state (resolved via Rust resolveGameMediaPaths)
   const [rolePreviews, setRolePreviews] = useState<Record<string, RolePreviewEntry>>({});
@@ -2832,6 +2833,7 @@ export default function GameEditDialog({
             onSourcePick={(sourceId) => handleSourcePick(role, sourceId as SourceId)}
             onOpenWebSearch={() => handleOpenImageSearch(role)}
             onRemove={() => handleRemove(role)}
+            onPreviewClick={() => setPreviewModalRole(role)}
           />
         ))}
 
@@ -2954,6 +2956,46 @@ export default function GameEditDialog({
           <FolderOpen className="h-4 w-4" />
           Open Media Folder
         </button>
+
+        {/* ── Fullscreen Preview Modal for saved media ── */}
+        {previewModalRole && getPreviewUrl(previewModalRole) && (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70"
+            onClick={() => setPreviewModalRole(null)}
+          >
+            <div
+              className="mx-4 flex max-h-[85vh] w-full max-w-[700px] flex-col rounded-xl bg-[var(--surface-1)] p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-medium text-[var(--color-text)]">
+                  {MEDIA_ROLES.find((r) => r.role === previewModalRole)?.label ?? previewModalRole}
+                </span>
+                <button
+                  onClick={() => setPreviewModalRole(null)}
+                  className="rounded-lg p-1 text-[var(--color-muted)] hover:bg-white/10"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex flex-1 items-center justify-center overflow-hidden rounded-lg bg-black/30">
+                <img
+                  src={getPreviewUrl(previewModalRole)!}
+                  alt={previewModalRole}
+                  className="max-h-[60vh] max-w-full object-contain"
+                />
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  onClick={() => setPreviewModalRole(null)}
+                  className="rounded-lg border border-[var(--surface-active-border)] px-3 py-1.5 text-xs text-[var(--color-text)] hover:bg-white/5"
+                >
+                  {t("web_image_search.close", "Close")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { WebImageResult } from "../../services/tauri";
 import { searchWebImages } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
+import SourceDropdown from "../common/SourceDropdown";
 
 type MediaRole = "cover" | "landscape" | "background" | "logo" | "icon";
 
@@ -51,11 +52,23 @@ function getPresets(t: (key: string, fallback: string) => string): Record<MediaR
 function detectFormat(w: number, h: number): string {
   if (w === 0 || h === 0) return "Unknown";
   const ratio = w / h;
-  if (Math.abs(ratio - 2 / 3) < 0.15) return "Cover (2:3)";
-  if (Math.abs(ratio - 3 / 2) < 0.15) return "Landscape (3:2)";
-  if (Math.abs(ratio - 16 / 9) < 0.15) return "Hero (16:9)";
-  if (Math.abs(ratio - 1) < 0.15) return "Icon (1:1)";
-  if (Math.abs(ratio - 21 / 9) < 0.15) return "Ultra-wide (21:9)";
+  const formats: [string, number][] = [
+    ["Cover (2:3)", 2 / 3],
+    ["Landscape (3:2)", 3 / 2],
+    ["Hero (16:9)", 16 / 9],
+    ["Icon (1:1)", 1],
+    ["Ultra-wide (21:9)", 21 / 9],
+  ];
+  let best = "";
+  let bestDist = Infinity;
+  for (const [label, target] of formats) {
+    const dist = Math.abs(ratio - target);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = label;
+    }
+  }
+  if (bestDist < 0.15) return best;
   return `${w}x${h} (${ratio.toFixed(2)}:1)`;
 }
 
@@ -176,14 +189,14 @@ export default function WebImageGrid({ query, role = "cover", onSelect }: Props)
     <div className="flex flex-col gap-3">
       {/* Search bar */}
       <div className="flex gap-2">
-        <select
+        <SourceDropdown
           value={source}
-          onChange={(e) => setSource(e.target.value as "google" | "duckduckgo")}
-          className="rounded-lg border border-[var(--surface-active-border)] bg-[var(--surface-1)] px-2 py-1.5 text-xs text-[var(--color-text)]"
-        >
-          <option value="google">Google</option>
-          <option value="duckduckgo">DuckDuckGo</option>
-        </select>
+          onChange={(v) => setSource(v as "google" | "duckduckgo")}
+          options={[
+            { value: "google", label: "Google" },
+            { value: "duckduckgo", label: "DuckDuckGo" },
+          ]}
+        />
         <input
           type="text"
           value={searchQuery}
@@ -208,15 +221,11 @@ export default function WebImageGrid({ query, role = "cover", onSelect }: Props)
 
       {/* Size presets + filters */}
       <div className="flex items-center gap-2 flex-wrap">
-        <select
-          value={selectedPresetIdx}
-          onChange={(e) => handlePresetChange(Number(e.target.value))}
-          className="rounded-lg border border-[var(--surface-active-border)] bg-[var(--surface-1)] px-2 py-1.5 text-xs text-[var(--color-text)]"
-        >
-          {presets.map((p, i) => (
-            <option key={i} value={i}>{p.label}</option>
-          ))}
-        </select>
+        <SourceDropdown
+          value={String(selectedPresetIdx)}
+          onChange={(v) => handlePresetChange(Number(v))}
+          options={presets.map((p, i) => ({ value: String(i), label: p.label }))}
+        />
 
         {isCustomPreset && (
           <>
@@ -377,9 +386,11 @@ export default function WebImageGrid({ query, role = "cover", onSelect }: Props)
                   ? `${results[previewIdx].width}x${results[previewIdx].height}`
                   : "—"}
               </span>
-              <span className="rounded-md bg-white/10 px-2 py-0.5">
-                {detectFormat(results[previewIdx].width, results[previewIdx].height)}
-              </span>
+              {results[previewIdx].width > 0 && results[previewIdx].height > 0 && (
+                <span className="rounded-md bg-white/10 px-2 py-0.5">
+                  {detectFormat(results[previewIdx].width, results[previewIdx].height)}
+                </span>
+              )}
             </div>
 
             {/* Actions */}

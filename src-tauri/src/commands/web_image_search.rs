@@ -474,8 +474,7 @@ async fn fetch_html_via_webview(
 fn parse_google_html(html: &str) -> Vec<ImageResult> {
     let mut images = Vec::new();
 
-    // Strategy 1: Parse data-ou attributes (most reliable — Playnite's primary method)
-    // Google puts full original URL in data-ou and thumbnail in data-tbnid
+    // ── Step 1: Extract URLs from data-ou attributes (most reliable) ──
     if let Ok(attr_re) = Regex::new(r#"data-ou="(https?://[^"]+)""#) {
         for cap in attr_re.captures_iter(html) {
             let url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -492,44 +491,27 @@ fn parse_google_html(html: &str) -> Vec<ImageResult> {
         }
     }
 
-    // Strategy 2: Parse AF_initDataCallback script blocks
-    // Modern Google embeds image data in script blocks like:
-    // AF_initDataCallback({key: 'ds:1', ... data: [...]});
-    if images.is_empty() {
-        if let Ok(script_re) =
-            Regex::new(r#"AF_initDataCallback\(\{[^}]*data:\s*\[([\s\S]*?)\]\s*\}\)"#)
-        {
-            // Match ["url", width, height, "thumb"] tuples
-            if let Ok(tuple_re) = Regex::new(
-                r#"\["(https?://[^"]{20,})",\s*(\d+),\s*(\d+)(?:,\s*"(https?://[^"]*)")?\]"#,
-            ) {
-                for cap in script_re.captures_iter(html) {
-                    if let Some(data_block) = cap.get(1) {
-                        let block_str = data_block.as_str();
-                        for tc in tuple_re.captures_iter(block_str) {
-                            let url = tc.get(1).map(|m| m.as_str()).unwrap_or("");
-                            let width = tc
-                                .get(2)
-                                .and_then(|m| m.as_str().parse::<u32>().ok())
-                                .unwrap_or(0);
-                            let height = tc
-                                .get(3)
-                                .and_then(|m| m.as_str().parse::<u32>().ok())
-                                .unwrap_or(0);
-                            let thumb = tc.get(4).map(|m| m.as_str()).unwrap_or(url);
+    // ── Step 2: Build dimension map from script blocks (Strategies 2-4) ──
+    // These scripts contain ["url", width, height, "thumb"] tuples with real dimensions.
+    // We extract them into a HashMap so we can merge with Step 1's URLs.
+    let mut dim_map: HashMap<String, (u32, u32, String)> = HashMap::new();
 
-                            if is_valid_image_url(url)
-                                && width > 50
-                                && height > 50
-                                && !images.iter().any(|img: &ImageResult| img.url == url)
-                            {
-                                images.push(ImageResult {
-                                    url: url.to_string(),
-                                    thumb: thumb.to_string(),
-                                    width,
-                                    height,
-                                });
-                            }
+    // Strategy 2: AF_initDataCallback blocks
+    if let Ok(script_re) =
+        Regex::new(r#"AF_initDataCallback\(\{[^}]*data:\s*\[([\s\S]*?)\]\s*\}\)"#)
+    {
+        if let Ok(tuple_re) = Regex::new(
+            r#"\["(https?://[^"]{20,})",\s*(\d+),\s*(\d+)(?:,\s*"(https?://[^"]*)")?\]"#,
+        ) {
+            for cap in script_re.captures_iter(html) {
+                if let Some(data_block) = cap.get(1) {
+                    for tc in tuple_re.captures_iter(data_block.as_str()) {
+                        let url = tc.get(1).map(|m| m.as_str()).unwrap_or("");
+                        let w = tc.get(2).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+                        let h = tc.get(3).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+                        let thumb = tc.get(4).map(|m| m.as_str()).unwrap_or("").to_string();
+                        if is_valid_image_url(url) && w > 50 && h > 50 {
+                            dim_map.entry(url.to_string()).or_insert_with(|| (w, h, thumb));
                         }
                     }
                 }
@@ -537,70 +519,63 @@ fn parse_google_html(html: &str) -> Vec<ImageResult> {
         }
     }
 
-    // Strategy 3: Parse ["ou","tu",width,height] tuples (newer Google format)
-    if images.is_empty() {
+    // Strategy 3: ["ou","tu",width,height] tuples
+    if dim_map.is_empty() {
         if let Ok(ou_re) = Regex::new(
             r#"\["(https?://[^"]+)",\s*"(https?://[^"]+)",\s*(\d+),\s*(\d+)"#,
         ) {
             for cap in ou_re.captures_iter(html) {
                 let url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                let thumb = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                let width = cap
-                    .get(3)
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .unwrap_or(0);
-                let height = cap
-                    .get(4)
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .unwrap_or(0);
-
-                if is_valid_image_url(url)
-                    && width > 50
-                    && height > 50
-                    && !images.iter().any(|i: &ImageResult| i.url == url)
-                {
-                    images.push(ImageResult {
-                        url: url.to_string(),
-                        thumb: if thumb.is_empty() { url.to_string() } else { thumb.to_string() },
-                        width,
-                        height,
-                    });
+                let thumb = cap.get(2).map(|m| m.as_str()).unwrap_or("").to_string();
+                let w = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+                let h = cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+                if is_valid_image_url(url) && w > 50 && h > 50 {
+                    dim_map.entry(url.to_string()).or_insert_with(|| (w, h, thumb));
                 }
             }
         }
     }
 
-    // Strategy 4: Parse JSON arrays ["url",width,height] in script content
-    if images.is_empty() {
+    // Strategy 4: ["url",width,height] arrays
+    if dim_map.is_empty() {
         if let Ok(arr_re) = Regex::new(r#"\["(https?://[^"]{20,})",(\d+),(\d+)\]"#) {
             for cap in arr_re.captures_iter(html) {
                 let url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                let width = cap
-                    .get(2)
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .unwrap_or(0);
-                let height = cap
-                    .get(3)
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .unwrap_or(0);
-
-                if is_valid_image_url(url)
-                    && width > 50
-                    && height > 50
-                    && !images.iter().any(|i: &ImageResult| i.url == url)
-                {
-                    images.push(ImageResult {
-                        url: url.to_string(),
-                        thumb: url.to_string(),
-                        width,
-                        height,
-                    });
+                let w = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+                let h = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+                if is_valid_image_url(url) && w > 50 && h > 50 {
+                    dim_map.entry(url.to_string()).or_insert_with(|| (w, h, url.to_string()));
                 }
             }
         }
     }
 
-    // Strategy 5: Broadest regex — find any image URLs in the page
+    // ── Step 3: Merge — enrich Step 1 URLs with Step 2 dimensions ──
+    if !images.is_empty() && !dim_map.is_empty() {
+        for img in &mut images {
+            if let Some(&(w, h, ref thumb)) = dim_map.get(&img.url) {
+                img.width = w;
+                img.height = h;
+                if !thumb.is_empty() {
+                    img.thumb = thumb.clone();
+                }
+            }
+        }
+    }
+
+    // ── Step 4: If Step 1 found nothing, use dimension-map entries as results ──
+    if images.is_empty() {
+        for (url, (w, h, thumb)) in dim_map {
+            images.push(ImageResult {
+                url: url.clone(),
+                thumb: if thumb.is_empty() { url } else { thumb },
+                width: w,
+                height: h,
+            });
+        }
+    }
+
+    // ── Step 5: Broadest regex fallback ──
     if images.is_empty() {
         if let Ok(broad_re) = Regex::new(
             r#""(https?://[^"]+\.(?:jpg|jpeg|png|webp)(?:\?[^"]*)?)"#,

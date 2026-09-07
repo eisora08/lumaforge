@@ -11,6 +11,7 @@ import {
   Image,
   Search as SearchIcon,
   ChevronDown,
+  Eye,
 } from "lucide-react";
 
 // ── Shared sub-component (also used by GameEditDialog general tab) ──
@@ -36,7 +37,7 @@ export function SourceOption({
       className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition ${
         disabled
           ? "cursor-not-allowed text-(--color-muted)/40"
-          : "cursor-pointer text-(--color-text) hover:bg-white/5"
+          : "cursor-pointer text-(--color-text) hover:bg-white/[0.06]"
       }`}
     >
       <Icon className="h-3.5 w-3.5 shrink-0" />
@@ -75,6 +76,7 @@ export type GameMediaRoleRowProps = {
   onSourcePick: (sourceId: string) => void;
   onOpenWebSearch: () => void;
   onRemove: () => void;
+  onPreviewClick?: () => void;
   onPreviewError?: () => void;
 };
 
@@ -102,6 +104,7 @@ export default function GameMediaRoleRow({
   onSourcePick,
   onOpenWebSearch,
   onRemove,
+  onPreviewClick,
   onPreviewError,
 }: GameMediaRoleRowProps) {
   const { t } = useTranslation();
@@ -111,14 +114,25 @@ export default function GameMediaRoleRow({
       {/* Header row */}
       <div className="flex items-start gap-4">
         {/* Preview thumbnail */}
-        <div className="flex h-20 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/5">
+        <div className="group relative flex h-20 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/5">
           {previewUrl ? (
-            <img
-              src={previewUrl}
-              alt={label}
-              className="h-full w-full object-cover"
-              onError={onPreviewError}
-            />
+            <>
+              <img
+                src={previewUrl}
+                alt={label}
+                className="h-full w-full object-cover"
+                onError={onPreviewError}
+              />
+              {onPreviewClick && (
+                <button
+                  type="button"
+                  onClick={onPreviewClick}
+                  className="absolute top-1 right-1 rounded-md bg-black/60 p-1 opacity-0 group-hover:opacity-100 transition"
+                >
+                  <Eye className="h-3 w-3 text-white" />
+                </button>
+              )}
+            </>
           ) : (
             <RoleIcon className="h-8 w-8 text-(--color-muted)/40" />
           )}
@@ -197,7 +211,7 @@ export default function GameMediaRoleRow({
             {isBrowsing ? t("game_edit.fetching", "Fetching...") : t("game_edit.browse", "Browse")}
           </button>
           {browseOpen && (
-            <div className="absolute left-0 top-full z-10 mt-1 w-52 rounded-xl border border-(--color-border) bg-(--color-bg) py-1 shadow-xl">
+            <div className="lf-dropdown-menu absolute left-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-(--surface-active-border) bg-(--color-surface) py-1 shadow-lg backdrop-blur-md">
               <SourceOption
                 label={t("game_edit.source_local", "Current Local")}
                 icon={FolderOpen}
@@ -236,7 +250,7 @@ export default function GameMediaRoleRow({
                   onClick={() => onSourcePick("rawg")}
                 />
               )}
-              <div className="my-1 border-t border-(--color-border)" />
+              <div className="my-1 border-t border-(--surface-active-border)" />
               <SourceOption
                 label={t("game_edit.source_web_search", "Web Search")}
                 icon={SearchIcon}

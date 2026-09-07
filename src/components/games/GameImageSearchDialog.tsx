@@ -16,6 +16,7 @@ import {
 import { searchImages, ImageSearchProvider, ImageSearchResult } from "../../services/imageSearchService";
 import { useTranslation } from "react-i18next";
 import { showError, showSuccess } from "../toast/GameToast";
+import SourceDropdown from "../common/SourceDropdown";
 import { notifyMediaUpdated } from "../../services/startupSnapshotService";
 import { invalidateResolvedMediaCache, clearSessionAppInfoCache } from "../../services/gameCacheService";
 import { getGameAppInfo, updateGameAppinfoMedia } from "../../services/tauri";
@@ -440,20 +441,13 @@ export default function GameImageSearchDialog({
             <div className="space-y-3">
               {/* Provider + filters */}
               <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
-                  <select
-                    value={apiProvider}
-                    onChange={(e) => { setApiProvider(e.target.value as ImageSearchProvider); setResults([]); }}
-                    className="appearance-none rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-7 text-xs text-(--color-text) outline-none focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
-                  >
-                    {API_PROVIDERS.filter((p) =>
-                      p.id === "google" ? hasGoogleApi : hasBingApi
-                    ).map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
-                </div>
+                <SourceDropdown
+                  value={apiProvider}
+                  onChange={(v) => { setApiProvider(v as ImageSearchProvider); setResults([]); }}
+                  options={API_PROVIDERS.filter((p) =>
+                    p.id === "google" ? hasGoogleApi : hasBingApi
+                  ).map((p) => ({ value: p.id, label: p.label }))}
+                />
                 <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) px-3 py-1.5 text-xs text-(--color-muted) hover:bg-white/5">
                   <input
                     type="checkbox"
@@ -463,32 +457,26 @@ export default function GameImageSearchDialog({
                   />
                   SafeSearch
                 </label>
-                <div className="relative">
-                  <select
-                    value={imageSize ?? ""}
-                    onChange={(e) => setImageSize(e.target.value as typeof imageSize)}
-                    className="appearance-none rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-7 text-xs text-(--color-muted) outline-none focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
-                  >
-                    <option value="">Any size</option>
-                    <option value="large">Large</option>
-                    <option value="medium">Medium</option>
-                    <option value="icon">Icon</option>
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
-                </div>
-                <div className="relative">
-                  <select
-                    value={imageType ?? ""}
-                    onChange={(e) => setImageType(e.target.value as typeof imageType)}
-                    className="appearance-none rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-7 text-xs text-(--color-muted) outline-none focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
-                  >
-                    <option value="">Any type</option>
-                    <option value="photo">Photo</option>
-                    <option value="clipart">Clipart</option>
-                    <option value="transparent">Transparent</option>
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
-                </div>
+                <SourceDropdown
+                  value={imageSize ?? ""}
+                  onChange={(v) => setImageSize(v as typeof imageSize)}
+                  options={[
+                    { value: "", label: "Any size" },
+                    { value: "large", label: "Large" },
+                    { value: "medium", label: "Medium" },
+                    { value: "icon", label: "Icon" },
+                  ]}
+                />
+                <SourceDropdown
+                  value={imageType ?? ""}
+                  onChange={(v) => setImageType(v as typeof imageType)}
+                  options={[
+                    { value: "", label: "Any type" },
+                    { value: "photo", label: "Photo" },
+                    { value: "clipart", label: "Clipart" },
+                    { value: "transparent", label: "Transparent" },
+                  ]}
+                />
               </div>
 
               {/* Results */}
