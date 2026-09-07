@@ -511,20 +511,14 @@ export default function AchievementsModal({
               )}
               <div className="min-w-0">
                 <h2 className={`text-base font-bold truncate ${isPerfected ? "text-amber-300" : "text-(--color-text)"}`}>
-                  {isPerfected ? `${gameTitle || "Achievements"} · Perfected` : (gameTitle || "Achievements")}
+                  {gameTitle || "Achievements"}
                 </h2>
                 <p className={`text-[11px] truncate ${isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}`}>
-                  {isPerfected ? (
-                    <span className="flex items-center gap-1">
-                      <Trophy className="h-3 w-3 fill-amber-400" />
-                      All {summary.total} achievements unlocked
-                    </span>
-                  ) : summary.progressAvailable ? (
+                  {summary.progressAvailable ? (
                     `${summary.unlocked} of ${summary.total} achievements earned`
                   ) : (
                     `${summary.total} achievements`
                   )}
-                  {appIdStr ? <> &middot; App {appIdStr}</> : null}
                 </p>
               </div>
             </div>
@@ -570,14 +564,7 @@ export default function AchievementsModal({
               )}
               <div className="flex items-center justify-between text-xs mb-1.5">
                 <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
-                  {isPerfected ? (
-                    <span className="flex items-center gap-1.5">
-                      <Trophy className="h-3.5 w-3.5 fill-amber-400" />
-                      Perfected
-                    </span>
-                  ) : (
-                    `${summary.unlocked} / ${summary.total}`
-                  )}
+                  {`${summary.unlocked} / ${summary.total}`}
                 </span>
                 <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
                   {isPerfected ? "100%" : `${percent}%`}

@@ -375,6 +375,12 @@ export default function LibraryGameDetails({
     return "steam-official";
   });
   const [hasCrackSave, setHasCrackSave] = useState(false);
+  const [crackType, setCrackType] = useState<string | null>(null);
+
+  const CRACK_LABELS: Record<string, string> = {
+    gse: "GSE", rune: "RUNE", tenoke: "Tenoki", codex: "CODEX",
+    goldberg: "Goldberg", onlinefix: "OnlineFix", empress: "Empress",
+  };
 
   // Gate auto-sync watcher: don't start until crack detection completes.
   // Prevents writing to steam-official/ before async detectCrackType sets the correct platform.
@@ -402,6 +408,7 @@ export default function LibraryGameDetails({
         setCrackDetectDone(true);
         const hasCrack = !!result?.savePath;
         setHasCrackSave(hasCrack);
+        setCrackType(result?.crackType ?? null);
         if (saved) {
           setAchSource(saved);
           console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} loaded from localStorage=${saved} hasCrack=${hasCrack}`);
@@ -2211,12 +2218,32 @@ export default function LibraryGameDetails({
               {/* Achievements — hidden for manual without appId */}
               {(!isManualGame || !!appIdStr) && (
                 <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
-                  {!isPerfected && (
-                    <h3 className="text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 text-(--color-muted)">
-                      <Trophy className="h-3.5 w-3.5" />
+                  {/* Header — always visible, amber when Perfected */}
+                  <div className="flex items-center justify-center gap-1.5">
+                    <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isPerfected ? "text-amber-400" : "text-(--color-muted)"}`}>
+                      <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400" : ""}`} />
                       {t("library_details.achievements")}
                     </h3>
-                  )}
+                    {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
+                      <div className="ml-auto">
+                        <SourceDropdown
+                          value={achSource}
+                          onChange={(v) => {
+                            const val = v as "steam-official" | "steam" | "epic-official";
+                            if (appIdStr) {
+                              localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
+                              console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
+                            }
+                            setAchSource(val);
+                          }}
+                          options={[
+                            { value: "steam-official", label: t("library_details.steamOfficial") },
+                            { value: "steam", label: crackType ? `Crack · ${CRACK_LABELS[crackType] ?? crackType}` : "Crack" },
+                          ]}
+                        />
+                      </div>
+                    )}
+                  </div>
 
                   {achievementsLoading ? (
                     <div className="mt-3 space-y-2">
@@ -2258,40 +2285,6 @@ export default function LibraryGameDetails({
                     <div className="mt-3 space-y-3">
                       {/* Trace: log panel count source for Cuphead */}
                       {game.appId === "268910" && DEBUG_ACH_DETAILS && (console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=panel source=${achievementsSummary.source} effectiveUnlocked=${effectiveUnlocked}/${effectiveTotal} summaryUnlocked=${achievementsSummary.unlocked}/${achievementsSummary.total} listDerived=${derivedUnlocked}`), null)}
-
-                      {isPerfected && (
-                        <div className="rounded-xl bg-amber-500/8 border border-amber-400/15 px-3.5 py-2.5 flex items-center gap-3">
-                          <Trophy className="h-5 w-5 fill-amber-400 text-amber-400 shrink-0" />
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-amber-300">{t("library_details.perfected")}</p>
-                            <p className="text-[10px] text-amber-400/60">{t("library_details.allAchievementsUnlocked")}</p>
-                          </div>
-                          <span className="ml-auto shrink-0 text-[11px] font-bold text-amber-400/80">
-                            {effectiveUnlocked}/{effectiveTotal} &middot; 100%
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Source selector — shown for crack save, not Debrid/Manual */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center justify-center">
-                          <SourceDropdown
-                            value={achSource}
-                            onChange={(v) => {
-                              const val = v as "steam-official" | "steam" | "epic-official";
-                              if (appIdStr) {
-                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
-                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
-                              }
-                              setAchSource(val);
-                            }}
-                            options={[
-                              { value: "steam-official", label: t("library_details.steamOfficial") },
-                              { value: "steam", label: t("library_details.crackSave") },
-                            ]}
-                          />
-                        </div>
-                      )}
 
                       {/* Progress bar */}
                       <AchievementProgressBar
@@ -2337,25 +2330,19 @@ export default function LibraryGameDetails({
                         ))}
                       </div>
                       <div className="flex gap-2">
-                        {isPerfected ? (
-                          <button
-                            type="button"
-                            onClick={() => setShowAchievementsModal(true)}
-                            className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-amber-400/20 bg-amber-500/8 px-3 py-2 text-xs font-medium text-amber-400 transition hover:bg-amber-500/12 focus-visible:ring-2 focus-visible:ring-amber-400/50"
-                          >
-                            <Trophy className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                            {t("library_details.viewAllAchievements")} · {achievementsSummary.total}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setShowAchievementsModal(true)}
-                            className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                          >
-                            <Trophy className="h-3.5 w-3.5" />
-                            {t("library_details.viewAllAchievementsCount", { count: achievementsSummary.total })}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowAchievementsModal(true)}
+                          className={`flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition focus-visible:ring-2 ${
+                            isPerfected
+                              ? "border-amber-400/20 bg-amber-500/8 text-amber-400 hover:bg-amber-500/12 focus-visible:ring-amber-400/50"
+                              : "border-(--surface-active-border) bg-white/5 text-(--color-accent) hover:bg-white/10 focus-visible:ring-(--color-accent)/50"
+                          }`}
+                        >
+                          <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
+                          <span>{t("library_details.viewAllAchievements")}</span>
+                          <span className="ml-auto text-[10px] opacity-70">{achievementsSummary.total} ›</span>
+                        </button>
                         {SHOW_ACH_DEBUG_BUTTONS && (
                           <>
                             <button
@@ -2386,27 +2373,6 @@ export default function LibraryGameDetails({
                     </div>
                   ) : achievementsSummary && !effectiveProgressAvailable && achievementsSummary.achievements.length > 0 ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center justify-center">
-                          <SourceDropdown
-                            value={achSource}
-                            onChange={(v) => {
-                              const val = v as "steam-official" | "steam" | "epic-official";
-                              if (appIdStr) {
-                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
-                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
-                              }
-                              setAchSource(val);
-                            }}
-                            options={[
-                              { value: "steam-official", label: t("library_details.steamOfficial") },
-                              { value: "steam", label: t("library_details.crackSave") },
-                            ]}
-                          />
-                        </div>
-                      )}
-
                       <p className="text-xs text-(--color-muted)">
                         {t("library_details.achievementListAvailable")}
                       </p>
@@ -2479,27 +2445,6 @@ export default function LibraryGameDetails({
                     </div>
                   ) : achievementsSummary && achievementsSummary.source === "unavailable" && (achievementsSupported || localAchSupportFound) ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center justify-center">
-                          <SourceDropdown
-                            value={achSource}
-                            onChange={(v) => {
-                              const val = v as "steam-official" | "steam" | "epic-official";
-                              if (appIdStr) {
-                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
-                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
-                              }
-                              setAchSource(val);
-                            }}
-                            options={[
-                              { value: "steam-official", label: t("library_details.steamOfficialAppcache") },
-                              { value: "steam", label: t("library_details.crackSave") },
-                            ]}
-                            label={t("library_details.source") + ":"}
-                          />
-                        </div>
-                      )}
                         <p className="text-xs text-(--color-muted)">
                           {achSource === "steam"
                             ? t("library_details.noAchievementDataCrack")
@@ -2576,27 +2521,6 @@ export default function LibraryGameDetails({
                     </div>
                   ) : (achievementsSupported || localAchSupportFound) ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — shown for crack save, not Debrid/Manual/Epic */}
-                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
-                        <div className="flex items-center justify-center">
-                          <SourceDropdown
-                            value={achSource}
-                            onChange={(v) => {
-                              const val = v as "steam-official" | "steam" | "epic-official";
-                              if (appIdStr) {
-                                localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, val);
-                                console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${val}`);
-                              }
-                              setAchSource(val);
-                            }}
-                            options={[
-                              { value: "steam-official", label: t("library_details.steamOfficialAppcache") },
-                              { value: "steam", label: t("library_details.crackSave") },
-                            ]}
-                            label={t("library_details.source") + ":"}
-                          />
-                        </div>
-                      )}
                       <p className="text-xs text-(--color-muted)">
                         {t("library_details.achievementsNotLoaded")}
                       </p>
@@ -3176,7 +3100,8 @@ function AchievementProgressBar({
     <div>
       <div className="flex items-center justify-between text-xs">
         <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
-          {unlocked} / {total}
+          {isPerfected && <Trophy className="inline-block h-3.5 w-3.5 fill-amber-400 text-amber-400 align-middle mr-1" />}
+          {isPerfected ? `Perfected · ${unlocked} / ${total}` : `${unlocked} / ${total}`}
         </span>
         <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
           {percent}%
@@ -3194,14 +3119,14 @@ function AchievementProgressBar({
           }}
         />
       </div>
-      <p className={`mt-1 text-[10px] ${isPerfected ? "text-amber-400/50" : "text-(--color-muted)/60"}`}>
-        {isPerfected
-          ? t("library_details.allAchievementsUnlocked")
-          : t("library_details.percentComplete", { percent })}
-        {syncing && (
-          <span className="ml-2 italic">{t("library_details.syncing")}</span>
-        )}
-      </p>
+      {!isPerfected && (
+        <p className="mt-1 text-[10px] text-(--color-muted)/60">
+          {unlocked} unlocked · {total - unlocked} remaining
+          {syncing && (
+            <span className="ml-2 italic">{t("library_details.syncing")}</span>
+          )}
+        </p>
+      )}
     </div>
   );
 }
