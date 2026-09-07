@@ -62,6 +62,10 @@ import { setAmbientSource, clearAmbientSource, rememberLibraryDetails } from "..
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { showInfo, showSuccess, showError } from "../toast/GameToast";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { removeDepotInstallInfo, getDepotManifests } from "../../services/depotUpdateStore";
+import { setStandalone } from "../../services/standaloneStore";
+import { deleteDirectory, deleteGameV2 } from "../../services/tauri";
+import { useConfirm } from "../../services/confirmService";
 import UninstallGameDialog from "../games/UninstallGameDialog";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
@@ -76,7 +80,7 @@ import {
 } from "../../utils/steamLinks";
 import toast from "react-hot-toast";
 import { open } from "@tauri-apps/plugin-dialog";
-import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { updateDebridGame, removeDebridGameFromLibrary, getDebridLaunchMetadata } from "../../services/debridGameStore";
 
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
@@ -282,6 +286,7 @@ export default function LibraryGameDetails({
   const [placeholderUrl, setPlaceholderUrl] = useState<string | undefined>(undefined);
   const [backdropLayers, setBackdropLayers] = useState<string[]>([]);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
+  const { confirm } = useConfirm();
   const { isFavorite, toggleFavorite } = useFavorites();
   const favoriteId = getFavoriteKey(game) ?? game.id;
   const favorite = isFavorite(favoriteId);
@@ -1428,6 +1433,29 @@ export default function LibraryGameDetails({
   }
   if (DEBUG_HERO_LAYERS) {
     console.log(`[HERO_LAYERS] appid=${game.appId} source=${game.source} canonicalLoaded=${canonicalLoaded} imageUrl=${imageUrl ? "set" : "null"} loadedHeroUrl=${loadedHeroUrl ? "set" : "null"} placeholderUrl=${placeholderUrl ? "set" : "null"} heroImgError=${heroImgError} backdropLayers=${backdropLayers.length}`);
+  }
+
+  async function handleUninstallDepot() {
+    if (!game.appId) return;
+    const depotInfo = getDepotManifests(game.appId);
+    if (!depotInfo?.destDir) return;
+    const result = await confirm({
+      title: t("library_details.actions.uninstallDepot", "Uninstall Depot Files"),
+      description: t("library_details.actions.uninstallDepotDesc", { defaultValue: `This will permanently delete all downloaded depot files at:\n${depotInfo.destDir}\n\nThis action cannot be undone.`, destDir: depotInfo.destDir }),
+      confirmLabel: t("library_details.actions.uninstallDepotConfirm", "Delete Files"),
+      variant: "danger",
+    });
+    if (!result.confirmed) return;
+    try {
+      await deleteDirectory(depotInfo.destDir);
+      removeDepotInstallInfo(game.appId);
+      setStandalone(game.appId, false);
+      showSuccess(t("library_details.toast.depotUninstalled", { defaultValue: "Depot files deleted.", title: game.title }));
+      // Trigger library re-scan to update isInstalled/isPlayable for Lua games
+      window.dispatchEvent(new CustomEvent("lumaforge-lua-changed"));
+    } catch (err) {
+      showError(String(err), { title: t("sidebar.error") });
+    }
   }
 
   return (
@@ -2844,15 +2872,30 @@ export default function LibraryGameDetails({
                 showInfo(t("library_details.toast.uninstallTrackingCancelled", { title: game.title ?? game.appId }));
               }} />
             ) : game.source === "debrid" ? (
-              <DropdownItem label={t("library_details.actions.removeFromLibrary")} destructive onClick={() => {
+              <DropdownItem label={t("library_details.actions.removeFromLibrary")} destructive onClick={async () => {
                 setShowActions(false);
                 const providerGameId = game.providerGameId;
-                if (providerGameId) {
-                  removeDebridGameFromLibrary(providerGameId);
-                  showSuccess(t("library_details.toast.removedFromLibrary", { title: game.title ?? providerGameId }));
-                } else {
+                if (!providerGameId) {
                   showError(t("library_details.toast.couldNotRemove"));
+                  return;
                 }
+                const meta = getDebridLaunchMetadata(providerGameId);
+                const installDir = meta?.installDir;
+                const result = await confirm({
+                  title: t("library_details.actions.removeFromLibrary"),
+                  description: installDir
+                    ? t("library_details.actions.debridRemoveDesc", { defaultValue: `This will remove "${game.title ?? providerGameId}" from library and delete:\n${installDir}`, title: game.title ?? providerGameId, installDir })
+                    : t("library_details.actions.debridRemoveDescNoDir", { defaultValue: `This will remove "${game.title ?? providerGameId}" from library.`, title: game.title ?? providerGameId }),
+                  confirmLabel: t("library_details.actions.removeFromLibrary"),
+                  variant: "danger",
+                });
+                if (!result.confirmed) return;
+                if (installDir) {
+                  try { await deleteDirectory(installDir); } catch { /* best effort */ }
+                }
+                try { await deleteGameV2(`debrid:${providerGameId}`); } catch { /* best effort */ }
+                removeDebridGameFromLibrary(providerGameId);
+                showSuccess(t("library_details.toast.removedFromLibrary", { title: game.title ?? providerGameId }));
               }} />
             ) : game.steamInstalled && game.source !== "epic" && game.source !== "lua" ? (
               <DropdownItem label={t("library_details.actions.uninstallInSteam")} onClick={async () => {
@@ -2877,6 +2920,20 @@ export default function LibraryGameDetails({
                   if (isManualRunning) return;
                   setShowActions(false);
                   setUninstallDialogOpen(true);
+                }} />
+            )}
+            {game.source === "lua" && game.appId && game.installDir && (
+              <DropdownItem label={t("library_details.actions.removeFromLibrary")} destructive
+                onClick={() => {
+                  setShowActions(false);
+                  setUninstallDialogOpen(true);
+                }} />
+            )}
+            {game.appId && game.installDir && getDepotManifests(game.appId)?.destDir && (
+              <DropdownItem label={t("library_details.actions.uninstallDepot", "Uninstall Depot Files")} destructive
+                onClick={() => {
+                  setShowActions(false);
+                  handleUninstallDepot();
                 }} />
             )}
             <DropdownItem label={t("library_details.actions.editGameDetails")} onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
@@ -2905,8 +2962,13 @@ export default function LibraryGameDetails({
         gameTitle={game.title ?? ""}
         appId={game.appId}
         onDeleted={() => {
+          // Clean up manual game entry if applicable
           const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
           if (rawId) removeManualGame(rawId);
+          // Clean up depot install info for Lua games with depot files
+          if (game.source === "lua" && game.appId) {
+            removeDepotInstallInfo(game.appId);
+          }
           showInfo(t("library_details.toast.removedFromLibrary", { title: game.title ?? rawId }));
           onBack();
         }}

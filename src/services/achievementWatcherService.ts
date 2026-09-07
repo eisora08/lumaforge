@@ -302,6 +302,10 @@ class AchievementWatcherService {
   /** Set the platform for a specific appId (called by auto-sync when starting to watch). */
   setPlatform(appId: string, platform: string): void {
     this._platformByAppId.set(appId, platform);
+    // Persist to localStorage so resolvePlatform() fallback works after stop() clears the map
+    try {
+      localStorage.setItem(`lumaforge-ach-platform-${appId}`, platform);
+    } catch { /* non-critical */ }
   }
 
   /** Resolve platform for an appId: in-memory map -> localStorage -> fallback. */
@@ -1663,7 +1667,7 @@ class AchievementWatcherService {
       await sleep(3000);
 
       const { resolveSteamAchievements } = await import("./steamAchievementsResolver");
-      const detectedPlatform = this._platformByAppId.get(appId);
+      const detectedPlatform = this.resolvePlatform(appId, "steam-official");
       if (!detectedPlatform) {
         console.log(`[ACH][RT_RESOLVER_SKIP] appid=${appId} reason=unknown-platform`);
         return;

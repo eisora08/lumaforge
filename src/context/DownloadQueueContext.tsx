@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -166,6 +167,28 @@ export function DownloadQueueProvider({
     setJobs(nextJobs);
     persistJobs(nextJobs);
   }
+
+  const updateJob = useCallback(function updateJob(jobId: string, update: UpdateDownloadJobInput) {
+    setJobs((currentJobs) => {
+      const nextJobs = currentJobs.map((job) => {
+        if (job.id !== jobId) return job;
+
+        // Once a job reaches a terminal state, only allow metadata updates
+        // (message, progress, bytesRead, etc.) — never allow status rollback
+        // from a stale Rust progress event after user cancellation.
+        if (["done", "failed", "cancelled"].includes(job.status) && update.status) {
+          const { status: _status, ...rest } = update;
+          return { ...job, ...rest, updatedAt: new Date().toISOString() };
+        }
+
+        return { ...job, ...update, updatedAt: new Date().toISOString() };
+      });
+
+      persistJobs(nextJobs);
+
+      return nextJobs;
+    });
+  }, []);
 
   // Bridge Steam install tracker into the download queue
   const syncRef = useRef({ addSteamInstallJob, updateJob, removeJob });
@@ -377,28 +400,6 @@ export function DownloadQueueProvider({
     commitJobs(nextJobs);
 
     return jobId;
-  }
-
-  function updateJob(jobId: string, update: UpdateDownloadJobInput) {
-    setJobs((currentJobs) => {
-      const nextJobs = currentJobs.map((job) => {
-        if (job.id !== jobId) return job;
-
-        // Once a job reaches a terminal state, only allow metadata updates
-        // (message, progress, bytesRead, etc.) — never allow status rollback
-        // from a stale Rust progress event after user cancellation.
-        if (["done", "failed", "cancelled"].includes(job.status) && update.status) {
-          const { status: _status, ...rest } = update;
-          return { ...job, ...rest, updatedAt: new Date().toISOString() };
-        }
-
-        return { ...job, ...update, updatedAt: new Date().toISOString() };
-      });
-
-      persistJobs(nextJobs);
-
-      return nextJobs;
-    });
   }
 
   async function cancelJob(jobId: string) {

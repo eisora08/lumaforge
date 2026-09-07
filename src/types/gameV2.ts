@@ -80,6 +80,8 @@ export type GameV2 = {
 
   // Lua overlay
   hasLua: boolean;
+  /** JSON-serialized InstalledLuaScript[] — preserved through SQLite round-trip. */
+  luaScriptsJson?: string;
 
   // Provider-specific overrides (JSON blob)
   providerMetadata?: string;

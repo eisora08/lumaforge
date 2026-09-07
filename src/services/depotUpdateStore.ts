@@ -14,6 +14,8 @@ type DepotManifestEntry = {
   depots: Record<string, string>;
   /** The destDir where the game was downloaded */
   destDir: string;
+  /** Auto-detected executable path */
+  executablePath?: string;
   /** When this was last downloaded */
   downloadedAt: number;
 };
@@ -48,9 +50,10 @@ export function saveDepotManifests(
   appId: string,
   depots: Record<string, string>,
   destDir: string,
+  executablePath?: string,
 ): void {
   const all = loadAll();
-  all.set(appId, { appId, depots, destDir, downloadedAt: Date.now() });
+  all.set(appId, { appId, depots, destDir, executablePath, downloadedAt: Date.now() });
   saveAll(all);
 }
 
@@ -80,4 +83,12 @@ export function hasDepotUpdate(
 /** Get all depot app IDs that have stored manifests. */
 export function getDepotAppIds(): string[] {
   return [...loadAll().keys()];
+}
+
+/** Remove depot install info for an appId (used by "Remove from Library"). */
+export function removeDepotInstallInfo(appId: string): boolean {
+  const all = loadAll();
+  const existed = all.delete(appId);
+  if (existed) saveAll(all);
+  return existed;
 }

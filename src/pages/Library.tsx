@@ -43,6 +43,7 @@ import {
   computeFileHash,
   downloadAndInstallPackage,
   markSyncIndexItem,
+  deleteGameCompletely,
 } from "../services/tauri";
 import { getEffectiveProviderAuthHeaders } from "../services/providerSearch";
 import { saveProviderStatusAfterInstall, type ProviderStatusOptions } from "../services/providerStatusService";
@@ -54,6 +55,7 @@ import { consumePendingLibraryFocus, setPendingLibraryFocus } from "../services/
 import { setAmbientSource, clearAmbientSource, getLastLibraryDetailsUrl } from "../services/ambientBackgroundStore";
 import { saveManualGame } from "../services/manualGameStore";
 import type { ManualGameEntry } from "../services/manualGameStore";
+import { removeDepotInstallInfo } from "../services/depotUpdateStore";
 
 import DebridSourceSelectorModal from "../components/debrid/DebridSourceSelectorModal";
 import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
@@ -343,6 +345,12 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
       } catch (err) {
         showError(String(err), { title: t("library_page.toast.error", "Error") });
       }
+    } else if (game.source === "lua" && game.executablePath) {
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: t("library_page.toast.error", "Error") });
+      }
     } else {
       showWarning(t("library_page.cannot_launch_yet", "This game cannot be launched yet."), { title: t("library_page.not_available", "Not available") });
     }
@@ -458,7 +466,13 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   }
 
   async function handleDeleteScript(game: LibraryGame) {
-    const script = game.luaScripts[0];
+    let script: import("../types/installedLua").InstalledLuaScript | undefined = game.luaScripts[0];
+    if (!script && game.hasLua && game.appId && settings.luaPath) {
+      try {
+        const allScripts = await scanInstalledLuaScripts(settings.luaPath, { force: true });
+        script = allScripts.find((s) => String(s.app_id) === game.appId);
+      } catch { /* scan failed */ }
+    }
     if (!script) {
       showWarning(t("library_page.no_lua_to_delete", "No Lua script to delete."), { title: t("library_page.no_script_title", "No script") });
       return;
@@ -480,6 +494,11 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
       if (stillPresent) {
         showError(t("library_page.deletion_failed_body", "File still exists on disk after deletion attempt."), { title: t("library_page.deletion_failed_title", "Deletion failed") });
         return;
+      }
+      await deleteGameCompletely(game.id, game.appId ?? undefined);
+      if (game.appId) {
+        removeDepotInstallInfo(game.appId);
+        localStorage.removeItem(`lumaforge-ach-platform-${game.appId}`);
       }
       await refresh({ force: true });
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);

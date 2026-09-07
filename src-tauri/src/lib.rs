@@ -625,6 +625,7 @@ pub fn run() {
             commands::file_utils::write_text_file,
             commands::file_utils::read_text_file,
             commands::file_utils::list_files_in_dir,
+            commands::file_utils::delete_directory,
             commands::external_files::scan_external_file_collection,
             commands::external_files::read_file_collection_content,
             commands::external_files::restore_external_files,

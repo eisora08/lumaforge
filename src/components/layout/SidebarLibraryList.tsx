@@ -54,12 +54,12 @@ import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToas
 import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
-import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts } from "../../services/tauri";
+import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts, deleteDirectory, deleteGameV2 } from "../../services/tauri";
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey, detectAndQueueMissingMedia } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
 import type { ManualGameEntry } from "../../services/manualGameStore";
-import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { removeDebridGameFromLibrary, getDebridLaunchMetadata } from "../../services/debridGameStore";
 import { setPendingLibraryFocus } from "../../services/libraryNavigationService";
 import UninstallGameDialog from "../games/UninstallGameDialog";
 import { useConfirm } from "../../services/confirmService";
@@ -506,7 +506,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   }
 
   async function handleDeleteScript(game: LibraryGame) {
-    const script = game.luaScripts[0];
+    let script: import("../../types/installedLua").InstalledLuaScript | undefined = game.luaScripts[0];
+    if (!script && game.hasLua && game.appId && appSettings.luaPath) {
+      try {
+        const allScripts = await scanInstalledLuaScripts(appSettings.luaPath, { force: true });
+        script = allScripts.find((s) => String(s.app_id) === game.appId);
+      } catch { /* scan failed */ }
+    }
     if (!script) {
       showWarning(t("sidebar.no_lua_script"), { title: t("library_details.no_script_title") });
       return;
@@ -521,15 +527,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     if (!result.confirmed) return;
     try {
       await deleteLuaScript({ luaPath: appSettings.luaPath, fileName: script.file_name });
-      // Verify file is actually gone from disk
-      const remaining = await scanInstalledLuaScripts(appSettings.luaPath);
+      const remaining = await scanInstalledLuaScripts(appSettings.luaPath, { force: true });
       const stillPresent = remaining.some((s) => s.file_name === script.file_name);
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
       if (stillPresent) {
         showError(t("sidebar.deletion_failed"), { title: t("sidebar.deletion_failed_title") });
         return;
       }
-      // Force refresh library state (bypass TTL) to reflect deletion
       await refresh({ force: true });
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
       showSuccess(t("sidebar.lua_deleted"), { title: t("sidebar.lua_deleted_title") });
@@ -634,7 +638,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           if (isCollapsedMode) {
             return (
               <button
-                key={`sidebar:installed:${game.appId ?? game.id}`}
+                key={`sidebar:installed:${game.id}`}
                 type="button"
                 title={displayTitle}
                 onClick={() => {
@@ -673,7 +677,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
 
           return (
             <button
-              key={`sidebar:installed:${game.appId ?? game.id}`}
+              key={`sidebar:installed:${game.id}`}
               type="button"
               onClick={() => {
                 setSelectedGame(game);
@@ -951,15 +955,30 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                         label: t("context_menu.remove_library"),
                         icon: <Trash2 className="h-3.5 w-3.5" />,
                         destructive: true as const,
-                        onClick: () => {
+                        onClick: async () => {
                           handleMenuClose();
                           const providerGameId = menuGame.providerGameId;
-                          if (providerGameId) {
-                            removeDebridGameFromLibrary(providerGameId);
-                            showSuccess(t("sidebar.debrid_removed", { title: menuGame.title ?? providerGameId }));
-                          } else {
+                          if (!providerGameId) {
                             showError(t("sidebar.debrid_remove_error"));
+                            return;
                           }
+                          const meta = getDebridLaunchMetadata(providerGameId);
+                          const installDir = meta?.installDir;
+                          const result = await confirm({
+                            title: t("context_menu.remove_library"),
+                            description: installDir
+                              ? t("sidebar.debrid_remove_confirm", { defaultValue: `This will remove "${menuGame.title ?? providerGameId}" from library and delete:\n${installDir}`, title: menuGame.title ?? providerGameId, installDir })
+                              : t("sidebar.debrid_remove_confirm_no_dir", { defaultValue: `This will remove "${menuGame.title ?? providerGameId}" from library.`, title: menuGame.title ?? providerGameId }),
+                            confirmLabel: t("context_menu.remove_library"),
+                            variant: "danger",
+                          });
+                          if (!result.confirmed) return;
+                          if (installDir) {
+                            try { await deleteDirectory(installDir); } catch { /* best effort */ }
+                          }
+                          try { await deleteGameV2(`debrid:${providerGameId}`); } catch { /* best effort */ }
+                          removeDebridGameFromLibrary(providerGameId);
+                          showSuccess(t("sidebar.debrid_removed", { title: menuGame.title ?? providerGameId }));
                         },
                       }]
                     : menuGame.source !== "manual" && menuGame.source !== "epic" && menuGame.source !== "lua"

@@ -119,6 +119,8 @@ pub struct GameV2 {
     // Lua overlay
     #[serde(default)]
     pub has_lua: bool,
+    #[serde(default)]
+    pub lua_scripts_json: Option<String>,
 
     // Provider-specific overrides
     #[serde(default)]
@@ -145,7 +147,7 @@ pub fn upsert_game_v2_inner(db: &Mutex<Connection>, game: &GameV2) -> Result<(),
             linked_app_id, linked_igdb_id,
             is_favorite, is_hidden, standalone, sorting_name,
             series, age_rating, region, completion_status,
-            has_lua, provider_metadata, created_at, updated_at
+            has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6,
             ?7, ?8, ?9, ?10, ?11, ?12, ?13,
@@ -156,7 +158,7 @@ pub fn upsert_game_v2_inner(db: &Mutex<Connection>, game: &GameV2) -> Result<(),
             ?36, ?37,
             ?38, ?39, ?40, ?41,
             ?42, ?43, ?44, ?45,
-            ?46, ?47, ?48, ?49
+            ?46, ?47, ?48, ?49, ?50
         )
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
@@ -204,6 +206,7 @@ pub fn upsert_game_v2_inner(db: &Mutex<Connection>, game: &GameV2) -> Result<(),
             region = COALESCE(excluded.region, games_v2.region),
             completion_status = COALESCE(excluded.completion_status, games_v2.completion_status),
             has_lua = excluded.has_lua,
+            lua_scripts_json = COALESCE(excluded.lua_scripts_json, games_v2.lua_scripts_json),
             provider_metadata = COALESCE(excluded.provider_metadata, games_v2.provider_metadata),
             updated_at = excluded.updated_at",
         rusqlite::params![
@@ -253,6 +256,7 @@ pub fn upsert_game_v2_inner(db: &Mutex<Connection>, game: &GameV2) -> Result<(),
             game.region,
             game.completion_status,
             game.has_lua as i32,
+            game.lua_scripts_json,
             game.provider_metadata,
             game.created_at,
             game.updated_at,
@@ -282,7 +286,7 @@ pub fn batch_upsert_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> 
                 linked_app_id, linked_igdb_id,
                 is_favorite, is_hidden, standalone, sorting_name,
                 series, age_rating, region, completion_status,
-                has_lua, provider_metadata, created_at, updated_at
+                has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6,
                 ?7, ?8, ?9, ?10, ?11, ?12, ?13,
@@ -293,7 +297,7 @@ pub fn batch_upsert_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> 
                 ?36, ?37,
                 ?38, ?39, ?40, ?41,
                 ?42, ?43, ?44, ?45,
-                ?46, ?47, ?48, ?49
+                ?46, ?47, ?48, ?49, ?50
             )
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
@@ -302,10 +306,10 @@ pub fn batch_upsert_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> 
                 provider_game_id = COALESCE(excluded.provider_game_id, games_v2.provider_game_id),
                 library_id = COALESCE(excluded.library_id, games_v2.library_id),
                 is_installed = excluded.is_installed,
-                install_dir = COALESCE(excluded.install_dir, games_v2.install_dir),
+                install_dir = excluded.install_dir,
                 install_size = COALESCE(excluded.install_size, games_v2.install_size),
-                exe_path = COALESCE(excluded.exe_path, games_v2.exe_path),
-                exe_name = COALESCE(excluded.exe_name, games_v2.exe_name),
+                exe_path = excluded.exe_path,
+                exe_name = excluded.exe_name,
                 working_directory = COALESCE(excluded.working_directory, games_v2.working_directory),
                 launch_arguments = COALESCE(excluded.launch_arguments, games_v2.launch_arguments),
                 playtime_seconds = CASE WHEN excluded.playtime_seconds IS NULL OR excluded.playtime_seconds = 0 THEN games_v2.playtime_seconds ELSE excluded.playtime_seconds END,
@@ -341,6 +345,7 @@ pub fn batch_upsert_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> 
                 region = COALESCE(excluded.region, games_v2.region),
                 completion_status = COALESCE(excluded.completion_status, games_v2.completion_status),
                 has_lua = excluded.has_lua,
+                lua_scripts_json = COALESCE(excluded.lua_scripts_json, games_v2.lua_scripts_json),
                 provider_metadata = COALESCE(excluded.provider_metadata, games_v2.provider_metadata),
                 updated_at = excluded.updated_at",
             rusqlite::params![
@@ -390,6 +395,7 @@ pub fn batch_upsert_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> 
                 game.region,
                 game.completion_status,
                 game.has_lua as i32,
+                game.lua_scripts_json,
                 game.provider_metadata,
                 game.created_at,
                 game.updated_at,
@@ -475,7 +481,7 @@ pub fn get_games_v2_by_app_id_inner(
                     linked_app_id, linked_igdb_id,
                     is_favorite, is_hidden, standalone, sorting_name,
                     series, age_rating, region, completion_status,
-                    has_lua, provider_metadata, created_at, updated_at
+                    has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
              FROM games_v2 WHERE app_id = ?1",
         )
         .map_err(|e| format!("Failed to prepare get_games_v2_by_app_id: {}", e))?;
@@ -505,7 +511,7 @@ pub fn get_all_games_v2_inner(db: &Mutex<Connection>) -> Result<Vec<GameV2>, Str
                     linked_app_id, linked_igdb_id,
                     is_favorite, is_hidden, standalone, sorting_name,
                     series, age_rating, region, completion_status,
-                    has_lua, provider_metadata, created_at, updated_at
+                    has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
              FROM games_v2 ORDER BY title ASC",
         )
         .map_err(|e| format!("Failed to prepare get_all_games_v2: {}", e))?;
@@ -542,7 +548,7 @@ pub fn get_games_v2_by_source_inner(
                     linked_app_id, linked_igdb_id,
                     is_favorite, is_hidden, standalone, sorting_name,
                     series, age_rating, region, completion_status,
-                    has_lua, provider_metadata, created_at, updated_at
+                    has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
              FROM games_v2 WHERE source = ?1 ORDER BY title ASC",
         )
         .map_err(|e| format!("Failed to prepare get_games_v2_by_source: {}", e))?;
@@ -574,7 +580,7 @@ pub fn search_games_v2_inner(
                     linked_app_id, linked_igdb_id,
                     is_favorite, is_hidden, standalone, sorting_name,
                     series, age_rating, region, completion_status,
-                    has_lua, provider_metadata, created_at, updated_at
+                    has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
              FROM games_v2 WHERE title LIKE ?1 ORDER BY title ASC",
         )
         .map_err(|e| format!("Failed to prepare search_games_v2: {}", e))?;
@@ -653,9 +659,10 @@ fn map_row_to_game_v2(row: &rusqlite::Row<'_>) -> rusqlite::Result<GameV2> {
         region: row.get(43)?,
         completion_status: row.get(44)?,
         has_lua: row.get::<_, i32>(45)? != 0,
-        provider_metadata: row.get(46)?,
-        created_at: row.get(47)?,
-        updated_at: row.get(48)?,
+        lua_scripts_json: row.get(46)?,
+        provider_metadata: row.get(47)?,
+        created_at: row.get(48)?,
+        updated_at: row.get(49)?,
     })
 }
 

@@ -8,12 +8,12 @@ import { getConsoleInputHints } from "./consoleInputHints";
 import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamepadInput";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
-import { focusGameWindow } from "../../services/tauri";
+import { focusGameWindow, deleteDirectory, deleteGameV2 } from "../../services/tauri";
 import { showError, showSuccess } from "../../components/toast/GameToast";
 import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
-import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { removeDebridGameFromLibrary, getDebridLaunchMetadata } from "../../services/debridGameStore";
 import UninstallGameDialog from "../../components/games/UninstallGameDialog";
 import { getFavoriteKey } from "../../services/gameCacheService";
 import {
@@ -286,14 +286,21 @@ export default function ConsoleGameOptionsOverlay({
         id: "debrid-remove",
         label: "Remove from Library",
         icon: Trash2,
-        action: () => {
+        action: async () => {
           const providerGameId = game.providerGameId;
-          if (providerGameId) {
-            removeDebridGameFromLibrary(providerGameId);
-            showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
-          } else {
+          if (!providerGameId) {
             showError("Could not remove this game from the library.");
+            onClose();
+            return;
           }
+          const meta = getDebridLaunchMetadata(providerGameId);
+          const installDir = meta?.installDir;
+          if (installDir) {
+            try { await deleteDirectory(installDir); } catch { /* best effort */ }
+          }
+          try { await deleteGameV2(`debrid:${providerGameId}`); } catch { /* best effort */ }
+          removeDebridGameFromLibrary(providerGameId);
+          showSuccess(`"${game.title ?? providerGameId}" removed from library.`);
           onClose();
         },
       });

@@ -66,6 +66,7 @@ import {
   refreshDebridGames,
 } from "../services/debridGameStore";
 import { subscribeDataChanges } from "../services/dataChangeBus";
+import { getDepotManifests } from "../services/depotUpdateStore";
 
 // â”€â”€ Library runtime state machine â”€â”€
 
@@ -654,7 +655,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         if (existing?.isStandalone) game.isStandalone = true;
         // Preserve user-set executable path — SQLite/scan never populates this
         if (existing?.executablePath && !game.executablePath) game.executablePath = existing.executablePath;
-        if (existing?.installDir && !game.installDir) game.installDir = existing.installDir;
+        // Only preserve installDir if the game is still installed (don't restore stale path after depot uninstall)
+        if (existing?.installDir && !game.installDir && game.isInstalled) game.installDir = existing.installDir;
       }
     }
     return deduped;
@@ -736,28 +738,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     mergeLocalStatsIntoGames(games);
     setAchievementsSupportedFlag(games);
     return games;
-  }
-
-  async function updateAppInfoFromGames(games: LibraryGame[]) {
-    const now = Math.floor(Date.now() / 1000);
-    for (const game of games) {
-      if (!game.appId) continue;
-      const entry = appInfoMap[game.appId];
-      const gameName = game.title && !game.title.startsWith("Steam App ") ? game.title : null;
-      if (entry && entry.name === gameName && entry.header_image === (game.imageUrl || null) && entry.updated_at && (now - entry.updated_at) < 86400) continue;
-      await updateLibraryAppInfo(game.appId, {
-        app_id: game.appId,
-        name: gameName,
-        header_image: game.imageUrl || null,
-        cover_path: entry?.cover_path ?? null,
-        grid_path: entry?.grid_path ?? null,
-        hero_path: entry?.hero_path ?? null,
-        logo_path: entry?.logo_path ?? null,
-        icon_path: entry?.icon_path ?? null,
-        updated_at: now,
-      }).catch((err) => console.warn(err));
-      console.log(`[LIBRARY_CONTEXT][APPINFO_UPDATE_SAFE] appid=${game.appId} preserveMedia=true`);
-    }
   }
 
   function snapshotGameToLibraryGame(sg: SnapshotGame): LibraryGame {
@@ -1242,6 +1222,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             const appScripts = luaByAppId.get(Number(g.appId));
             if (appScripts) {
               updatedCount++;
+              // Re-evaluate depot install state — depot files may have been deleted
+              const depotInfo = getDepotManifests(g.appId);
+              const hasDepotFiles = !!depotInfo?.destDir;
               console.log(`[LIBRARY][UPSERT_FROM_LUA] appid=${g.appId} inserted=false updated=true luaActive=${appScripts.some(s => !s.is_disabled)}`);
               return {
                 ...g,
@@ -1249,6 +1232,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 hasLua: true,
                 isLuaActive: appScripts.some((s) => !s.is_disabled),
                 isLuaDisabled: appScripts.every((s) => s.is_disabled),
+                // Update install state based on whether depot files still exist
+                isInstalled: hasDepotFiles ? true : (g.source === "lua" && !hasDepotFiles ? false : g.isInstalled),
+                isPlayable: hasDepotFiles ? true : (g.source === "lua" && !hasDepotFiles ? false : g.isPlayable),
+                installDir: hasDepotFiles ? depotInfo!.destDir : (g.source === "lua" && !hasDepotFiles ? undefined : g.installDir),
               };
             }
             // No scripts found for this appId â€” clear stale Lua state if it existed
@@ -1275,14 +1262,21 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             const appIdStr = String(appIdNum);
             if (!currentAppIds.has(appIdStr)) {
               const title = resolvedNames[appIdStr] || `Steam App ${appIdStr}`;
+              const depotInfo = getDepotManifests(appIdStr);
+              const hasDepotFiles = !!depotInfo?.destDir;
               newLuaGames.push({
                 id: `lua-${appIdStr}`,
                 appId: appIdStr,
                 title,
                 source: "lua",
-                isPlayable: false,
-                isInstallable: false,
+                isPlayable: hasDepotFiles,
+                isInstallable: !hasDepotFiles,
                 steamInstalled: false,
+                installDir: depotInfo?.destDir,
+                executablePath: depotInfo?.executablePath,
+                isInstalled: hasDepotFiles,
+                isStandalone: hasDepotFiles,
+                linkedSteamAppId: hasDepotFiles ? appIdStr : undefined,
                 luaScripts: appScripts,
                 hasLua: true,
                 isLuaActive: appScripts.some((s) => !s.is_disabled),
@@ -1290,7 +1284,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 hasLuaSource: false,
                 sources: [],
               } as LibraryGame);
-              console.log(`[LIBRARY][UPSERT_FROM_LUA] appid=${appIdStr} inserted=true updated=false title="${title}"`);
+              console.log(`[LIBRARY][UPSERT_FROM_LUA] appid=${appIdStr} inserted=true updated=false title="${title}" hasDepot=${hasDepotFiles}`);
             }
           }
 
@@ -1347,7 +1341,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       const allLib = allV2.map((g) => g2l(g));
       applyGamesSafely(allLib.length > 0 ? allLib : enriched, "manual-refresh", { allowReplace: true });
       setWarnings(result.warnings);
-      await updateAppInfoFromGames(enriched).catch((err) => console.warn(err));
+      // updateAppInfoFromGames removed — Rust side ignores it (superseded by SQLite games table)
       reportLibraryProgress({ phase: "done", source: "steam", itemsFound: allLib.length || enriched.length });
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);
@@ -1394,7 +1388,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 if (existing.isStandalone) libGame.isStandalone = true;
                 libGame.sizeOnDisk = existing.sizeOnDisk;
                 libGame.executablePath = existing.executablePath;
-                libGame.installDir = existing.installDir;
+                // Only preserve installDir if game is still installed (don't restore stale path after uninstall)
+                if (libGame.isInstalled) libGame.installDir = existing.installDir;
                 // Preserve media paths — gameV2ToLibraryGame populates from games_v2
                 libGame.landscapePath = existing.landscapePath ?? libGame.landscapePath;
                 libGame.coverPath = existing.coverPath ?? libGame.coverPath;
@@ -1540,6 +1535,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       return null;
     }
     const result = await refreshSingleGameSteamStatus(appId, { steamRoot, force });
+    // Lua games with depot files keep their own install state — don't override from Steam scan
+    if (game.source === "lua" && game.installDir) {
+      return result;
+    }
     if (result && result.steamInstalled !== game.steamInstalled) {
       const newSource = result.steamInstalled ? "steam" as const : (game.hasLua ? "lua" as const : game.source);
       updateGame(appId, {
@@ -1703,7 +1702,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         const currentGames = gamesRef.current;
         const installedGames = currentGames.filter(
           (g): g is LibraryGame & { appId: string } =>
-            g.appId !== undefined && g.steamInstalled === true
+            g.appId !== undefined && g.steamInstalled === true &&
+            !(g.source === "lua" && g.installDir) // Lua+depot games are not governed by Steam
         );
         if (installedGames.length === 0) return;
 
@@ -1730,6 +1730,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         // Build full updated games array from the captured snapshot
         const updatedGames = currentGames.map((g) => {
           if (!g.appId || !seenMissing.has(g.appId)) return g;
+          // Lua+depot games keep their own install state
+          if (g.source === "lua" && g.installDir) return g;
           return {
             ...g,
             steamInstalled: false,
@@ -1744,6 +1746,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
         // Update React state (sync, React 18 auto-batches)
         for (const appId of missingAppIds) {
+          const game = currentGames.find((g) => g.appId === appId);
+          // Lua+depot games keep their own install state
+          if (game?.source === "lua" && game?.installDir) continue;
           updateGame(appId, {
             steamInstalled: false,
             isInstallable: true,
@@ -1753,7 +1758,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             sizeOnDisk: undefined,
             lastUpdated: undefined,
           });
-          const game = currentGames.find((g) => g.appId === appId);
           console.log(`[UNINSTALL][DETECT] appid=${appId} title=${game?.title ?? "unknown"}`);
         }
 

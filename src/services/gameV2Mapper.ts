@@ -158,7 +158,7 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
     steamInstalled: (game.source === "steam" && game.isInstalled) || (game.hasLua && game.isInstalled),
     isInstalled: game.isInstalled,
 
-    luaScripts: [],
+    luaScripts: (() => { try { return JSON.parse(game.luaScriptsJson ?? "[]"); } catch { return []; } })(),
     hasLua: game.hasLua,
     isLuaActive: game.hasLua,
     isLuaDisabled: false,
@@ -580,6 +580,7 @@ export function libraryGameToGameV2(game: LibraryGame): GameV2 {
     standalone: game.isStandalone ?? false,
 
     hasLua: game.hasLua ?? false,
+    luaScriptsJson: JSON.stringify(game.luaScripts ?? []),
 
     createdAt: now,
     updatedAt: now,

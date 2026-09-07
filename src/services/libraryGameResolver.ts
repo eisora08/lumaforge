@@ -11,6 +11,7 @@ import { scanSteamInstalledGames, scanLocalGameFolders, scanInstalledLuaScripts,
 import { resolveGameMetadata } from "./gameMetadataResolver";
 import { readSyncIndex } from "./tauri";
 import { isStandalone as isStandaloneById } from "./standaloneStore";
+import { getDepotManifests } from "./depotUpdateStore";
 
 function stableIdFromString(prefix: string, value: string): string {
   let hash = 0;
@@ -91,15 +92,25 @@ function buildFromLua(
 ): LibraryGame {
   const meta = metadata[Number(appId)];
   const metaName = meta?.resolved ? meta.name : undefined;
+
+  // Check if this Lua game has been depot-downloaded (files on disk)
+  const depotInfo = getDepotManifests(appId);
+  const hasDepotFiles = !!depotInfo?.destDir;
+  const isStandaloneGame = isStandaloneById(appId);
+
   return {
     id: `lua-${appId}`,
     appId,
     title: metaName || "",
     source: "lua",
-    isInstalled: steamInstalled,
-    isPlayable: scripts.some((s) => !s.is_disabled),
+    isInstalled: steamInstalled || hasDepotFiles,
+    isPlayable: scripts.some((s) => !s.is_disabled) || hasDepotFiles,
     isInstallable: false,
     steamInstalled: false,
+    installDir: depotInfo?.destDir,
+    executablePath: depotInfo?.executablePath,
+    linkedSteamAppId: hasDepotFiles ? appId : undefined,
+    isStandalone: isStandaloneGame,
     imageUrl: getImageUrl(meta),
     luaScripts: scripts,
     hasLua: true,
@@ -153,6 +164,16 @@ function mergeLuaIntoGame(
   game.isLuaDisabled = scripts.every((s) => s.is_disabled);
   if (game.appId) {
     game.hasLuaSource = sources.has(game.appId);
+
+    // If this Steam game also has depot-downloaded files, mark it as installed
+    const depotInfo = getDepotManifests(game.appId);
+    if (depotInfo?.destDir && !game.steamInstalled) {
+      game.installDir = depotInfo.destDir;
+      game.executablePath = depotInfo.executablePath;
+      game.isInstalled = true;
+      game.linkedSteamAppId = game.appId;
+      game.isStandalone = isStandaloneById(game.appId);
+    }
   }
 }
 

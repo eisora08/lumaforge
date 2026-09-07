@@ -15,9 +15,10 @@ import { GridSkeleton } from "../components/common/Skeleton";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession } from "../context/GameSessionContext";
-import { installSteamApp, deleteLuaScript, scanInstalledLuaScripts } from "../services/tauri";
+import { installSteamApp, deleteLuaScript, scanInstalledLuaScripts, deleteGameCompletely } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
 import { epicInstallTrackerService } from "../services/epicInstallTrackerService";
+import { removeDepotInstallInfo } from "../services/depotUpdateStore";
 
 import type { LibraryGame } from "../types/libraryGame";
 
@@ -48,7 +49,13 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
   }, [setSelectedGame, onNavigate]);
 
   async function handleDeleteScript(game: LibraryGame) {
-    const script = game.luaScripts[0];
+    let script: import("../types/installedLua").InstalledLuaScript | undefined = game.luaScripts[0];
+    if (!script && game.hasLua && game.appId && settings.luaPath) {
+      try {
+        const allScripts = await scanInstalledLuaScripts(settings.luaPath, { force: true });
+        script = allScripts.find((s) => String(s.app_id) === game.appId);
+      } catch { /* scan failed */ }
+    }
     if (!script) {
       showWarning("No Lua script to delete.", { title: "No script" });
       return;
@@ -63,15 +70,18 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     if (!result.confirmed) return;
     try {
       await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
-      // Verify file is actually gone from disk
-      const remaining = await scanInstalledLuaScripts(settings.luaPath);
+      const remaining = await scanInstalledLuaScripts(settings.luaPath, { force: true });
       const stillPresent = remaining.some((s) => s.file_name === script.file_name);
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
       if (stillPresent) {
         showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
         return;
       }
-      // Force refresh library state (bypass TTL) to reflect deletion
+      await deleteGameCompletely(game.id, game.appId ?? undefined);
+      if (game.appId) {
+        removeDepotInstallInfo(game.appId);
+        localStorage.removeItem(`lumaforge-ach-platform-${game.appId}`);
+      }
       await refresh({ force: true });
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
       showSuccess("Lua script deleted.", { title: "Deleted" });
@@ -134,6 +144,12 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     } else if (game.source === "epic" && !game.isPlayable) {
       showWarning("Epic launch is not enabled for this game.", { title: "Not available" });
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: "Error" });
+      }
+    } else if (game.source === "lua" && game.executablePath) {
       try {
         await session.launchGame(game);
       } catch (err) {

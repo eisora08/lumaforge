@@ -56,7 +56,8 @@ import { useGameSession, computeGameKey } from "../../context/GameSessionContext
 import { useFavorites } from "../../context/FavoritesContext";
 import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
 import { openExternalUrl } from "../../services/externalLinks";
-import { uninstallSteamApp, openSteamStoreApp, downloadAndInstallPackage, computeFileHash, markSyncIndexItem } from "../../services/tauri";
+import { uninstallSteamApp, openSteamStoreApp, downloadAndInstallPackage, computeFileHash, markSyncIndexItem, deleteDirectory, deleteGameV2 } from "../../services/tauri";
+import { useConfirm } from "../../services/confirmService";
 import { getEffectiveProviderAuthHeaders, buildProviderDownloadUrl } from "../../services/providerSearch";
 import { findCachedSourceForApp } from "../../services/sourceAvailabilityCacheService";
 import { defaultApiProviders } from "../../data/providers";
@@ -72,7 +73,7 @@ import GameEditDialog from "./GameEditDialog";
 import ToolsModal from "../tools/ToolsModal";
 import DepotPickerModal from "../library/DepotPickerModal";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
-import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
+import { updateDebridGame, removeDebridGameFromLibrary, getDebridLaunchMetadata } from "../../services/debridGameStore";
 import { open } from "@tauri-apps/plugin-dialog";
 
 function formatRelativeTime(unixSeconds: number | null): string {
@@ -155,6 +156,7 @@ function GameLauncherTileInner({
 }: GameLauncherTileProps) {
   countRender("GameLauncherTile");
   const { t } = useTranslation();
+  const { confirm } = useConfirm();
   const { settings } = useSettings();
   const { ref, isVisible } = useInViewport();
   const { onMouseEnter: prefetchEnter, onMouseLeave: prefetchLeave } = useHoverPrefetch(game.appId);
@@ -944,16 +946,31 @@ function GameLauncherTileInner({
                         label: t("context_menu.remove_library", "Remove from Library"),
                         icon: <Trash2 className="h-3.5 w-3.5" />,
                         destructive: true as const,
-                        onClick: () => {
+                        onClick: async () => {
                           setMenuOpen(false);
                           if (DEBUG_MANUAL_REMOVE) console.log(`[DEBRID][TILE_REMOVE] providerGameId=${game.providerGameId} title="${game.title}"`);
                           const providerGameId = game.providerGameId;
-                          if (providerGameId) {
-                            removeDebridGameFromLibrary(providerGameId);
-                            showSuccess(`"${game.title ?? providerGameId}" ${t("context_menu.removed_from_library", "removed from library. Files on disk are kept.")}`);
-                          } else {
+                          if (!providerGameId) {
                             showError(t("context_menu.remove_error", "Could not remove this game from the library."));
+                            return;
                           }
+                          const meta = getDebridLaunchMetadata(providerGameId);
+                          const installDir = meta?.installDir;
+                          const result = await confirm({
+                            title: t("context_menu.remove_library", "Remove from Library"),
+                            description: installDir
+                              ? t("context_menu.debrid_remove_confirm", { defaultValue: `This will remove "${game.title ?? providerGameId}" from library and delete:\n${installDir}`, title: game.title ?? providerGameId, installDir })
+                              : t("context_menu.debrid_remove_confirm_no_dir", { defaultValue: `This will remove "${game.title ?? providerGameId}" from library.`, title: game.title ?? providerGameId }),
+                            confirmLabel: t("context_menu.remove_library", "Remove from Library"),
+                            variant: "danger",
+                          });
+                          if (!result.confirmed) return;
+                          if (installDir) {
+                            try { await deleteDirectory(installDir); } catch { /* best effort */ }
+                          }
+                          try { await deleteGameV2(`debrid:${providerGameId}`); } catch { /* best effort */ }
+                          removeDebridGameFromLibrary(providerGameId);
+                          showSuccess(`"${game.title ?? providerGameId}" ${t("context_menu.removed_from_library", "removed from library.")}`);
                         },
                       }]
                       : game.source !== "manual" && game.source !== "epic" && game.source !== "lua"

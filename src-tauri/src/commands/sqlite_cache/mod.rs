@@ -414,6 +414,7 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
 
             -- Lua overlay
             has_lua           INTEGER DEFAULT 0,
+            lua_scripts_json  TEXT DEFAULT '[]',
 
             -- Provider-specific overrides (JSON blob)
             provider_metadata TEXT,
@@ -432,6 +433,9 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
 
     // Migration: add has_lua column for existing databases
     let _ = conn.execute_batch("ALTER TABLE games_v2 ADD COLUMN has_lua INTEGER DEFAULT 0;");
+
+    // Migration: add lua_scripts_json column for existing databases
+    let _ = conn.execute_batch("ALTER TABLE games_v2 ADD COLUMN lua_scripts_json TEXT DEFAULT '[]';");
 
     // Startup snapshot table — replaces cache/startup-snapshot.json (single row)
     conn.execute_batch(
@@ -1378,6 +1382,7 @@ fn migrate_v4_to_v5(conn: &Connection) -> Result<(), String> {
 
             -- Lua overlay
             has_lua           INTEGER DEFAULT 0,
+            lua_scripts_json  TEXT DEFAULT '[]',
 
             -- Provider-specific overrides (JSON blob)
             provider_metadata TEXT,

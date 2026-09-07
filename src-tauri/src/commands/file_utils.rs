@@ -48,3 +48,12 @@ pub fn list_files_in_dir(path: String) -> Result<Vec<String>, String> {
     }
     Ok(files)
 }
+
+#[tauri::command]
+pub fn delete_directory(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if p.exists() {
+        fs::remove_dir_all(p).map_err(|e| format!("Failed to delete directory {}: {}", path, e))?;
+    }
+    Ok(())
+}

@@ -2861,6 +2861,10 @@ export async function deleteGameCompletely(
   }
 }
 
+export async function deleteDirectory(path: string): Promise<void> {
+  return await invoke("delete_directory", { path });
+}
+
 export async function getGameV2Count(): Promise<number> {
   try {
     return await invoke<number>("get_game_v2_count");

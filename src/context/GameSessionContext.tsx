@@ -131,7 +131,7 @@ export type ActiveGameState = Exclude<GameSessionState, "idle" | "error">;
 
 export type TrackingConfidence = "high" | "medium" | "low" | "none";
 
-export type GameSessionSource = "steam" | "epic" | "debrid" | "local" | "manual" | "unknown";
+  export type GameSessionSource = "steam" | "epic" | "debrid" | "local" | "manual" | "lua" | "unknown";
 
 export type RunningGameSession = {
   gameKey: string;
@@ -993,7 +993,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           gameId: game.id,
           appId: game.appId,
           title: game.title,
-          source: game.source === "steam" ? "steam" : game.source === "epic" ? "epic" : game.source === "debrid" ? "debrid" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : "unknown",
+          source: game.source === "steam" ? "steam" : game.source === "epic" ? "epic" : game.source === "debrid" ? "debrid" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : game.source === "lua" ? "lua" : "unknown",
           state: "launching",
           executablePath: game.executablePath,
           installDir: game.installDir,
@@ -1126,7 +1126,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       if (!iconUrl) iconUrl = await resolveUrl(game.iconPath, "steam");
     }
 
-    const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "debrid" ? "Debrid" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : "Unknown";
+    const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "debrid" ? "Debrid" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : game.source === "lua" ? "Lua" : "Unknown";
     sessionMediaRef.current[computedKey] = { imageUrl, heroUrl, iconUrl, title: game.title, provider: providerLabel };
 
     // Timeout guard — prevents infinite launching
@@ -1371,6 +1371,54 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           if (result.pid) {
             if (ENABLE_VERBOSE_LAUNCH_LOGS) {
               console.debug("[Launch] manual process spawned", { gameKey: computedKey, pid: result.pid });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "running",
+                  pid: result.pid,
+                  softSession: false,
+                  trackingConfidence: "high",
+                  processName: extractExeName(exePath),
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+            ls.inFlight = false;
+          } else {
+            await scanForProcessAfterLaunch(computedKey, game, token, 0);
+            if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing || existing.state !== "launching") return prev;
+                return {
+                  ...prev,
+                  [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                };
+              });
+              ls.inFlight = false;
+            }
+          }
+        } else if (game.source === "lua" && game.executablePath) {
+          const exePath = game.executablePath.trim().replace(/^["']|["']$/g, "");
+          const workingDir = exePath.substring(0, exePath.lastIndexOf("\\"));
+          console.log(`[Launch][LUA] appid=${game.appId} exe="${exePath}" workDir="${workingDir}"`);
+
+          const result = await launchExecutable(exePath, undefined, workingDir || undefined);
+          if (ls.cancelled || ls.token !== token) {
+            if (result.pid) {
+              try { await terminateProcess(result.pid); } catch { /* ignore */ }
+            }
+            return;
+          }
+
+          if (result.pid) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] lua process spawned", { gameKey: computedKey, pid: result.pid });
             }
             setSessions((prev) => {
               const existing = prev[computedKey];

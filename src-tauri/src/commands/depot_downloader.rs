@@ -645,8 +645,8 @@ pub async fn depot_downloader_start(
     let keys = resolve_keys(&app_handle, job.app_id);
     let keys_file = write_keys_file(&app_handle, &keys)?;
 
-    // Create output directory
-    let output_dir = PathBuf::from(&job.output_dir);
+    // Create output directory — always append appId subfolder to keep games separated
+    let output_dir = PathBuf::from(&job.output_dir).join(job.app_id.to_string());
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| format!("Failed to create output dir: {e}"))?;
 
@@ -838,7 +838,8 @@ fn free_disk_space(path: &Path) -> Result<u64, String> {
     Ok(u64::MAX)
 }
 
-/// Get the default output directory for depot downloads: {app_data_dir}/games/depot/{app_id}/
+/// Get the default output directory for depot downloads: {app_data_dir}/games/depot/
+/// The appId subfolder is added by depot_downloader_start to keep games separated.
 #[tauri::command]
 pub fn depot_downloader_default_output_dir(
     app_handle: AppHandle,
@@ -846,8 +847,7 @@ pub fn depot_downloader_default_output_dir(
 ) -> Result<String, String> {
     let dir = get_app_data_dir(&app_handle)?
         .join("games")
-        .join("depot")
-        .join(app_id.to_string());
+        .join("depot");
     Ok(dir.to_string_lossy().to_string())
 }
 

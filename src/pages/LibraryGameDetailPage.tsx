@@ -7,6 +7,7 @@ import {
   installSteamApp,
   deleteLuaScript,
   scanInstalledLuaScripts,
+  deleteGameCompletely,
 } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
 import { epicInstallTrackerService } from "../services/epicInstallTrackerService";
@@ -23,6 +24,7 @@ import { getGameFile, type GameMediaCacheEntry, type GameMediaPaths, type GameFi
 import type { GameAppInfo } from "../services/gameCacheService";
 import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle, resolveProviderMediaPreviewUrl } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
+import { removeDepotInstallInfo } from "../services/depotUpdateStore";
 import { resolveGameDetailsArtwork, refreshGameDetailsArtwork, materializeResolvedGameMedia } from "../services/gameCacheService";
 
 import type { ResolvedGameMediaBundle } from "../types/gameMedia";
@@ -123,6 +125,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
   const [installConfirmGame, setInstallConfirmGame] = useState<LibraryGame | null>(null);
   const { confirm } = useConfirm();
+  const handleMediaChanged = useCallback(() => {
+    setResetGeneration((g) => g + 1);
+  }, []);
 
   // Playtime tracking: when session transitions from running to idle/cleared
   useEffect(() => {
@@ -156,6 +161,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       await launchGame(game);
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       await launchGame(game);
+    } else if (game.source === "lua" && game.executablePath) {
+      await launchGame(game);
     } else if (game.source === "manual") {
       showWarning(t("library_details.manual_no_executable"), { title: t("library_page.not_available") });
     } else {
@@ -178,7 +185,13 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   async function handleDeleteScript(game: LibraryGame) {
-    const script = game.luaScripts[0];
+    let script: import("../types/installedLua").InstalledLuaScript | undefined = game.luaScripts[0];
+    if (!script && game.hasLua && game.appId && settings.luaPath) {
+      try {
+        const allScripts = await scanInstalledLuaScripts(settings.luaPath, { force: true });
+        script = allScripts.find((s) => String(s.app_id) === game.appId);
+      } catch { /* scan failed */ }
+    }
     if (!script) {
       showWarning(t("sidebar.no_lua_script"), { title: t("library_details.no_script_title") });
       return;
@@ -193,18 +206,22 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     if (!result.confirmed) return;
     try {
       await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
-      // Verify file is actually gone from disk
-      const remaining = await scanInstalledLuaScripts(settings.luaPath);
+      const remaining = await scanInstalledLuaScripts(settings.luaPath, { force: true });
       const stillPresent = remaining.some((s) => s.file_name === script.file_name);
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
       if (stillPresent) {
         showError(t("sidebar.deletion_failed"), { title: t("sidebar.deletion_failed_title") });
         return;
       }
-      // Force refresh library state (bypass TTL) to reflect deletion
-      await refresh({ force: true });
+      await deleteGameCompletely(game.id, game.appId ?? undefined);
+      if (game.appId) {
+        removeDepotInstallInfo(game.appId);
+        localStorage.removeItem(`lumaforge-ach-platform-${game.appId}`);
+      }
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
       showSuccess(t("sidebar.lua_deleted"), { title: t("sidebar.lua_deleted_title") });
+      onBack?.();
+      refresh({ force: true }).catch(() => {});
     } catch (err) {
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
       showError(String(err), { title: t("sidebar.error") });
@@ -1323,11 +1340,6 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     appInfoEntry,
     canonicalAppInfo,
   );
-
-  // ── Re-resolve artwork when media is changed from the edit dialog ──
-  const handleMediaChanged = useCallback(() => {
-    setResetGeneration((g) => g + 1);
-  }, []);
 
   // Disabled by default. Set window.__DEBUG_NAME_TRACE = true in dev console to enable.
   if ((window as any).__DEBUG_NAME_TRACE) {

@@ -51,6 +51,12 @@ export function schedulePostSnapshotSteamReconciliation(
         seen.add(game.appId);
 
         const isSteamInstalled = installedAppIds.has(game.appId);
+
+        // Lua games with depot files keep their own install state — don't override from Steam scan
+        if (game.source === "lua" && game.installDir) {
+          continue;
+        }
+
         const needsUpdate = game.steamInstalled !== isSteamInstalled;
 
         if (needsUpdate) {
