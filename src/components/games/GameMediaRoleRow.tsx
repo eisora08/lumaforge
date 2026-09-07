@@ -109,12 +109,16 @@ export default function GameMediaRoleRow({
 }: GameMediaRoleRowProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const browseRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const prevBrowseOpenRef = useRef(browseOpen);
 
   useEffect(() => {
-    if (browseOpen && browseRef.current) {
-      browseRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (browseOpen && !prevBrowseOpenRef.current && dropdownRef.current) {
+      requestAnimationFrame(() => {
+        dropdownRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+      });
     }
+    prevBrowseOpenRef.current = browseOpen;
   }, [browseOpen]);
 
   return (
@@ -208,7 +212,7 @@ export default function GameMediaRoleRow({
           <Link className="h-3.5 w-3.5" />
           {t("game_edit.set_url", "Set URL")}
         </button>
-        <div ref={browseRef} className="relative">
+        <div className="relative">
           <button
             type="button"
             onClick={onToggleBrowse}
@@ -219,7 +223,7 @@ export default function GameMediaRoleRow({
             {isBrowsing ? t("game_edit.fetching", "Fetching...") : t("game_edit.browse", "Browse")}
           </button>
           {browseOpen && (
-            <div className="lf-dropdown-menu absolute left-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-(--surface-active-border) bg-(--color-surface) py-1 shadow-lg backdrop-blur-md">
+            <div ref={dropdownRef} className="lf-dropdown-menu absolute left-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-(--surface-active-border) bg-(--surface-active) py-1 shadow-lg backdrop-blur-md">
               <SourceOption
                 label={t("game_edit.source_local", "Current Local")}
                 icon={FolderOpen}

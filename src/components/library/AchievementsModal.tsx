@@ -4,6 +4,7 @@ import {
   Search, RefreshCw, Trophy, X, Calendar, Star, Lock, Unlock,
   ChevronDown, ChevronRight, Layers, Globe, Eraser,
 } from "lucide-react";
+import SourceDropdown from "../common/SourceDropdown";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import AchievementIcon from "../common/AchievementIcon";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
@@ -651,16 +652,16 @@ export default function AchievementsModal({
             {/* Sort */}
             <div className="flex items-center gap-1.5 text-[11px] text-(--color-muted)">
               <span>Sort:</span>
-              <select
+              <SourceDropdown
                 value={sort}
-                onChange={(e) => setSort(e.target.value as SortMode)}
-                className="rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[11px] text-(--color-text) outline-none focus:border-(--color-accent)"
-              >
-                <option value="default">Default</option>
-                <option value="name">Name</option>
-                <option value="date">Unlock Date</option>
-                <option value="rarity">Rarity</option>
-              </select>
+                onChange={(v) => setSort(v as SortMode)}
+                options={[
+                  { value: "default", label: "Default" },
+                  { value: "name", label: "Name" },
+                  { value: "date", label: "Unlock Date" },
+                  { value: "rarity", label: "Rarity" },
+                ]}
+              />
             </div>
 
             {/* Search */}

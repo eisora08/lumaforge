@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Award, Search, CheckCircle2, Lock, Sparkles, Zap, Trophy } from "lucide-react";
+import SourceDropdown from "../components/common/SourceDropdown";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { ACHIEVEMENT_DEFINITIONS } from "../features/activity/achievements/achievementDefinitions";
 import {
@@ -324,15 +325,11 @@ export default function LauncherAchievements() {
           />
         </div>
 
-        <select
+        <SourceDropdown
           value={rarityFilter}
-          onChange={(e) => setRarityFilter(e.target.value as AchievementRarity | "all")}
-          className="rounded-xl border border-(--color-border)/30 bg-(--color-surface) px-3 py-2.5 text-sm text-(--color-text) focus:border-(--color-accent)/50 focus:outline-none"
-        >
-          {RARITIES.map((r) => (
-            <option key={r.value} value={r.value}>{t(r.labelKey)}</option>
-          ))}
-        </select>
+          onChange={(v) => setRarityFilter(v as AchievementRarity | "all")}
+          options={RARITIES.map((r) => ({ value: r.value, label: t(r.labelKey) }))}
+        />
 
         <div className="flex rounded-xl border border-(--color-border)/30 overflow-hidden">
           {STATES.map((s) => (

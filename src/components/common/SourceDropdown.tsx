@@ -55,7 +55,7 @@ export default function SourceDropdown({
         />
       </button>
       {open && (
-        <div className="lf-dropdown-menu absolute z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-(--surface-active-border) bg-(--color-surface) shadow-lg backdrop-blur-md">
+        <div className="lf-dropdown-menu absolute z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-(--surface-active-border) bg-(--surface-active) shadow-lg backdrop-blur-md">
           {options.map((opt) => (
             <button
               key={opt.value}

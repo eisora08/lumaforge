@@ -713,7 +713,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
                         {addMenuOpen && (
                           <>
                             <div className="fixed inset-0 z-40" onClick={() => setAddMenuOpen(false)} />
-                            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-(--color-border) bg-(--color-surface) shadow-2xl shadow-black/50">
+                            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl shadow-black/50 backdrop-blur-md">
                               <button
                                 onClick={() => { setAddGameOpen(true); setAddMenuOpen(false); }}
                                 className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
