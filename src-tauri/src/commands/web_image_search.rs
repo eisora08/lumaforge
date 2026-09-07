@@ -1,11 +1,59 @@
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use std::time::Instant;
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Url, WebviewUrl};
-use tokio::sync::oneshot;
 
-use super::hydra_source::{url_hash, PENDING_FETCHES};
+/// Cache key: query + page + transparent. Value: (timestamp, results).
+type ImageCache = StdMutex<HashMap<String, (Instant, Vec<ImageResult>)>>;
+static IMAGE_QUERY_CACHE: LazyLock<ImageCache> = LazyLock::new(|| StdMutex::new(HashMap::new()));
+const IMAGE_CACHE_TTL_SECS: u64 = 60;
 
-const REQUEST_TIMEOUT_SECS: u64 = 15;
+/// Serializes all WebView-based fetches to prevent concurrent window manipulation.
+static WEBVIEW_IMAGE_FETCH_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// Serializes DDG search: cache check + fetch + cache store all under one lock.
+static DDG_SEARCH_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// Decode JSON string escapes: \uXXXX → char, \n → newline, \" → ", \\ → \
+fn decode_json_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    while i < len {
+        if chars[i] == '\\' && i + 1 < len {
+            match chars[i + 1] {
+                'n' => { out.push('\n'); i += 2; }
+                'r' => { out.push('\r'); i += 2; }
+                't' => { out.push('\t'); i += 2; }
+                '"' => { out.push('"'); i += 2; }
+                '\\' => { out.push('\\'); i += 2; }
+                'u' if i + 5 < len => {
+                    let hex: String = chars[i + 2..=i + 5].iter().collect();
+                    if let Ok(cp) = u32::from_str_radix(&hex, 16) {
+                        if let Some(c) = char::from_u32(cp) {
+                            out.push(c);
+                        }
+                        i += 6;
+                    } else {
+                        out.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                _ => { out.push(chars[i]); i += 1; }
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageResult {
@@ -39,21 +87,14 @@ pub async fn search_web_images(
             search_google_via_webview(&app_handle, &query, page_num, safe, width, height, trans).await
         }
         "duckduckgo" => {
-            let client = reqwest::Client::builder()
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-                .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
-                .connect_timeout(std::time::Duration::from_secs(8))
-                .redirect(reqwest::redirect::Policy::limited(5))
-                .build()
-                .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+            // WebView-based: navigate to DDG images, let it render, extract from DOM
+            let images = search_duckduckgo_via_webview(&app_handle, &query, page_num, trans).await;
 
-            let mut images = search_duckduckgo(&client, &query, page_num, trans).await?;
+            let mut images = images?;
 
             // Post-filter by dimensions if both provided
             if let (Some(min_w), Some(min_h)) = (width, height) {
                 images.retain(|img| {
-                    // Keep images that match or are close to the target size (within 20% tolerance)
-                    // or have unknown dimensions (width=0/height=0 from some sources)
                     if img.width == 0 || img.height == 0 {
                         return true;
                     }
@@ -106,14 +147,218 @@ async fn search_google_via_webview(
     Ok(images)
 }
 
-/// Fetch HTML from a URL using a hidden WebView (same pattern as hydra_source fetcher).
-/// The WebView executes JavaScript to bypass bot detection (Cloudflare, Google, etc.)
+// ─── DuckDuckGo Images via WebView + i.js JSON API ─────────────────────────
+//
+// Old approach: reqwest called i.js directly → DDG returns 403 to raw HTTP.
+// New approach: Navigate hidden WebView to DDG (establishes session + cookies),
+//               extract VQD from rendered page via eval, then call fetch('/i.js')
+//               from within the page context. Returns JSON with real width/height.
+
+async fn search_duckduckgo_via_webview(
+    app_handle: &AppHandle,
+    query: &str,
+    page: u32,
+    transparent: bool,
+) -> Result<Vec<ImageResult>, String> {
+    let _lock = DDG_SEARCH_MUTEX.lock().await;
+
+    let iaf = if transparent { "&iaf=type:transparent" } else { "" };
+    let ddg_url = format!(
+        "https://duckduckgo.com/?q={}&ia=images&iax=images{}",
+        urlencoding::encode(query),
+        iaf,
+    );
+
+    // Cache check
+    let cache_key = format!("ddg:{}:{}:{}", query, page, transparent);
+    {
+        let cache = IMAGE_QUERY_CACHE.lock().unwrap();
+        if let Some((ts, cached)) = cache.get(&cache_key) {
+            if ts.elapsed().as_secs() < IMAGE_CACHE_TTL_SECS && !cached.is_empty() {
+                eprintln!("[DDG] cache hit '{}' ({} images)", query, cached.len());
+                return Ok(cached.clone());
+            }
+        }
+    }
+
+    // Step 1: Navigate WebView to DDG to establish session + cookies
+    let json_str = fetch_ddg_ivals_via_webview(app_handle, &ddg_url, query, page).await?;
+
+    // Step 2: Parse the i.js JSON response
+    let images = parse_ddg_json(&json_str);
+    eprintln!(
+        "[DDG] i.js parse: {} images from {} bytes JSON",
+        images.len(),
+        json_str.len()
+    );
+
+    if images.is_empty() {
+        // Fallback: try parsing HTML in case i.js returned empty/malformed
+        eprintln!("[DDG] i.js returned no images, falling back to HTML parse");
+        let html = fetch_html_via_webview(app_handle, &ddg_url, "ddg-image-search", 5).await?;
+        let images = parse_ddg_html(&html);
+        if images.is_empty() {
+            return Err("[DDG] No images found".to_string());
+        }
+        let mut cache = IMAGE_QUERY_CACHE.lock().unwrap();
+        cache.insert(cache_key, (Instant::now(), images.clone()));
+        return Ok(images);
+    }
+
+    // Store in cache
+    {
+        let mut cache = IMAGE_QUERY_CACHE.lock().unwrap();
+        cache.insert(cache_key, (Instant::now(), images.clone()));
+    }
+
+    Ok(images)
+}
+
+/// Navigate to DDG images page, extract VQD from rendered JS, then call
+/// `fetch('/i.js?vqd=...')` from within the page context. Returns the raw
+/// JSON string from DDG's i.js API (which includes real width/height per image).
+async fn fetch_ddg_ivals_via_webview(
+    app_handle: &AppHandle,
+    ddg_url: &str,
+    query: &str,
+    page: u32,
+) -> Result<String, String> {
+    let _lock = WEBVIEW_IMAGE_FETCH_MUTEX.lock().await;
+
+    let label = "ddg-image-search";
+    let window = match app_handle.get_webview_window(label) {
+        Some(w) => w,
+        None => {
+            tauri::WebviewWindowBuilder::new(
+                app_handle,
+                label,
+                WebviewUrl::External(Url::parse("about:blank").unwrap()),
+            )
+            .title("Fetch")
+            .inner_size(1.0, 1.0)
+            .skip_taskbar(true)
+            .visible(false)
+            .build()
+            .map_err(|e| format!("[DDG_WV] create: {}", e))?
+        }
+    };
+
+    let target = Url::parse(ddg_url).map_err(|e| format!("[DDG_WV] invalid URL: {}", e))?;
+
+    eprintln!("[DDG_WV] navigating to {}", ddg_url);
+    window
+        .navigate(target.clone())
+        .map_err(|e| format!("[DDG_WV] navigate: {}", e))?;
+
+    // Synchronous JS: extract VQD from page scripts, then sync XHR to i.js.
+    // eval_with_callback does NOT await Promises — it returns {} for async functions.
+    // Must use synchronous XHR so the result is the actual response text.
+    let escaped_query = query.replace('\\', "\\\\").replace('\'', "\\'");
+    let ijs_js = format!(
+        r#"(function(){{
+            try {{
+                // 1. Extract VQD from page HTML (inline scripts contain vqd= in DDG.deep.initialize URL)
+                var vqd = '';
+                var html = document.documentElement.outerHTML || '';
+                var m = html.match(/vqd=([0-9][0-9\-]+[0-9])/);
+                if (m) vqd = m[1];
+
+                if (!vqd) return JSON.stringify({{results:[]}});
+
+                // 2. Synchronous XHR to i.js (same origin — cookies/session included)
+                var url = '/i.js?vqd=' + vqd + '&l=us-en&o=json&q=' + encodeURIComponent('{escaped_query}') + '&u=ddg&pa={page}';
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', url, false);
+                xhr.send();
+                if (xhr.status === 200 && xhr.responseText.length > 10) {{
+                    return xhr.responseText;
+                }}
+                return JSON.stringify({{results:[], error:'i.js status=' + xhr.status + ' len=' + xhr.responseText.length}});
+            }} catch(e) {{
+                return JSON.stringify({{results:[], error: e.toString()}});
+            }}
+        }})()"#,
+    );
+
+    let max_attempts: u32 = 3;
+
+    for attempt in 1..=max_attempts {
+        let wait_ms = if attempt == 1 { 8000 } else { 4000 };
+        tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let tx = Arc::new(StdMutex::new(Some(tx)));
+
+        let tx_clone = tx.clone();
+        window
+            .eval_with_callback(&ijs_js, move |result| {
+                let content = if result.starts_with('"') && result.ends_with('"') && result.len() >= 2 {
+                    let inner = &result[1..result.len() - 1];
+                    decode_json_escapes(inner)
+                } else {
+                    result.clone()
+                };
+                eprintln!(
+                    "[DDG_WV] eval attempt={} raw_len={} clean_len={}",
+                    attempt,
+                    result.len(),
+                    content.len()
+                );
+                if let Some(sender) = tx_clone.lock().unwrap().take() {
+                    let _ = sender.send(content);
+                }
+            })
+            .map_err(|e| format!("[DDG_WV] eval_with_callback: {}", e))?;
+
+        eprintln!(
+            "[DDG_WV] attempt={}/{} url={}",
+            attempt,
+            max_attempts,
+            if ddg_url.len() > 80 { &ddg_url[..80] } else { ddg_url },
+        );
+
+        match tokio::time::timeout(tokio::time::Duration::from_secs(15), rx).await {
+            Ok(Ok(content)) if content.contains("\"results\"") && !content.contains("\"results\":[]") => {
+                eprintln!(
+                    "[DDG_WV] success attempt={} len={}",
+                    attempt,
+                    content.len()
+                );
+                return Ok(content);
+            }
+            Ok(Ok(c)) => {
+                eprintln!("[DDG_WV] empty/error results attempt={} preview={}", attempt, &c[..c.len().min(200)]);
+                // Re-navigate and retry
+                let _ = window.navigate(target.clone());
+            }
+            Ok(Err(_)) => {
+                eprintln!("[DDG_WV] rx cancelled attempt={}", attempt);
+                let _ = window.navigate(target.clone());
+            }
+            Err(_) => {
+                eprintln!("[DDG_WV] timeout attempt={}", attempt);
+                let _ = window.navigate(target.clone());
+            }
+        }
+    }
+
+    Err("[DDG_WV] timed out fetching i.js after all attempts".to_string())
+}
+
+/// Fetch HTML from a URL using a hidden WebView.
+/// Uses `eval_with_callback` to extract the rendered DOM directly — no about:blank
+/// bounce, no `__TAURI_INTERNALS__`. Works on any origin.
+///
+/// **Serialized** — only one fetch runs at a time to prevent concurrent manipulation
+/// of the shared hidden WebView window.
 async fn fetch_html_via_webview(
     app_handle: &AppHandle,
     url: &str,
     label: &str,
     wait_secs: u64,
 ) -> Result<String, String> {
+    let _lock = WEBVIEW_IMAGE_FETCH_MUTEX.lock().await;
+
     let window = match app_handle.get_webview_window(label) {
         Some(w) => w,
         None => {
@@ -132,49 +377,60 @@ async fn fetch_html_via_webview(
     };
 
     let target = Url::parse(url).map_err(|e| format!("[GOOGLE_WV] invalid URL: {}", e))?;
-    let about_blank = Url::parse("about:blank").unwrap();
 
     eprintln!("[GOOGLE_WV] navigating to {}", url);
     window
         .navigate(target.clone())
         .map_err(|e| format!("[GOOGLE_WV] navigate: {}", e))?;
 
+    // JS that extracts the rendered image container's innerHTML.
+    // Tries Google-specific selectors, then DDG-specific, then body fallback.
+    let extract_js = r#"(function(){
+        try{
+            var el=
+                document.querySelector('#islmp')||
+                document.querySelector('#islrg')||
+                document.querySelector('.isltc')||
+                document.querySelector('[data-ri]')||
+                document.querySelector('[data-testid="image-result"]')||
+                document.querySelector('.tile--img')||
+                document.querySelector('#links')||
+                document.body;
+            return el?el.innerHTML:'';
+        }catch(e){return '';}
+    })();"#;
+
     let max_attempts: u32 = 3;
 
     for attempt in 1..=max_attempts {
-        // Wait for JS to execute and content to render
-        let wait_ms = if attempt == 1 {
-            wait_secs * 1000
-        } else {
-            3000
-        };
+        let wait_ms = if attempt == 1 { wait_secs * 1000 } else { 3000 };
         tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
 
-        let callback_id = format!("gimg_{}_{}", url_hash(url), attempt);
-        let (tx, mut rx) = oneshot::channel::<String>();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let tx = Arc::new(StdMutex::new(Some(tx)));
 
-        {
-            let mut map = PENDING_FETCHES
-                .lock()
-                .map_err(|e| format!("[GOOGLE_WV] lock: {}", e))?;
-            map.insert(callback_id.clone(), tx);
-        }
-
-        // Step 1: Extract page content via innerHTML (captures rendered DOM including dynamic content)
-        // Store in window.name which survives navigation
-        let store_js = r#"(function(){try{var el=document.querySelector('#islmp')||document.querySelector('#islrg')||document.querySelector('.isltc')||document.querySelector('[data-ri]')||document.body;var t=el?el.innerHTML:'';if(t.length>100){window.name=t;}}catch(e){window.name='';}})();"#;
-        let _ = window.eval(store_js);
-
-        // Step 2: Navigate to about:blank where __TAURI_INTERNALS__ is available
-        let _ = window.navigate(about_blank.clone());
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Step 3: Read window.name and invoke callback
-        let invoke_js = format!(
-            r#"window.__TAURI_INTERNALS__.invoke('webview_fetch_callback',{{callbackId:'{}',content:window.name||''}});"#,
-            callback_id
-        );
-        let _ = window.eval(&invoke_js);
+        let tx_clone = tx.clone();
+        window
+            .eval_with_callback(extract_js, move |result| {
+                // eval_with_callback returns JSON-encoded string (wrapped in quotes).
+                // Decode JSON escapes: unicode \uXXXX, \n, \", \\
+                let content = if result.starts_with('"') && result.ends_with('"') && result.len() >= 2 {
+                    let inner = &result[1..result.len() - 1];
+                    decode_json_escapes(inner)
+                } else {
+                    result.clone()
+                };
+                eprintln!(
+                    "[GOOGLE_WV] eval attempt={} raw_len={} clean_len={}",
+                    attempt,
+                    result.len(),
+                    content.len()
+                );
+                if let Some(sender) = tx_clone.lock().unwrap().take() {
+                    let _ = sender.send(content);
+                }
+            })
+            .map_err(|e| format!("[GOOGLE_WV] eval_with_callback: {}", e))?;
 
         eprintln!(
             "[GOOGLE_WV] attempt={}/{} url={}",
@@ -183,27 +439,29 @@ async fn fetch_html_via_webview(
             if url.len() > 80 { &url[..80] } else { url },
         );
 
-        // Wait for callback with 5s timeout
-        tokio::select! {
-            result = &mut rx => {
-                let _ = PENDING_FETCHES.lock().map(|mut m| m.remove(&callback_id));
-                match result {
-                    Ok(content) if !content.is_empty() && content.len() > 100 => {
-                        eprintln!("[GOOGLE_WV] success attempt={} len={}", attempt, content.len());
-                        return Ok(content);
-                    }
-                    Ok(c) => {
-                        eprintln!("[GOOGLE_WV] short content attempt={} len={}", attempt, c.len());
-                        let _ = window.navigate(target.clone());
-                    }
-                    Err(_) => {
-                        eprintln!("[GOOGLE_WV] rx cancelled attempt={}", attempt);
-                        let _ = window.navigate(target.clone());
-                    }
-                }
+        // Wait for the eval callback with a timeout
+        match tokio::time::timeout(tokio::time::Duration::from_secs(10), rx).await {
+            Ok(Ok(content)) if !content.is_empty() && content.len() > 100 => {
+                eprintln!(
+                    "[GOOGLE_WV] success attempt={} len={}",
+                    attempt,
+                    content.len()
+                );
+                return Ok(content);
             }
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
-                let _ = PENDING_FETCHES.lock().map(|mut m| m.remove(&callback_id));
+            Ok(Ok(c)) => {
+                eprintln!(
+                    "[GOOGLE_WV] short content attempt={} len={}",
+                    attempt,
+                    c.len()
+                );
+                let _ = window.navigate(target.clone());
+            }
+            Ok(Err(_)) => {
+                eprintln!("[GOOGLE_WV] rx cancelled attempt={}", attempt);
+                let _ = window.navigate(target.clone());
+            }
+            Err(_) => {
                 eprintln!("[GOOGLE_WV] timeout attempt={}", attempt);
                 let _ = window.navigate(target.clone());
             }
@@ -364,6 +622,192 @@ fn parse_google_html(html: &str) -> Vec<ImageResult> {
     images
 }
 
+#[derive(Deserialize)]
+struct DdgImageResults {
+    results: Vec<DdgImageResult>,
+}
+
+#[derive(Deserialize)]
+struct DdgImageResult {
+    #[serde(default)]
+    image: String,
+    #[serde(default)]
+    thumbnail: String,
+    #[serde(default)]
+    width: u64,
+    #[serde(default)]
+    height: u64,
+}
+
+fn parse_ddg_json(json_str: &str) -> Vec<ImageResult> {
+    // DDG i.js returns: {results: [{image, thumbnail, width, height, ...}, ...]}
+    // But eval_with_callback wraps the response in extra JSON encoding, so the
+    // actual string we receive may be double-encoded. Handle both cases.
+    let mut images = Vec::new();
+
+    // Try direct parse first
+    if let Ok(results) = serde_json::from_str::<DdgImageResults>(json_str) {
+        for r in results.results {
+            if !r.image.is_empty() && r.width > 0 && r.height > 0 {
+                let thumb = if r.thumbnail.is_empty() { r.image.clone() } else { r.thumbnail };
+                images.push(ImageResult {
+                    url: r.image,
+                    thumb,
+                    width: r.width as u32,
+                    height: r.height as u32,
+                });
+            }
+        }
+        if !images.is_empty() {
+            return images;
+        }
+    }
+
+    // Fallback: regex extract ["image":"URL","thumbnail":"URL","width":W,"height":H] tuples
+    if let Ok(tuple_re) = Regex::new(
+        r#""image"\s*:\s*"(https?://[^"]+)".*?"thumbnail"\s*:\s*"(https?://[^"]+)".*?"width"\s*:\s*(\d+).*?"height"\s*:\s*(\d+)"#,
+    ) {
+        for cap in tuple_re.captures_iter(json_str) {
+            let url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            let thumb = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+            let width = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+            let height = cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+
+            if !url.is_empty() && width > 0 && height > 0
+                && !images.iter().any(|i: &ImageResult| i.url == url)
+            {
+                images.push(ImageResult {
+                    url: url.to_string(),
+                    thumb: if thumb.is_empty() { url.to_string() } else { thumb.to_string() },
+                    width,
+                    height,
+                });
+            }
+        }
+    }
+
+    images
+}
+
+fn parse_ddg_html(html: &str) -> Vec<ImageResult> {
+    let mut images = Vec::new();
+
+    // Strategy 1: DDG's primary image pattern — <img> tags proxied through DDG.
+    // Actual HTML: <img src="//external-content.duckduckgo.com/iu/?u=https%3A%2F%2Ftse3.mm.bing.net%2Fth%2Fid%2FOIP...&amp;..." alt="..." ...>
+    // The u= parameter contains the URL-encoded Bing image URL.
+    if let Ok(img_re) = Regex::new(
+        r#"<img[^>]+src="(//external-content\.duckduckgo\.com/iu/\?u=([^"&]+))"[^>]*(?:alt="([^"]*)")?"#,
+    ) {
+        for cap in img_re.captures_iter(html) {
+            let encoded_url = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+            let thumb_src = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            if encoded_url.is_empty() {
+                continue;
+            }
+            // Decode the u= parameter to get the real Bing URL
+            let decoded_url = urlencoding::decode(encoded_url)
+                .unwrap_or_default()
+                .to_string();
+            let thumb = if thumb_src.starts_with("//") {
+                format!("https:{}", thumb_src)
+            } else {
+                thumb_src.to_string()
+            };
+            if !decoded_url.is_empty()
+                && decoded_url.starts_with("http")
+                && !images.iter().any(|i: &ImageResult| i.url == decoded_url)
+            {
+                images.push(ImageResult {
+                    url: decoded_url,
+                    thumb,
+                    width: 0,
+                    height: 0,
+                });
+            }
+        }
+    }
+
+    // Strategy 2: Direct Bing CDN images (no DDG proxy — might appear in some layouts)
+    if images.is_empty() {
+        if let Ok(img_re) = Regex::new(
+            r#"<img[^>]+src="(https?://tse\d*\.mm\.bing\.net/th\?[^"]+)"[^>]*>"#,
+        ) {
+            for cap in img_re.captures_iter(html) {
+                let thumb = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                if !thumb.is_empty() && !images.iter().any(|i: &ImageResult| i.thumb == thumb) {
+                    let full_url = thumb
+                        .replace("=&w=128", "")
+                        .replace("&w=128", "")
+                        .replace("=&h=128", "")
+                        .replace("&h=128", "");
+                    images.push(ImageResult {
+                        url: if full_url != thumb { full_url } else { thumb.to_string() },
+                        thumb: thumb.to_string(),
+                        width: 0,
+                        height: 0,
+                    });
+                }
+            }
+        }
+    }
+
+    // Strategy 3: Any external-content.duckduckgo.com images (catches different URL formats)
+    if images.is_empty() {
+        if let Ok(proxy_re) = Regex::new(
+            r#"(//external-content\.duckduckgo\.com/iu/\?u=[^"&\s]+)"#,
+        ) {
+            for cap in proxy_re.captures_iter(html) {
+                let raw = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                let decoded = urlencoding::decode(
+                    raw.trim_start_matches("//external-content.duckduckgo.com/iu/?u="),
+                )
+                .unwrap_or_default()
+                .to_string();
+                let thumb = format!("https:{}", raw);
+                if decoded.starts_with("http")
+                    && !images.iter().any(|i: &ImageResult| i.url == decoded)
+                {
+                    images.push(ImageResult {
+                        url: decoded,
+                        thumb,
+                        width: 0,
+                        height: 0,
+                    });
+                }
+            }
+        }
+    }
+
+    // Strategy 4: data-src with DDG proxy URLs
+    if images.is_empty() {
+        if let Ok(lazy_re) = Regex::new(
+            r#"data-src="(//external-content\.duckduckgo\.com/iu/\?u=[^"]+)"#,
+        ) {
+            for cap in lazy_re.captures_iter(html) {
+                let raw = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                let decoded = urlencoding::decode(
+                    raw.trim_start_matches("//external-content.duckduckgo.com/iu/?u="),
+                )
+                .unwrap_or_default()
+                .to_string();
+                let thumb = format!("https:{}", raw);
+                if decoded.starts_with("http")
+                    && !images.iter().any(|i: &ImageResult| i.url == decoded)
+                {
+                    images.push(ImageResult {
+                        url: decoded,
+                        thumb,
+                        width: 0,
+                        height: 0,
+                    });
+                }
+            }
+        }
+    }
+
+    images
+}
+
 fn is_valid_image_url(url: &str) -> bool {
     !url.is_empty()
         && !url.contains("gstatic.com")
@@ -373,114 +817,4 @@ fn is_valid_image_url(url: &str) -> bool {
         && !url.ends_with(".js")
         && !url.ends_with(".svg")
         && (url.starts_with("http://") || url.starts_with("https://"))
-}
-
-// ─── DuckDuckGo Images (JSON API — no key needed) ────────────────────────────
-
-#[derive(Deserialize)]
-struct DdgImageResults {
-    results: Vec<DdgImageResult>,
-}
-
-#[derive(Deserialize)]
-struct DdgImageResult {
-    #[serde(default)]
-    height: u64,
-    #[serde(default)]
-    width: u64,
-    #[serde(default)]
-    thumbnail: String,
-    #[serde(default)]
-    image: String,
-}
-
-async fn search_duckduckgo(
-    client: &reqwest::Client,
-    query: &str,
-    page: u32,
-    transparent: bool,
-) -> Result<Vec<ImageResult>, String> {
-    // Step 1: Load the DDG images page to get the vqd token
-    let iaf = if transparent { "&iaf=type:transparent" } else { "" };
-    let page_url = format!(
-        "https://duckduckgo.com/?q={}&ia=images&iax=images{}",
-        urlencoding::encode(query),
-        iaf,
-    );
-
-    let resp = client
-        .get(&page_url)
-        .header("Accept", "text/html,application/xhtml+xml")
-        .header("Accept-Language", "en-US,en;q=0.9")
-        .send()
-        .await
-        .map_err(|e| format!("DDG page request failed: {}", e))?;
-
-    let html = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read DDG page: {}", e))?;
-
-    // Extract vqd token from the page HTML
-    let vqd = extract_vqd(&html)
-        .ok_or_else(|| "Failed to extract vqd token from DuckDuckGo page".to_string())?;
-
-    // Step 2: Fetch the image results JSON
-    let api_url = format!(
-        "https://duckduckgo.com/i.js?l=us-en&o=json&q={}&u=ddg&pa={}&vqd={}",
-        urlencoding::encode(query),
-        page,
-        vqd
-    );
-
-    let api_resp = client
-        .get(&api_url)
-        .header("Accept", "application/json")
-        .header("Referer", &page_url)
-        .send()
-        .await
-        .map_err(|e| format!("DDG API request failed: {}", e))?;
-
-    let body = api_resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read DDG API response: {}", e))?;
-
-    let results: DdgImageResults =
-        serde_json::from_str(&body).map_err(|e| format!("Failed to parse DDG JSON: {}", e))?;
-
-    let images = results
-        .results
-        .into_iter()
-        .map(|r| ImageResult {
-            url: r.image,
-            thumb: r.thumbnail,
-            width: r.width as u32,
-            height: r.height as u32,
-        })
-        .collect();
-
-    Ok(images)
-}
-
-fn extract_vqd(html: &str) -> Option<String> {
-    // Try vqd="..." pattern
-    let re1 = Regex::new(r#"vqd="([^"]+)""#).ok()?;
-    if let Some(cap) = re1.captures(html) {
-        return cap.get(1).map(|m| m.as_str().to_string());
-    }
-
-    // Try vqd='...' pattern
-    let re2 = Regex::new(r#"vqd='([^']+)'"#).ok()?;
-    if let Some(cap) = re2.captures(html) {
-        return cap.get(1).map(|m| m.as_str().to_string());
-    }
-
-    // Try vqd:{...} pattern (JSON-like)
-    let re3 = Regex::new(r#""vqd"\s*:\s*"([^"]+)""#).ok()?;
-    if let Some(cap) = re3.captures(html) {
-        return cap.get(1).map(|m| m.as_str().to_string());
-    }
-
-    None
 }
