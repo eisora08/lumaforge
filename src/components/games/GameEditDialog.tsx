@@ -21,6 +21,8 @@ import {
   ExternalLink,
   Video,
   Search,
+  Info,
+  Globe,
 } from "lucide-react";
 import type { GameMediaPaths, GameAppInfo } from "../../services/tauri";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -466,12 +468,12 @@ export default function GameEditDialog({
         setEpicOverrides(overrides as unknown as Record<string, unknown>);
       }
       // Populate read-only metadata for screenshots/trailers gallery
-      if (overrides.screenshots?.length || overrides.movies?.length) {
+      if (overrides?.screenshots?.length || overrides?.movies?.length) {
         setMetadata({
           ...((game?.metadata ?? {}) as Record<string, unknown>),
           app_id: 0,
-          screenshots: overrides.screenshots ?? (game?.metadata?.screenshots as string[]) ?? [],
-          movies: overrides.movies ?? (game?.metadata?.movies ?? []) as any[],
+          screenshots: overrides?.screenshots ?? (game?.metadata?.screenshots as string[]) ?? [],
+          movies: overrides?.movies ?? (game?.metadata?.movies ?? []) as any[],
         } as SteamAppMetadata);
       }
       setLoading(false);
