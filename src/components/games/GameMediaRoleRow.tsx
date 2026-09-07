@@ -207,7 +207,7 @@ export default function GameMediaRoleRow({
             disabled={saving || isBrowsing}
             className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
           >
-            <ChevronDown className="h-3.5 w-3.5" />
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${browseOpen ? "rotate-180" : ""}`} />
             {isBrowsing ? t("game_edit.fetching", "Fetching...") : t("game_edit.browse", "Browse")}
           </button>
           {browseOpen && (
