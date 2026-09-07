@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -109,6 +109,14 @@ export default function GameMediaRoleRow({
 }: GameMediaRoleRowProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const browseRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (browseOpen && browseRef.current) {
+      browseRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [browseOpen]);
+
   return (
     <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
       {/* Header row */}
@@ -200,7 +208,7 @@ export default function GameMediaRoleRow({
           <Link className="h-3.5 w-3.5" />
           {t("game_edit.set_url", "Set URL")}
         </button>
-        <div className="relative">
+        <div ref={browseRef} className="relative">
           <button
             type="button"
             onClick={onToggleBrowse}
