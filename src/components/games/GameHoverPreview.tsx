@@ -265,9 +265,11 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
                     ? { label: "DEBRID", cls: "bg-cyan-500/30 text-cyan-300" }
                     : game.source === "manual"
                       ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
-                      : game.source === "steam"
-                        ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
-                        : null;
+                      : game.source === "emulator"
+                        ? { label: "EMULATOR", cls: "bg-rose-500/30 text-rose-300" }
+                        : game.source === "steam"
+                          ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
+                          : null;
               if (!srcBadge) return null;
               return (
                 <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>

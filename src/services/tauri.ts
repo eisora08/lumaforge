@@ -1038,6 +1038,20 @@ export async function launchExecutable(
   });
 }
 
+export async function launchExecutableStr(
+  path: string,
+  argsStr?: string,
+  workingDir?: string,
+  title?: string,
+): Promise<SpawnResult> {
+  return await invoke<SpawnResult>("launch_executable_str", {
+    path,
+    argsStr: argsStr ?? null,
+    workingDir: workingDir ?? null,
+    title: title ?? null,
+  });
+}
+
 export async function terminateProcess(pid: number): Promise<void> {
   return await invoke<void>("terminate_process", { pid });
 }
@@ -2863,6 +2877,28 @@ export async function deleteGameCompletely(
 
 export async function deleteDirectory(path: string): Promise<void> {
   return await invoke("delete_directory", { path });
+}
+
+export interface ScannedFile {
+  path: string;
+  name: string;
+  size: number;
+  is_dir: boolean;
+}
+
+export async function scanDirectoryRecursive(
+  path: string,
+  maxDepth?: number
+): Promise<ScannedFile[]> {
+  return await invoke("scan_directory_recursive", { path, maxDepth: maxDepth ?? 10 });
+}
+
+export async function getFileSize(path: string): Promise<number> {
+  return await invoke("get_file_size", { path });
+}
+
+export async function fileExists(path: string): Promise<boolean> {
+  return await invoke("file_exists", { path });
 }
 
 export async function getGameV2Count(): Promise<number> {

@@ -69,6 +69,7 @@ const INTEGRATION_ICONS: Record<IntegrationId, React.ReactNode> = {
   manual: <BookOpen className="h-5 w-5" />,
   lua: <Code className="h-5 w-5" />,
   debrid: <Cloud className="h-5 w-5" />,
+  emulator: <Gamepad2 className="h-5 w-5" />,
 };
 
 const INTEGRATION_COLORS: Record<IntegrationId, string> = {
@@ -77,6 +78,7 @@ const INTEGRATION_COLORS: Record<IntegrationId, string> = {
   manual: "text-amber-400 bg-amber-400/15",
   lua: "text-emerald-400 bg-emerald-400/15",
   debrid: "text-cyan-400 bg-cyan-400/15",
+  emulator: "text-purple-400 bg-purple-400/15",
 };
 
 const REFRESH_LABELS: Record<IntegrationId, string> = {
@@ -85,6 +87,7 @@ const REFRESH_LABELS: Record<IntegrationId, string> = {
   manual: "integrations_section.reload_manual",
   lua: "integrations_section.scan_lua",
   debrid: "integrations_section.refresh_debrid",
+  emulator: "integrations_section.configure_emulator",
 };
 
 const DISABLE_CONFIRM: Record<IntegrationId, { titleKey: string; descKey: string }> = {
@@ -93,6 +96,7 @@ const DISABLE_CONFIRM: Record<IntegrationId, { titleKey: string; descKey: string
   manual: { titleKey: "integrations_section.disable_manual_title", descKey: "integrations_section.disable_manual_desc" },
   lua: { titleKey: "integrations_section.disable_lua_title", descKey: "integrations_section.disable_lua_desc" },
   debrid: { titleKey: "integrations_section.disable_debrid_title", descKey: "integrations_section.disable_debrid_desc" },
+  emulator: { titleKey: "integrations_section.disable_emulator_title", descKey: "integrations_section.disable_emulator_desc" },
 };
 
 type RefreshState = {

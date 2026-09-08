@@ -42,6 +42,7 @@ function computeCounts(games: LibraryGame[]): Counts {
     epic: 0,
     gog: 0,
     debrid: 0,
+    emulator: 0,
     installed: 0,
     uninstalled: 0,
     "lua-ready": 0,
@@ -54,6 +55,7 @@ function computeCounts(games: LibraryGame[]): Counts {
     if (g.source === "epic") counts.epic++;
     if (g.source === "gog") counts.gog++;
     if (g.source === "debrid") counts.debrid++;
+    if (g.source === "emulator") counts.emulator++;
     if (g.isPlayable || g.steamInstalled) counts.installed++;
     if (g.isInstallable || (!g.isPlayable && g.source === "steam")) counts.uninstalled++;
     if (g.hasLuaSource) counts["lua-ready"]++;
@@ -101,6 +103,7 @@ export default function LibraryRail({
     { key: "steam", label: t("library_page.filter.steam", "Steam") },
     { key: "local", label: t("library_page.filter.local", "Local") },
     { key: "lua", label: t("library_page.filter.lua", "Lua") },
+    { key: "emulator", label: t("library_page.filter.emulator", "Emulator") },
     { key: "installed", label: t("library_page.filter.installed", "Installed") },
     { key: "uninstalled", label: t("library_page.filter.not_installed", "Not Installed") },
     { key: "lua-ready", label: t("library_page.filter.lua_ready", "Lua Ready") },

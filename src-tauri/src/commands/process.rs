@@ -303,6 +303,139 @@ pub fn launch_executable(
   })
 }
 
+/// Launch an executable with a **single args string** — no splitting into array.
+///
+/// Playnite passes the full expanded argument string directly to
+/// `ProcessStartInfo.Arguments` and lets Windows handle parsing/quoting.
+/// This command mirrors that behavior by building a full command line string
+/// and passing it to `CreateProcessW` / `Command`, preserving quotes exactly
+/// as the template defines them (e.g. `-g "{ImagePath}" -f`).
+#[tauri::command]
+pub fn launch_executable_str(
+  path: String,
+  args_str: Option<String>,
+  working_dir: Option<String>,
+  title: Option<String>,
+) -> Result<SpawnResult, String> {
+  let trimmed = path.trim().trim_matches(|c| c == '"' || c == '\'');
+  if trimmed.is_empty() {
+    return Err("launch failed: executable path is empty".to_string());
+  }
+
+  let resolved_exe = if Path::new(trimmed).is_absolute() {
+    trimmed.to_string()
+  } else if let Some(ref wd) = working_dir {
+    let wd_trimmed = wd.trim().trim_matches(|c| c == '"' || c == '\'');
+    if wd_trimmed.is_empty() {
+      trimmed.to_string()
+    } else {
+      Path::new(wd_trimmed)
+        .join(Path::new(trimmed))
+        .to_string_lossy()
+        .into_owned()
+    }
+  } else {
+    trimmed.to_string()
+  };
+
+  if !Path::new(&resolved_exe).is_file() {
+    return Err(format!(
+      "Executable not found: '{resolved_exe}'."
+    ));
+  }
+
+  // Build the full command line: "exe" args
+  // This matches exactly how Playnite / ProcessStartInfo works.
+  let cmd_line = match &args_str {
+    Some(args) if !args.is_empty() => format!("\"{}\" {}", trimmed, args),
+    _ => format!("\"{}\"", trimmed),
+  };
+
+  #[cfg(target_os = "windows")]
+  {
+    use windows::Win32::System::Threading::{CreateProcessW, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW, STARTUPINFOW_FLAGS};
+    use windows::core::{PCWSTR, PWSTR};
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut cmd_line_wide: Vec<u16> = OsStr::new(&cmd_line)
+      .encode_wide().chain(std::iter::once(0)).collect();
+    let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+
+    // Build window title: "GameTitle - EmulatorName" or just the game title
+    let title_wide: Vec<u16> = title.as_ref().map(|t| {
+      OsStr::new(t).encode_wide().chain(std::iter::once(0)).collect()
+    }).unwrap_or_default();
+
+    let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    if !title_wide.is_empty() {
+      si.lpTitle = PWSTR(title_wide.as_ptr() as *mut u16);
+      si.dwFlags = STARTUPINFOW_FLAGS(0x200); // STARTF_USEWINDOWTITLE
+    }
+
+    let current_dir_wide: Vec<u16> = working_dir.as_ref().map(|wd| {
+      let trimmed_wd = wd.trim().trim_matches(|c| c == '"' || c == '\'');
+      OsStr::new(trimmed_wd).encode_wide().chain(std::iter::once(0)).collect()
+    }).unwrap_or_default();
+
+    let pcw_current_dir = if current_dir_wide.is_empty() || working_dir.is_none() {
+      PCWSTR::null()
+    } else {
+      PCWSTR::from_raw(current_dir_wide.as_ptr())
+    };
+
+    let result = unsafe {
+      CreateProcessW(
+        PCWSTR::null(),
+        PWSTR(cmd_line_wide.as_mut_ptr()),
+        None,
+        None,
+        false,
+        PROCESS_CREATION_FLAGS(CREATE_NO_WINDOW),
+        None,
+        pcw_current_dir,
+        &si,
+        &mut pi,
+      )
+    };
+
+    match result {
+      Ok(_) => {
+        let pid = pi.dwProcessId;
+        unsafe {
+          windows::Win32::Foundation::CloseHandle(pi.hProcess).ok();
+          windows::Win32::Foundation::CloseHandle(pi.hThread).ok();
+        }
+        println!("[EMULATOR_LAUNCH_STR] PID={} cmd_line={}", pid, cmd_line);
+        Ok(SpawnResult {
+          pid: Some(pid),
+          launched: true,
+        })
+      }
+      Err(e) => {
+        let err_msg = format!("CreateProcessW failed: {} (cmd: {})", e, cmd_line);
+        println!("[EMULATOR_LAUNCH_STR] FAILED: {}", err_msg);
+        Err(err_msg)
+      }
+    }
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  {
+    // Fallback: split args and use Command
+    let pid = spawn_game_with_elevation_fallback(
+      &resolved_exe,
+      working_dir.as_deref(),
+      args_str.as_ref().map(|a| vec![a.clone()]).as_deref(),
+    )?;
+    Ok(SpawnResult {
+      pid: Some(pid),
+      launched: true,
+    })
+  }
+}
+
 /// Run `taskkill` with an elevated (UAC) fallback on Windows.
 ///
 /// Plain `taskkill` cannot terminate a process that was launched elevated via

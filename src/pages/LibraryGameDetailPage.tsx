@@ -163,6 +163,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       await launchGame(game);
     } else if (game.source === "lua" && game.executablePath) {
       await launchGame(game);
+    } else if (game.source === "emulator" && game.executablePath) {
+      await launchGame(game);
     } else if (game.source === "manual") {
       showWarning(t("library_details.manual_no_executable"), { title: t("library_page.not_available") });
     } else {

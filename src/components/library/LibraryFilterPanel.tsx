@@ -1,7 +1,7 @@
   import { useTranslation } from "react-i18next";
   import { RotateCcw } from "lucide-react";
 
-  export type LibraryFilter = "all" | "lua" | "installed" | "disabled" | "epic" | "steam" | "manual" | "debrid";
+  export type LibraryFilter = "all" | "lua" | "installed" | "disabled" | "epic" | "steam" | "manual" | "debrid" | "emulator";
 
   export type LibrarySort = "name" | "size" | "updated";
 
@@ -37,6 +37,7 @@
       { key: "epic", label: t("library_page.filter.epic", "Epic") },
       { key: "debrid", label: t("library_page.filter.debrid", "Debrid") },
       { key: "manual", label: t("library_page.filter.manual", "Manual") },
+      { key: "emulator", label: t("library_page.filter.emulator", "Emulator") },
       { key: "installed", label: t("library_page.filter.installed", "Installed") },
       { key: "disabled", label: t("library_page.filter.disabled", "Disabled") },
     ];

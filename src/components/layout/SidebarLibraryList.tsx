@@ -938,6 +938,37 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                         },
                       ]
                     : []),
+                    ...(menuGame.source === "emulator"
+                    ? [{
+                        label: t("context_menu.remove_from_library", "Remove from Library"),
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        disabled: isRunning,
+                        onClick: async () => {
+                          if (isRunning) {
+                            showWarning(t("context_menu.stop_before_remove"), { title: t("sidebar.game_is_running") });
+                            return;
+                          }
+                          handleMenuClose();
+                          const result = await confirm({
+                            title: t("context_menu.remove_from_library", "Remove from Library"),
+                            description: t("context_menu.remove_from_library_confirm", "Remove \"{{title}}\" from your library? The ROM file will not be deleted.", { title: menuGame.title }),
+                            confirmLabel: t("buttons.remove", "Remove"),
+                            cancelLabel: t("buttons.cancel", "Cancel"),
+                          });
+                          if (!result.confirmed) return;
+                          try {
+                            const { removeEmulatorGameFromLibrary } = await import("../../services/emulatorGameStore");
+                            const { deleteGameV2 } = await import("../../services/tauri");
+                            removeEmulatorGameFromLibrary(menuGame.id);
+                            await deleteGameV2(menuGame.id);
+                            showSuccess(`"${menuGame.title}" ${t("context_menu.removed", "removed")}`);
+                          } catch (e) {
+                            showError(`${t("game_tile.remove_failed", "Failed to remove")}: ${e}`);
+                          }
+                        },
+                      }]
+                    : []),
                    ...(mPendingUninstall
                     ? [{
                       label: t("context_menu.cancel_tracking"),
@@ -1102,10 +1133,11 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         )}
         {editDialogOpen && (
           <GameEditDialog
-            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" && editDialogGame?.source !== "emulator" ? editDialogGame?.appId : undefined}
             manualGameId={editDialogGame?.source === "manual" ? editDialogGame?.providerGameId : undefined}
             epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame?.providerGameId : undefined}
             debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame?.providerGameId : undefined}
+            emulatorProviderGameId={editDialogGame?.source === "emulator" ? editDialogGame?.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editDialogInitialTab}

@@ -100,6 +100,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
       if (filter === "steam" && g.source !== "steam") return false;
       if (filter === "local" && g.source !== "local") return false;
       if (filter === "epic" && g.source !== "epic") return false;
+      if (filter === "emulator" && g.source !== "emulator") return false;
       if (filter === "playable" && !g.isPlayable) return false;
       return true;
     });
@@ -150,6 +151,12 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
         showError(String(err), { title: "Error" });
       }
     } else if (game.source === "lua" && game.executablePath) {
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: "Error" });
+      }
+    } else if (game.source === "emulator" && game.executablePath) {
       try {
         await session.launchGame(game);
       } catch (err) {
@@ -214,6 +221,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     { key: "steam", label: "Steam", count: games.filter((g) => g.source === "steam").length },
     { key: "local", label: "Local", count: games.filter((g) => g.source === "local").length },
     { key: "epic", label: "Epic", count: games.filter((g) => g.source === "epic").length },
+    { key: "emulator", label: "Emulator", count: games.filter((g) => g.source === "emulator").length },
     { key: "playable", label: "Playable", count: games.filter((g) => g.isPlayable).length },
   ];
 

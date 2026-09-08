@@ -484,7 +484,7 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
   const steamInstalled = game.steamInstalled === true;
 
   const localInstalled =
-    (game.source === "local" || game.source === "manual") &&
+    (game.source === "local" || game.source === "manual" || game.source === "emulator") &&
     typeof game.executablePath === "string" &&
     game.executablePath.length > 0;
 
@@ -535,7 +535,7 @@ export function getSidebarLabel(game: LibraryGame): string {
   const steamInstalled = game.steamInstalled === true;
 
   const localInstalled =
-    (game.source === "local" || game.source === "manual") &&
+    (game.source === "local" || game.source === "manual" || game.source === "emulator") &&
     typeof game.executablePath === "string" &&
     game.executablePath.length > 0;
 
@@ -559,7 +559,11 @@ export function getSidebarLabel(game: LibraryGame): string {
     if (game.source === "debrid") return "Debrid";
     return "GOG";
   }
-  if (localInstalled) return game.source === "manual" ? "Manual" : "Local";
+  if (localInstalled) {
+    if (game.source === "manual") return "Manual";
+    if (game.source === "emulator") return "Emulator";
+    return "Local";
+  }
   if (explicitInstalledStatus) return "Installed";
 
   return "Not installed";

@@ -17,7 +17,7 @@ import type { PackageSource } from "./package";
  * appId is Steam-only. External providers use providerId + providerGameId.
  * Cross-provider duplicates (same title on Steam + Epic + GOG) are NEVER deduped.
  */
-export type LibraryGameSource = "steam" | "local" | "lua" | "manual" | "epic" | "gog" | "debrid";
+export type LibraryGameSource = "steam" | "local" | "lua" | "manual" | "epic" | "gog" | "debrid" | "emulator";
 
 /**
  * Unified game model for all providers.
@@ -109,7 +109,13 @@ export type LibraryGame = {
   isStandalone?: boolean;
   /** Debrid-specific install status: "waiting-installer" | "installing" | "needs-path" | "ready" */
   debridStatus?: string;
+  /** Emulator config ID (reference to emulatorConfigStore) */
+  emulatorConfigId?: string;
+  /** Emulator profile ID used for this game */
+  emulatorProfileId?: string;
+  /** Emulator platform ID (e.g. "nintendo_switch") */
+  emulatorPlatform?: string;
 };
 
-export type LibraryFilter = "all" | "steam" | "local" | "lua" | "epic" | "gog" | "debrid" | "installed" | "uninstalled" | "lua-ready" | "disabled";
+export type LibraryFilter = "all" | "steam" | "local" | "lua" | "epic" | "gog" | "debrid" | "emulator" | "installed" | "uninstalled" | "lua-ready" | "disabled";
 export type LibrarySort = "name" | "appid" | "modified" | "size" | "recent";

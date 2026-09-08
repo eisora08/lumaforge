@@ -96,10 +96,18 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
 
   // Parse providerMetadata for source-specific fields (e.g. repacker for Debrid)
   let repacker: string | undefined;
+  let emulatorConfigId: string | undefined;
+  let emulatorProfileId: string | undefined;
+  let emulatorPlatform: string | undefined;
   try {
     if (game.providerMetadata) {
       const pm = JSON.parse(game.providerMetadata);
       repacker = pm.repacker ?? undefined;
+      if (game.source === "emulator") {
+        emulatorConfigId = pm.emulatorConfigId;
+        emulatorProfileId = pm.emulatorProfileId;
+        emulatorPlatform = pm.platform;
+      }
     }
   } catch { /* ignore */ }
 
@@ -153,7 +161,9 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
 
     metadata,
 
-    isPlayable: game.isInstalled && (isAbsolutePath(game.exePath) || game.source === "lua" || game.source === "steam" || game.source === "epic"),
+    isPlayable: game.source === "emulator"
+      ? game.isInstalled
+      : game.isInstalled && (isAbsolutePath(game.exePath) || game.source === "lua" || game.source === "steam" || game.source === "epic"),
     isInstallable: game.source === "debrid",
     steamInstalled: (game.source === "steam" && game.isInstalled) || (game.hasLua && game.isInstalled),
     isInstalled: game.isInstalled,
@@ -180,6 +190,11 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
 
     // Completion status
     completionStatus: game.completionStatus ?? undefined,
+
+    // Emulator-specific
+    emulatorConfigId,
+    emulatorProfileId,
+    emulatorPlatform,
   };
 }
 
@@ -584,5 +599,94 @@ export function libraryGameToGameV2(game: LibraryGame): GameV2 {
 
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Emulator: EmulatorGameEntry → GameV2
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert an EmulatorGameEntry to GameV2 for persisting to games_v2.
+ * Emulator-specific fields are stored in provider_metadata as JSON.
+ */
+export function emulatorGameEntryToGameV2(entry: {
+  id: string;
+  title: string;
+  platform: string;
+  romPath: string;
+  emulatorConfigId?: string;
+  emulatorProfileId?: string;
+  fileSize?: number;
+  region?: string;
+  scanPath?: string;
+  coverPath?: string;
+  landscapePath?: string;
+  backgroundPath?: string;
+  logoPath?: string;
+  iconPath?: string;
+  genres?: string[];
+  developers?: string[];
+  publishers?: string[];
+  releaseDate?: string;
+  description?: string;
+  isInstalled?: boolean;
+  isFavorite?: boolean;
+  lastPlayedAt?: number;
+  totalPlaytimeMs?: number;
+  createdAt?: number;
+  updatedAt?: number;
+}): GameV2 {
+  const now = Date.now();
+
+  const providerMetadata = JSON.stringify({
+    emulatorConfigId: entry.emulatorConfigId,
+    emulatorProfileId: entry.emulatorProfileId,
+    platform: entry.platform,
+    region: entry.region,
+    fileSize: entry.fileSize,
+    scanPath: entry.scanPath,
+  });
+
+  return {
+    id: entry.id,
+    title: entry.title,
+    source: "emulator",
+    providerGameId: entry.id,
+    libraryId: entry.id,
+
+    isInstalled: entry.isInstalled ?? true,
+    exePath: entry.romPath,
+    installDir: undefined,
+
+    playtimeSeconds: entry.totalPlaytimeMs ? Math.floor(entry.totalPlaytimeMs / 1000) : 0,
+    playCount: 0,
+    lastPlayedAt: entry.lastPlayedAt,
+
+    coverPath: entry.coverPath,
+    landscapePath: entry.landscapePath,
+    backgroundPath: entry.backgroundPath,
+    logoPath: entry.logoPath,
+    iconPath: entry.iconPath,
+
+    genres: JSON.stringify(entry.genres ?? []),
+    developers: JSON.stringify(entry.developers ?? []),
+    publishers: JSON.stringify(entry.publishers ?? []),
+    releaseDate: entry.releaseDate,
+    description: entry.description,
+    shortDescription: entry.description,
+
+    region: entry.region,
+
+    isFavorite: entry.isFavorite ?? false,
+    isHidden: false,
+    standalone: false,
+
+    hasLua: false,
+
+    providerMetadata,
+
+    createdAt: entry.createdAt ?? now,
+    updatedAt: entry.updatedAt ?? now,
   };
 }

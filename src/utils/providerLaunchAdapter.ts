@@ -112,6 +112,130 @@ export async function dispatchProviderLaunch(game: LibraryGame): Promise<LaunchD
     }
   }
 
-  // Not an Epic/Debrid game or launch not enabled
+  // ── Emulator games: launch ROM via configured emulator ──
+  if (game.source === "emulator") {
+    if (!game.executablePath) {
+      console.warn("[EMULATOR_LAUNCH] no ROM path", { providerGameId: game.providerGameId });
+      return { dispatched: false, error: "No ROM path for emulator game" };
+    }
+
+    const configId = game.emulatorConfigId;
+    const profileId = game.emulatorProfileId;
+
+    if (!configId) {
+      console.warn("[EMULATOR_LAUNCH] no emulator config assigned", { id: game.id });
+      return { dispatched: false, error: "No emulator configured for this game" };
+    }
+
+    try {
+      const { getEmulatorConfig } = await import("../services/emulatorConfigStore");
+      const { getEmulatorById, getAllEmulatorDefinitions } = await import("../data/emulatorDefinitions/emulators");
+      const { launchExecutableStr } = await import("../services/tauri");
+
+      const config = getEmulatorConfig(configId);
+      if (!config) {
+        console.warn("[EMULATOR_LAUNCH] emulator config not found", { configId });
+        return { dispatched: false, error: "Emulator configuration not found" };
+      }
+
+      const romPath = game.executablePath;
+      const romExt = romPath.split(".").pop()?.toLowerCase() ?? "";
+      const emulatorDir = config.installDir;
+
+      // Helper: expand placeholders in an args template string.
+      // Matches Playnite's ExpandVariables — plain text substitution, NO extra quoting.
+      function expandArgs(template: string): string {
+        return template
+          .replace(/\{ImagePath\}/g, romPath)
+          .replace(/\{ImageName\}/g, romPath.split(/[\\/]/).pop() ?? "")
+          .replace(/\{ImageNameNoExt\}/g, romPath.split(/[\\/]/).pop()?.split(".")[0] ?? "")
+          .replace(/\{EmulatorDir\}/g, emulatorDir)
+          .replace(/\{Name\}/g, game.title ?? "");
+      }
+
+      // 1) Check custom profile with its own executable (no definitionId needed)
+      const userProfile = profileId ? config.profiles.find(p => p.id === profileId) : undefined;
+
+      if (userProfile?.type === "custom" && userProfile.executable) {
+        const exePath = userProfile.executable;
+        const argsString = expandArgs(userProfile.arguments ?? "");
+
+        console.log("[EMULATOR_LAUNCH] custom profile", { exePath, argsString });
+        const result = await launchExecutableStr(exePath, argsString, userProfile.workingDirectory ?? emulatorDir, game.title ?? undefined);
+        return { dispatched: result.launched, method: "emulator-direct", pid: result.pid ?? undefined };
+      }
+
+      // 2) Also check any custom profile in the config that has an executable
+      if (!userProfile || userProfile.type !== "custom") {
+        const fallbackCustom = config.profiles.find(p => p.type === "custom" && p.executable);
+        if (fallbackCustom?.executable) {
+          const exePath = fallbackCustom.executable;
+          const argsString = expandArgs(fallbackCustom.arguments ?? "");
+
+          console.log("[EMULATOR_LAUNCH] fallback custom profile", { exePath, argsString, profileId: fallbackCustom.id });
+          const result = await launchExecutableStr(exePath, argsString, fallbackCustom.workingDirectory ?? emulatorDir, game.title ?? undefined);
+          return { dispatched: result.launched, method: "emulator-direct", pid: result.pid ?? undefined };
+        }
+      }
+
+      // 3) Resolve emulator definition — try config.definitionId, then try matching by profile name
+      let definition = config.definitionId ? getEmulatorById(config.definitionId) : undefined;
+
+      if (!definition && config.profiles.length > 0) {
+        const allDefs = getAllEmulatorDefinitions();
+        for (const profile of config.profiles) {
+          if (profile.type !== "builtin" || !profile.builtinProfileName) continue;
+          for (const def of allDefs) {
+            if (def.profiles.some(p => p.name === profile.builtinProfileName)) {
+              definition = def;
+              console.log("[EMULATOR_LAUNCH] resolved definition from profile name", { definitionId: def.id, profileName: profile.builtinProfileName });
+              break;
+            }
+          }
+          if (definition) break;
+        }
+      }
+
+      if (!definition) {
+        console.warn("[EMULATOR_LAUNCH] no emulator definition found", { configId: config.id, definitionId: config.definitionId });
+        return { dispatched: false, error: "Emulator has no linked definition. Please set an Emulator Specification in Emulator Settings." };
+      }
+
+      // 4) Built-in profile or fallback
+      let matchingBuiltin = profileId
+        ? definition.profiles.find(p => p.name === profileId)
+        : undefined;
+
+      if (!matchingBuiltin) {
+        matchingBuiltin = definition.profiles.find(p => p.imageExtensions.includes(romExt));
+      }
+      if (!matchingBuiltin && definition.profiles.length > 0) {
+        matchingBuiltin = definition.profiles[0];
+      }
+
+      if (!matchingBuiltin) {
+        console.warn("[EMULATOR_LAUNCH] no matching profile", { romExt, definitionId: definition.id });
+        return { dispatched: false, error: "No matching emulator profile found" };
+      }
+
+      const exePath = `${emulatorDir}\\${matchingBuiltin.startupExecutable.replace(/[\^$]/g, "")}`;
+      const argsString = expandArgs(matchingBuiltin.startupArguments);
+
+      console.log("[EMULATOR_LAUNCH] dispatching", { exePath, argsString });
+      const result = await launchExecutableStr(exePath, argsString, emulatorDir, game.title ?? undefined);
+
+      return {
+        dispatched: result.launched,
+        method: "emulator-direct",
+        pid: result.pid ?? undefined,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[EMULATOR_LAUNCH] failed", msg);
+      return { dispatched: false, error: msg };
+    }
+  }
+
+  // Not an Epic/Debrid/Emulator game or launch not enabled
   return { dispatched: false };
 }

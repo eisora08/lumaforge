@@ -131,7 +131,7 @@ export type ActiveGameState = Exclude<GameSessionState, "idle" | "error">;
 
 export type TrackingConfidence = "high" | "medium" | "low" | "none";
 
-  export type GameSessionSource = "steam" | "epic" | "debrid" | "local" | "manual" | "lua" | "unknown";
+  export type GameSessionSource = "steam" | "epic" | "debrid" | "local" | "manual" | "lua" | "emulator" | "unknown";
 
 export type RunningGameSession = {
   gameKey: string;
@@ -1003,7 +1003,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           gameId: game.id,
           appId: game.appId,
           title: game.title,
-          source: game.source === "steam" ? "steam" : game.source === "epic" ? "epic" : game.source === "debrid" ? "debrid" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : game.source === "lua" ? "lua" : "unknown",
+          source: game.source === "steam" ? "steam" : game.source === "epic" ? "epic" : game.source === "debrid" ? "debrid" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : game.source === "lua" ? "lua" : game.source === "emulator" ? "emulator" : "unknown",
           state: "launching",
           executablePath: game.executablePath,
           installDir: game.installDir,
@@ -1039,6 +1039,23 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       // Manual games: resolve each role individually from ManualGameEntry
       const { getManualGame } = await import("../services/manualGameStore");
       const entry = getManualGame(game.providerGameId);
+
+      // Resolve all paths in parallel (4 roles, non-critical on failure)
+      const [_resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
+        resolveUrl(entry?.coverPath, "steam"),
+        resolveUrl(entry?.landscapePath, "steam"),
+        resolveUrl(entry?.backgroundPath, "steam"),
+        resolveUrl(entry?.iconPath, "steam"),
+      ]);
+
+      // HUD chip: icon first (compact thumbnail)
+      iconUrl = resolvedIcon ?? resolvedLandscape ?? resolvedBackground;
+      // Overlay card: landscape first, background second — NO cover
+      heroUrl = resolvedLandscape ?? resolvedBackground;
+    } else if (game.source === "emulator" && game.providerGameId) {
+      // Emulator games: resolve each role individually from EmulatorGameEntry
+      const { getEmulatorGame } = await import("../services/emulatorGameStore");
+      const entry = getEmulatorGame(game.providerGameId);
 
       // Resolve all paths in parallel (4 roles, non-critical on failure)
       const [_resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
@@ -1136,7 +1153,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       if (!iconUrl) iconUrl = await resolveUrl(game.iconPath, "steam");
     }
 
-    const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "debrid" ? "Debrid" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : game.source === "lua" ? "Lua" : "Unknown";
+    const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "debrid" ? "Debrid" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : game.source === "lua" ? "Lua" : game.source === "emulator" ? "Emulator" : "Unknown";
     sessionMediaRef.current[computedKey] = { imageUrl, heroUrl, iconUrl, title: game.title, provider: providerLabel };
 
     // Timeout guard — prevents infinite launching
@@ -1641,6 +1658,70 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             });
             ls.inFlight = false;
           }
+        } else if (game.source === "emulator") {
+          const result = await dispatchProviderLaunch(game);
+          if (ls.cancelled || ls.token !== token) return;
+
+          if (result.dispatched) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] emulator dispatched", { gameKey: computedKey, method: result.method, pid: result.pid });
+            }
+
+            // Direct PID tracking — launch_executable_str uses CreateProcessW and returns real PID
+            if (result.pid) {
+              const processName = game.executablePath ? extractExeName(game.executablePath) : undefined;
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing) return prev;
+                return {
+                  ...prev,
+                  [computedKey]: {
+                    ...existing,
+                    state: "running",
+                    pid: result.pid,
+                    softSession: false,
+                    trackingConfidence: "high",
+                    processName,
+                    updatedAt: Date.now(),
+                  },
+                };
+              });
+              ls.inFlight = false;
+              return;
+            }
+
+            // No PID — fall back to soft session
+            ls.launchTimeout = setTimeout(() => {
+              if (ls.token !== token || ls.cancelled) return;
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing || existing.state !== "launching") return prev;
+                return {
+                  ...prev,
+                  [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                };
+              });
+              ls.inFlight = false;
+            }, 2000);
+          } else {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] emulator failed", { gameKey: computedKey, error: result.error });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "error" as ActiveGameState,
+                  errorMessage: result.error ?? "Cannot launch this emulator game.",
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+            ls.inFlight = false;
+          }
         } else {
           console.warn("[Launch] cannot determine launch method", { gameKey: computedKey });
           setSessions((prev) => {
@@ -1789,7 +1870,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           }
 
           const mediaInfo = sessionMediaRef.current[key];
-          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "epic" ? "Epic" : curSession.source === "debrid" ? "Debrid" : curSession.source === "local" ? "Local" : curSession.source === "manual" ? "Manual" : "Unknown";
+          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "epic" ? "Epic" : curSession.source === "debrid" ? "Debrid" : curSession.source === "local" ? "Local" : curSession.source === "manual" ? "Manual" : curSession.source === "emulator" ? "Emulator" : "Unknown";
           setOverlayEvent({
             id: `launch-${key}-${curSession.updatedAt}`,
             type: "launch",
@@ -1811,7 +1892,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           });
 
           // Start playtime session
-          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "epic" ? "epic" : curSession.source === "debrid" ? "debrid" : curSession.source === "local" ? "local" : curSession.source === "manual" ? "manual" : "unknown";
+          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "epic" ? "epic" : curSession.source === "debrid" ? "debrid" : curSession.source === "local" ? "local" : curSession.source === "manual" ? "manual" : curSession.source === "emulator" ? "emulator" : "unknown";
           startPlaySession({
             gameKey: key,
             appId: curSession.appId,
@@ -1865,7 +1946,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           ? Math.floor((Date.now() - prevSession.launchedAt) / 1000)
           : 0;
         const mediaInfo = sessionMediaRef.current[key];
-        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "epic" ? "Epic" : prevSession.source === "debrid" ? "Debrid" : prevSession.source === "local" ? "Local" : prevSession.source === "manual" ? "Manual" : "Unknown";
+        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "epic" ? "Epic" : prevSession.source === "debrid" ? "Debrid" : prevSession.source === "local" ? "Local" : prevSession.source === "manual" ? "Manual" : prevSession.source === "emulator" ? "Emulator" : "Unknown";
         setOverlayEvent({
           id: `end-${key}-${Date.now()}`,
           type: "end",
@@ -1893,7 +1974,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             });
 
             // Persist session record to local history
-            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "epic" ? "epic" : prevSession.source === "debrid" ? "debrid" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "manual" : "system";
+            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "epic" ? "epic" : prevSession.source === "debrid" ? "debrid" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "manual" : prevSession.source === "emulator" ? "emulator" : "system";
             // Store appId matching resolvePlaytimeKey format so stats can match:
             // Steam: "app-{appId}", Manual/Debrid/Epic: gameKey (e.g. "manual:uuid", "debrid:rep-id")
             const sessionAppId = (prevSession.source === "steam" && prevSession.appId)

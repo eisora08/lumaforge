@@ -57,6 +57,7 @@ export type GameEditDialogProps = {
   manualGameId?: string; // raw UUID — normalized internally
   epicProviderGameId?: string; // Epic provider game ID (e.g. "Fortnite" or "AppName")
   debridProviderGameId?: string; // Debrid provider game ID (from repack catalog)
+  emulatorProviderGameId?: string; // Emulator provider game ID (e.g. "emulator:uuid")
   open: boolean;
   onClose: () => void;
   initialTab?: TabId;
@@ -151,6 +152,7 @@ export default function GameEditDialog({
   manualGameId,
   epicProviderGameId,
   debridProviderGameId,
+  emulatorProviderGameId,
   open,
   onClose,
   initialTab = "details",
@@ -178,12 +180,13 @@ export default function GameEditDialog({
     { role: "logo", label: t("game_edit.logo", "Logo"), icon: Palette, desc: t("game_edit.logo_desc", "Game logo for overlays and hero") },
   ], [t]);
 
-  // Mode detection — manual games use manualGameId, Steam games use appId, Epic uses epicProviderGameId, Debrid uses debridProviderGameId
-  const isManualMode = !!manualGameId && !appId && !epicProviderGameId && !debridProviderGameId;
-  const isEpicMode = !!epicProviderGameId && !appId && !manualGameId && !debridProviderGameId;
-  const isDebridMode = !!debridProviderGameId; // can coexist with appId (Steam appId for media)
-  const isCreateMode = !appId && !manualGameId && !epicProviderGameId && !debridProviderGameId;
-  const effectiveId = manualGameId ?? epicProviderGameId ?? debridProviderGameId ?? appId ?? "";
+  // Mode detection — manual games use manualGameId, Steam games use appId, Epic uses epicProviderGameId, Debrid uses debridProviderGameId, Emulator uses emulatorProviderGameId
+  const isManualMode = !!manualGameId && !appId && !epicProviderGameId && !debridProviderGameId && !emulatorProviderGameId;
+  const isEpicMode = !!epicProviderGameId && !appId && !manualGameId && !debridProviderGameId && !emulatorProviderGameId;
+  const isDebridMode = !!debridProviderGameId && !emulatorProviderGameId; // can coexist with appId (Steam appId for media)
+  const isEmulatorMode = !!emulatorProviderGameId;
+  const isCreateMode = !appId && !manualGameId && !epicProviderGameId && !debridProviderGameId && !emulatorProviderGameId;
+  const effectiveId = emulatorProviderGameId ?? manualGameId ?? epicProviderGameId ?? debridProviderGameId ?? appId ?? "";
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
@@ -488,6 +491,24 @@ export default function GameEditDialog({
       }
       setLoading(false);
       loadRolePreviews();
+      return;
+    }
+
+    // Emulator edit mode — load from emulator game store
+    if (isEmulatorMode && emulatorProviderGameId) {
+      import("../../services/emulatorGameStore").then(({ getEmulatorGame }) => {
+        const emulatorGame = getEmulatorGame(emulatorProviderGameId);
+        if (emulatorGame) {
+          setNameDraft(emulatorGame.title ?? "");
+          setExecutablePathDraft(emulatorGame.romPath ?? "");
+          setGenresDraft(emulatorGame.genres?.join(", ") ?? "");
+          setDescriptionDraft(emulatorGame.description ?? "");
+          setReleaseDateDraft(emulatorGame.releaseDate ?? "");
+        }
+      }).finally(() => {
+        setLoading(false);
+        loadRolePreviews();
+      });
       return;
     }
 
@@ -1172,6 +1193,28 @@ export default function GameEditDialog({
           showError(t("game_edit.title_save_failed", "Could not save title"));
         } else {
           showError(t("game_edit.debrid_save_failed", "Could not save debrid path"));
+        }
+        setHasEdits(false);
+        setSaving(false);
+        return;
+      }
+
+      // ── Emulator game save ──
+      if (isEmulatorMode && emulatorProviderGameId) {
+        const { getEmulatorGame, saveEmulatorGame } = await import("../../services/emulatorGameStore");
+        const existing = getEmulatorGame(emulatorProviderGameId);
+        if (existing) {
+          saveEmulatorGame({
+            ...existing,
+            title: nameDraft || existing.title,
+            romPath: executablePathDraft.trim().replace(/^["']|["']$/g, "") || existing.romPath,
+            genres: genresDraft ? genresDraft.split(",").map((s) => s.trim()).filter(Boolean) : existing.genres,
+            description: descriptionDraft || existing.description,
+            releaseDate: releaseDateDraft || existing.releaseDate,
+          });
+          showSuccess(t("game_edit.save_success", "Game details saved"));
+        } else {
+          showError(t("game_edit.emulator_not_found", "Emulator game not found"));
         }
         setHasEdits(false);
         setSaving(false);
@@ -2760,13 +2803,17 @@ export default function GameEditDialog({
           </>
         ) : (
           <>
-            {/* ── Steam game: read-only install info ── */}
+            {/* ── Steam/Emulator game: read-only install info ── */}
             <div className="space-y-4">
               <FieldRow label={t("game_edit.field_appid", "App ID")} value={appId} />
               <FieldRow label={t("game_edit.field_source", "Source")} value={game?.source ?? appInfo?.provider ?? "steam"} />
               <FieldRow
                 label={t("game_edit.field_installed", "Installed")}
-                value={game ? (game.steamInstalled ? t("game_edit.yes", "Yes") : t("game_edit.no", "No")) : t("game_edit.unknown", "Unknown")}
+                value={game ? (
+                  isEmulatorMode
+                    ? (game.isInstalled ? t("game_edit.yes", "Yes") : t("game_edit.no", "No"))
+                    : (game.steamInstalled ? t("game_edit.yes", "Yes") : t("game_edit.no", "No"))
+                ) : t("game_edit.unknown", "Unknown")}
               />
               <FieldRow label={t("game_edit.install_dir", "Install Directory")} value={game?.installDir} />
               <FieldRow label={t("game_edit.library_path", "Library Path")} value={game?.libraryPath} />

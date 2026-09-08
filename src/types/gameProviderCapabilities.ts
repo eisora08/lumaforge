@@ -164,6 +164,23 @@ export const PROVIDER_CAPABILITIES: Record<LibraryGameSource, GameProviderCapabi
     canShowInStore: false,
     canCheckForUpdates: false,
   },
+  emulator: {
+    canUseSteamAppInfo: false,
+    canUseSteamCloud: false,
+    canUseSteamAchievements: false,
+    canUseSteamUpdates: false,
+    canUseSteamInstall: false,
+    canUseSteamOwned: false,
+    canLaunchExecutable: true,
+    canEditLaunchPaths: true,
+    canEditMetadata: true,
+    canEditMedia: true,
+    canUseMetadataProviders: false,
+    canUseSourceProviders: false,
+    canRemoveFromLibrary: true,
+    canShowInStore: false,
+    canCheckForUpdates: false,
+  },
 };
 
 /**

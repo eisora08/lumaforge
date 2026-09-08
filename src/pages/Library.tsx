@@ -23,6 +23,9 @@ import GameHoverPreview from "../components/games/GameHoverPreview";
 import GameEditDialog from "../components/games/GameEditDialog";
 import GameScannerModal from "../components/games/GameScannerModal";
 import type { ScannedProgram } from "../components/games/GameScannerModal";
+import { ImportRomModal } from "../components/emulator/ImportRomModal";
+import { EmulatorSettingsModal } from "../components/emulator/EmulatorSettingsModal";
+import { hasActiveEmulatorConfig } from "../services/emulatorConfigStore";
 import InstallConfirmModal from "../components/install/InstallConfirmModal";
 import LibraryFilterPanel from "../components/library/LibraryFilterPanel";
 import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFilterPanel";
@@ -92,6 +95,8 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
   const [addGameOpen, setAddGameOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [importRomOpen, setImportRomOpen] = useState(false);
+  const [emulatorSettingsOpen, setEmulatorSettingsOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [tileOverlayOpen, setTileOverlayOpen] = useState(false);
   const [filterPopupOpen, setFilterPopupOpen] = useState(false);
@@ -225,6 +230,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
       if (filter === "steam" && g.source !== "steam") return false;
       if (filter === "manual" && g.source !== "manual") return false;
       if (filter === "debrid" && g.source !== "debrid") return false;
+      if (filter === "emulator" && g.source !== "emulator") return false;
       return true;
     });
 
@@ -361,6 +367,12 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
         showError(String(err), { title: t("library_page.toast.error", "Error") });
       }
     } else if (game.source === "lua" && game.executablePath) {
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: t("library_page.toast.error", "Error") });
+      }
+    } else if (game.source === "emulator" && game.executablePath) {
       try {
         await session.launchGame(game);
       } catch (err) {
@@ -764,6 +776,24 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
                                   <div className="text-[10px] text-(--color-muted)/50">{t("library_page.scan_installed_desc", "Detect games on your PC")}</div>
                                 </div>
                               </button>
+                              <div className="mx-2 border-t border-(--surface-active-border)/30" />
+                              <button
+                                onClick={() => {
+                                  if (!hasActiveEmulatorConfig()) {
+                                    setEmulatorSettingsOpen(true);
+                                  } else {
+                                    setImportRomOpen(true);
+                                  }
+                                  setAddMenuOpen(false);
+                                }}
+                                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
+                              >
+                                <Gamepad2 className="h-3.5 w-3.5" />
+                                <div>
+                                  <div className="font-medium">{t("library_page.import_rom", "Import ROM")}</div>
+                                  <div className="text-[10px] text-(--color-muted)/50">{t("library_page.import_rom_desc", "Add ROM files to library")}</div>
+                                </div>
+                              </button>
                             </div>
                           </>
                         )}
@@ -1084,7 +1114,15 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
         onAdd={handleScanAdd}
         games={games}
       />
-      {hoveredGame && gamePosition && settings.libraryHoverMode === "preview" && !tileOverlayOpen && !sourceSelectorGame && !addGameOpen && !scannerOpen && (
+      <ImportRomModal
+        open={importRomOpen}
+        onClose={() => setImportRomOpen(false)}
+      />
+      <EmulatorSettingsModal
+        open={emulatorSettingsOpen}
+        onClose={() => setEmulatorSettingsOpen(false)}
+      />
+      {hoveredGame && gamePosition && settings.libraryHoverMode === "preview" && !tileOverlayOpen && !sourceSelectorGame && !addGameOpen && !scannerOpen && !importRomOpen && (
         <GameHoverPreview
           game={hoveredGame}
           position={gamePosition}

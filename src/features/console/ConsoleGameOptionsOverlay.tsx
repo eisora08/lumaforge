@@ -315,6 +315,26 @@ export default function ConsoleGameOptionsOverlay({
       });
     }
 
+    if (game.source === "emulator" && !isRunning) {
+      list.push({
+        id: "remove-emulator",
+        label: "Remove from Library",
+        icon: Trash2,
+        action: async () => {
+          try {
+            const { removeEmulatorGameFromLibrary } = await import("../../services/emulatorGameStore");
+            const { deleteGameV2 } = await import("../../services/tauri");
+            removeEmulatorGameFromLibrary(game.id);
+            await deleteGameV2(game.id);
+            showToast(`"${game.title}" removed`);
+            onClose();
+          } catch (e) {
+            showToast(`Failed to remove: ${e}`);
+          }
+        },
+      });
+    }
+
     list.push({
       id: "back",
       label: "Back",
@@ -486,6 +506,7 @@ export default function ConsoleGameOptionsOverlay({
           manualGameId={game.source === "manual" ? game.providerGameId : undefined}
           epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
           debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
+          emulatorProviderGameId={game.source === "emulator" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab="media"

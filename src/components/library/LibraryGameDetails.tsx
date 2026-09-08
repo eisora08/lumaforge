@@ -1648,9 +1648,11 @@ export default function LibraryGameDetails({
                         ? { label: "DEBRID", cls: "bg-cyan-500/15 text-cyan-400 ring-cyan-500/25" }
                         : game.source === "manual"
                           ? { label: "MANUAL", cls: "bg-amber-500/15 text-amber-300 ring-amber-500/25" }
-                          : game.source === "steam"
-                            ? { label: "STEAM", cls: "bg-blue-500/15 text-blue-400 ring-blue-500/25" }
-                            : null;
+                          : game.source === "emulator"
+                            ? { label: "EMULATOR", cls: "bg-rose-500/15 text-rose-400 ring-rose-500/25" }
+                            : game.source === "steam"
+                              ? { label: "STEAM", cls: "bg-blue-500/15 text-blue-400 ring-blue-500/25" }
+                              : null;
                   if (!srcBadge) return null;
                   return (
                     <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ring-1 ${srcBadge.cls}`}>
@@ -2773,12 +2775,13 @@ export default function LibraryGameDetails({
         />
       )}
 
-      {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
+      {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid" || game.source === "emulator") && (
         <GameEditDialog
           appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
           manualGameId={game.source === "manual" ? game.providerGameId : undefined}
           epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
           debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
+          emulatorProviderGameId={game.source === "emulator" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab={editDialogTab}
@@ -2890,6 +2893,32 @@ export default function LibraryGameDetails({
               }} />
             {onOpenTools && (game.source === "steam" || game.source === "manual" || game.source === "debrid" || game.source === "lua") && (
               <DropdownItem label={t("library_details.actions.gameFixes")} onClick={() => { setShowActions(false); onOpenTools(game); }} />
+            )}
+            {game.source === "emulator" && (
+              <DropdownItem
+                label={t("context_menu.remove_from_library", "Remove from Library")}
+                destructive
+                onClick={async () => {
+                  setShowActions(false);
+                  const confirmed = await confirm({
+                    title: t("context_menu.remove_from_library", "Remove from Library"),
+                    description: t("context_menu.remove_from_library_confirm", "Remove \"{{title}}\" from your library? The ROM file will not be deleted.", { title: game.title }),
+                    confirmLabel: t("buttons.remove", "Remove"),
+                    cancelLabel: t("buttons.cancel", "Cancel"),
+                  });
+                  if (!confirmed) return;
+                  try {
+                    const { removeEmulatorGameFromLibrary } = await import("../../services/emulatorGameStore");
+                    const { deleteGameV2 } = await import("../../services/tauri");
+                    removeEmulatorGameFromLibrary(game.id);
+                    await deleteGameV2(game.id);
+                    showInfo(t("library_details.toast.removedFromLibrary", { title: game.title }));
+                    onBack();
+                  } catch (e) {
+                    showError(`${t("game_tile.remove_failed", "Failed to remove")}: ${e}`);
+                  }
+                }}
+              />
             )}
             <DropdownItem label={t("library_details.actions.close")} onClick={() => setShowActions(false)} />
           </div>

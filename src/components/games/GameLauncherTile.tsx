@@ -628,9 +628,11 @@ function GameLauncherTileInner({
                           ? { label: "DEBRID", cls: "bg-cyan-500/30 text-cyan-300" }
                           : game.source === "manual"
                             ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
-                            : game.source === "steam"
-                              ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
-                              : null;
+                            : game.source === "emulator"
+                              ? { label: "EMULATOR", cls: "bg-rose-500/30 text-rose-300" }
+                              : game.source === "steam"
+                                ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
+                                : null;
                     if (!srcBadge) return null;
                     return (
                       <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
@@ -928,7 +930,33 @@ function GameLauncherTileInner({
                           }
                         },
                       }]
-                  : []),
+                    : []),
+                    ...(game.source === "emulator"
+                    ? [{
+                        label: t("context_menu.remove_from_library", "Remove from Library"),
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        onClick: async () => {
+                          setMenuOpen(false);
+                          const confirmed = await confirm({
+                            title: t("context_menu.remove_from_library", "Remove from Library"),
+                            description: t("context_menu.remove_from_library_confirm", "Remove \"{{title}}\" from your library? The ROM file will not be deleted.", { title: game.title }),
+                            confirmLabel: t("buttons.remove", "Remove"),
+                            cancelLabel: t("buttons.cancel", "Cancel"),
+                          });
+                          if (!confirmed) return;
+                          try {
+                            const { removeEmulatorGameFromLibrary } = await import("../../services/emulatorGameStore");
+                            const { deleteGameV2 } = await import("../../services/tauri");
+                            removeEmulatorGameFromLibrary(game.id);
+                            await deleteGameV2(game.id);
+                            showSuccess(`"${game.title}" ${t("context_menu.removed", "removed")}`);
+                          } catch (e) {
+                            showError(`${t("game_tile.remove_failed", "Failed to remove")}: ${e}`);
+                          }
+                        },
+                      }]
+                    : []),
                 ...(hasPendingUninstall
                   ? [{
                     label: t("context_menu.cancel_tracking", "Cancel tracking"),
@@ -1016,13 +1044,14 @@ function GameLauncherTileInner({
             />
           </CardActionMenu>
 
-        {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
+        {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid" || game.source === "emulator") && (
           <>
             <GameEditDialog
               appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
               manualGameId={game.source === "manual" ? game.providerGameId : undefined}
               epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
               debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
+              emulatorProviderGameId={game.source === "emulator" ? game.providerGameId : undefined}
               open={editDialogOpen}
               onClose={() => { setEditDialogOpen(false); onOverlayToggle?.(false); }}
               initialTab={editInitialTab}

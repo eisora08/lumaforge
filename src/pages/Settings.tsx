@@ -49,6 +49,7 @@ import ToggleOption from "../components/settings/ToggleOption";
 import BackupSectionUI from "../components/settings/BackupSection";
 import SteamAccountDetector from "../components/settings/SteamAccountDetector";
 import IntegrationsSection from "../components/settings/IntegrationsSection";
+import EmulatorSection from "../components/emulator/EmulatorSection";
 // import ExtensionsSettings from "../extensions/ui/ExtensionsSettings";
 
 import { defaultApiProviders } from "../data/providers";
@@ -71,6 +72,7 @@ type SettingsSectionId =
   | "metadata"
   | "extensions"
   | "providers"
+  | "emulators"
   | "backup"
   | "startup";
 
@@ -95,6 +97,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
     { key: "metadata", label: t("settings.metadata"), icon: <Database className="h-4 w-4" />, description: t("settings.metadata_desc") },
     // { key: "extensions", label: t("settings.extensions"), icon: <Puzzle className="h-4 w-4" />, description: t("settings.extensions_desc") },
     { key: "providers", label: t("settings.providers"), icon: <Zap className="h-4 w-4" />, description: t("settings.providers_desc") },
+    { key: "emulators", label: t("settings.emulators", "Emulators"), icon: <Gamepad2 className="h-4 w-4" />, description: t("settings.emulators_desc", "Configure emulators") },
     { key: "backup", label: t("settings.backup"), icon: <Cloud className="h-4 w-4" />, description: t("settings.backup_desc") },
     { key: "startup", label: t("settings.startup"), icon: <Power className="h-4 w-4" />, description: t("settings.startup_desc") },
   ];
@@ -1215,6 +1218,8 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 <IntegrationsSection />
               </>
             )}
+
+            {activeSection === "emulators" && <EmulatorSection />}
 
             {activeSection === "startup" && (
               <>
