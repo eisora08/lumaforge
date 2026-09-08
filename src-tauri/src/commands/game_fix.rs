@@ -567,8 +567,32 @@ fn normalize_text(text: &str) -> String {
     normalized.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn extract_app_id_from_filename(display_name: &str) -> Option<u64> {
+    let without_ext = display_name.strip_suffix(".rar").unwrap_or(display_name);
+    if let Some(end) = without_ext.find(']') {
+        if without_ext.starts_with('[') && end > 1 {
+            let digits = &without_ext[1..end];
+            if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+                return digits.parse::<u64>().ok();
+            }
+        }
+    }
+    None
+}
+
 fn extract_game_name_from_filename(display_name: &str) -> String {
     let without_ext = display_name.strip_suffix(".rar").unwrap_or(display_name);
+
+    // Handle [appid]_Name pattern
+    if let Some(end) = without_ext.find(']') {
+        if without_ext.starts_with('[') && end > 1 {
+            let rest = &without_ext[end + 1..];
+            let rest_trimmed = rest.trim_start_matches('_').trim_start();
+            if !rest_trimmed.is_empty() {
+                return rest_trimmed.to_string();
+            }
+        }
+    }
 
     if let Some(pos) = without_ext.find('_') {
         let prefix = without_ext[..pos].trim().to_string();
@@ -591,7 +615,38 @@ fn extract_game_name_from_filename(display_name: &str) -> String {
     without_ext.trim().to_string()
 }
 
-fn fuzzy_match_game(game_name: &str, files: &[FileEntry]) -> (Option<String>, Vec<String>) {
+fn fuzzy_match_game(game_name: &str, files: &[FileEntry], app_id: Option<u64>) -> (Option<String>, Vec<String>) {
+    let suggestions: Vec<String> = files
+        .iter()
+        .take(MAX_MANUAL_FILES)
+        .map(|f| f.display_name.clone())
+        .collect();
+
+    // Step 0: Try exact app ID match first (most reliable for [appid]_Name patterns)
+    if let Some(id) = app_id {
+        for file in files {
+            if let Some(file_id) = extract_app_id_from_filename(&file.display_name) {
+                if file_id == id {
+                    eprintln!(
+                        "[luma-lite] online-fix: app ID match for '{}' (id={}) → {}",
+                        game_name, id, file.display_name
+                    );
+                    return (Some(file.url.clone()), suggestions);
+                }
+            }
+        }
+        // If any files have bracket patterns but none matched → skip fuzzy to avoid false positives
+        let has_brackets = files.iter().any(|f| extract_app_id_from_filename(&f.display_name).is_some());
+        if has_brackets {
+            eprintln!(
+                "[luma-lite] online-fix: app_id={} provided but no bracket match found ({} files have brackets), skipping fuzzy",
+                id,
+                files.iter().filter(|f| extract_app_id_from_filename(&f.display_name).is_some()).count()
+            );
+            return (None, suggestions);
+        }
+    }
+
     let normalized_game = normalize_text(game_name);
     eprintln!(
         "[luma-lite] online-fix: fuzzy match for '{}' → normalized: '{}'",
@@ -1665,7 +1720,7 @@ pub async fn library_get_game_fix_info(
         fetch_online_fix_directory(&client)
             .await
             .map(|files| {
-                let (matched, _) = fuzzy_match_game(&name, &files);
+                let (matched, _) = fuzzy_match_game(&name, &files, Some(app_id));
                 matched.is_some()
             })
             .unwrap_or(false)
@@ -1793,7 +1848,7 @@ pub async fn library_apply_online_fix(
             }),
         );
 
-        let (matched_url, _suggestions) = fuzzy_match_game(&name, &files);
+        let (matched_url, _suggestions) = fuzzy_match_game(&name, &files, Some(app_id));
 
         if let Some(url) = matched_url {
             let _ = app_handle.emit(
