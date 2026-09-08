@@ -483,7 +483,11 @@ export async function ensureSchemaGenerated(
         return cached;
       }
       if (isFresh && hasStatId && !hasDisplayName) {
-        console.log(`[ACH][SCHEMA_GEN] appid=${appId} cache-fresh but NO display names (api_name used as name), forcing regeneration with API enrichment`);
+        // Has schema data (stat_id) but display names are missing — return cached data as-is
+        // instead of forcing a full schema re-parse. Display names are cosmetic and can be
+        // enriched on the next API-enriched generation cycle.
+        console.debug(`[ACH][SCHEMA_GEN] appid=${appId} cache-fresh hasStatId=true hasDisplayName=false — returning cached data (names will enrich later)`);
+        return cached;
       } else if (isFresh && !hasStatId) {
         console.log(`[ACH][SCHEMA_GEN] appid=${appId} cache-fresh but NO stat_id (librarycache-only), forcing regeneration from KV binary`);
       } else {
@@ -566,6 +570,7 @@ export async function resolveSteamAchievements(params: {
   gameSource?: string; // "steam" | "lua" | "debrid" | "manual" | "epic"
   platform?: string; // "steam" | "steam-official" | "epic-official" — force platform, skip auto-detect
   installDir?: string; // game install directory — used for Tenoke crack detection
+  exePath?: string; // game executable path — used for installDir resolution when installDir is just a name
   epicNamespace?: string; // Epic namespace (first segment of providerGameId)
 }): Promise<GameAchievementsSummary> {
   const appIdStr = normalizeValidAppId(params.appId, params.gameSource);
@@ -612,7 +617,7 @@ export async function resolveSteamAchievements(params: {
   }
 
   // Get or create achievement config for this game
-  let gameConfig = await getOrCreateConfig(appIdStr, undefined, params.gameSource, params.installDir);
+  let gameConfig = await getOrCreateConfig(appIdStr, undefined, params.gameSource, params.installDir, params.exePath);
 
   // Try to get game name from snapshot if config has placeholder name
   if (gameConfig && gameConfig.name.startsWith("Game ")) {

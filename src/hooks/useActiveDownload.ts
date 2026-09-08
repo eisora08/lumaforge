@@ -94,16 +94,30 @@ function resolveDisplayTitle(job: DownloadJob): string {
   return `Steam App ${job.appId}`;
 }
 
+function isLocalPath(s: string): boolean {
+  return /^[A-Za-z]:\\|^\\\\|^\//.test(s);
+}
+
 function resolveCoverUrl(job: DownloadJob): string | undefined {
-  if (job.artworkUrl) return job.artworkUrl;
+  if (job.artworkUrl) {
+    if (isLocalPath(job.artworkUrl)) {
+      console.log(`[ACTIVE_DL] artworkUrl is local path, converting: ${job.artworkUrl}`);
+      return localPathToUrl(job.artworkUrl) ?? undefined;
+    }
+    return job.artworkUrl;
+  }
   if (job.type === "steam-install" || job.type === "steam-depot-download") {
     const snapshot = getBootSnapshot();
     const media = snapshot?.library.games.find(
       (g) => g.appId === job.appId || g.appId.endsWith(`-${job.appId}`)
     )?.media;
     const path = media?.landscapePath || media?.coverPath || media?.backgroundPath;
-    if (path) return localPathToUrl(path) ?? undefined;
+    if (path) {
+      console.log(`[ACTIVE_DL] fallback to snapshot media: ${path}`);
+      return localPathToUrl(path) ?? undefined;
+    }
   }
+  console.log(`[ACTIVE_DL] no artwork found for appId=${job.appId} type=${job.type}`);
   return undefined;
 }
 

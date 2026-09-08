@@ -836,7 +836,7 @@ class AchievementStoreImpl {
       // If existing disk cache has higher-quality source, skip this write entirely.
       // Prevents schema-only/unavailable data from overwriting schema-generated cache on disk.
       const DISK_QUALITY: Record<string, number> = {
-        "schema-generated": 3, "kv+api": 3, "schema-only": 2, "binary-stats": 2, "crack": 2, "librarycache": 1, "unavailable": 0,
+        "schema-generated": 3, "kv+api": 3, "schema-only": 2, "binary-stats": 3, "crack": 2, "librarycache": 1, "unavailable": 0,
       };
       const diskQ = DISK_QUALITY[diskSource ?? ""] ?? 0;
       const writeQ = DISK_QUALITY[summary.source ?? ""] ?? 0;

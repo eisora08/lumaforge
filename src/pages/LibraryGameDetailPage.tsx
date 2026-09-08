@@ -1207,7 +1207,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             resolved.uri,
             rawEntry.installerType || "zip",
             game.appId ?? "",
-            undefined,
+            game.imageUrl,
             rawEntry.repacker,
             resolved.method,
           );
@@ -1234,7 +1234,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         resolved.uri,
         rawEntry.installerType || "zip",
         game.appId ?? "",
-        undefined,
+        game.imageUrl,
         game.repacker,
         resolved.method,
       );
@@ -1399,7 +1399,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             resolved.uri,
             repack.installerType || "zip",
             debridInstallGame.appId ?? "",
-            undefined,
+            debridInstallGame.imageUrl,
             debridInstallGame.repacker,
             resolved.method,
           );

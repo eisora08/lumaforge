@@ -107,6 +107,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [layout, setLayout] = useState<"grid" | "list">("grid");
+  const [scanCompleteCount, setScanCompleteCount] = useState(0);
   const queuedMediaRef = useRef<Map<string, number>>(new Map());
   const { confirm } = useConfirm();
 
@@ -179,7 +180,14 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
       }
       console.log(`[LIBRARY_FOCUS] appid=${pending.appId} title="${pending.title || ""}"`);
     }
-  }, [activePage]);
+  }, [activePage, scanCompleteCount]);
+
+  // Listen for pending focus ready event (e.g. from sidebar scanner)
+  useEffect(() => {
+    const handler = () => setScanCompleteCount((c) => c + 1);
+    window.addEventListener("library:focus-pending-ready", handler);
+    return () => window.removeEventListener("library:focus-pending-ready", handler);
+  }, []);
 
   // Ambient background: keep showing the last library game's details art while
   // the grid is mounted. LibraryGameDetails remembers it before unmounting; the
@@ -194,7 +202,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   const displayGames = useMemo(() => {
     const sorted = [...games].sort((a, b) => a.title.localeCompare(b.title));
     if (focusAppId) {
-      return sorted.filter((g) => g.appId === focusAppId);
+      return sorted.filter((g) => g.appId === focusAppId || g.libraryId === focusAppId || g.id === focusAppId);
     }
     return sorted;
   }, [games, focusAppId]);
@@ -382,7 +390,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
             resolved.uri,
             rawEntry.installerType || "zip",
             game.appId ?? "",
-            undefined,
+            game.imageUrl,
             rawEntry.repacker,
             resolved.method,
           );
@@ -409,7 +417,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
         resolved.uri,
         rawEntry.installerType || "zip",
         game.appId ?? "",
-        undefined,
+        game.imageUrl,
         game.repacker,
         resolved.method,
       );
@@ -590,6 +598,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
 
   const handleScanAdd = useCallback((programs: ScannedProgram[]) => {
     let lastId: string | null = null;
+    let lastName: string | null = null;
     for (const p of programs) {
       const entry: ManualGameEntry = {
         id: crypto.randomUUID(),
@@ -599,12 +608,25 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+      // Auto-derive installDir + workingDirectory from exePath parent
+      if (p.exePath && /^[A-Za-z]:\\|^\\\\|^\//.test(p.exePath)) {
+        const parentDir = p.exePath.replace(/[\\/][^\\/]+$/, "");
+        if (parentDir) {
+          if (!entry.installDir || !/^[A-Za-z]:\\|^\\\\|^\//.test(entry.installDir)) {
+            entry.installDir = parentDir;
+          }
+          entry.workingDirectory = parentDir;
+        }
+      }
       saveManualGame(entry);
       lastId = `manual:${entry.id}`;
+      lastName = p.name;
     }
     // Auto-scroll to the last added game
     if (lastId) {
-      setPendingLibraryFocus(lastId);
+      setPendingLibraryFocus(lastId, lastName ?? undefined);
+      // Trigger focus consume effect immediately (same page, activePage won't change)
+      setScanCompleteCount((c) => c + 1);
     }
     setScannerOpen(false);
   }, []);
@@ -815,7 +837,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
                       <Search className="h-4 w-4 shrink-0 text-(--color-accent)" />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-(--color-text)">
-                          {t("library_page.showing", "Showing:")} {focusTitle || t("library_page.game_fallback", { defaultValue: "Game {{appId}}", appId: focusAppId })}
+                          {t("library_page.showing", "Showing:")} {focusTitle || games.find((g) => g.appId === focusAppId || g.libraryId === focusAppId || g.id === focusAppId)?.title || t("library_page.game_fallback", { defaultValue: "Game {{appId}}", appId: focusAppId })}
                         </p>
                         <p className="mt-0.5 text-xs text-(--color-muted)">
                           {displayGames.length > 0
@@ -1007,7 +1029,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
             resolved.uri,
             repack.installerType || "zip",
             debridInstallGame.appId ?? "",
-            undefined,
+            debridInstallGame.imageUrl,
             debridInstallGame.repacker,
             resolved.method,
           );

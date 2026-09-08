@@ -53,3 +53,11 @@ export function clearPendingLibraryFocus() {
   _pendingFocusAppId = null;
   _pendingFocusTitle = null;
 }
+
+/**
+ * Notify the Library page that a pending focus is ready to be consumed.
+ * Needed when the scanner is opened from the sidebar (same page, activePage won't change).
+ */
+export function notifyPendingFocusReady() {
+  window.dispatchEvent(new CustomEvent("library:focus-pending-ready"));
+}

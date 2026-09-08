@@ -60,7 +60,7 @@ import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { removeDebridGameFromLibrary, getDebridLaunchMetadata } from "../../services/debridGameStore";
-import { setPendingLibraryFocus } from "../../services/libraryNavigationService";
+import { setPendingLibraryFocus, notifyPendingFocusReady } from "../../services/libraryNavigationService";
 import UninstallGameDialog from "../games/UninstallGameDialog";
 import { useConfirm } from "../../services/confirmService";
 
@@ -1032,6 +1032,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     if (isCompactMode || isCollapsedMode) return null;
     const handleScanAdd = (programs: ScannedProgram[]) => {
       let lastId: string | null = null;
+      let lastName: string | null = null;
       for (const p of programs) {
         const entry: ManualGameEntry = {
           id: crypto.randomUUID(),
@@ -1041,12 +1042,24 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
+        // Auto-derive installDir + workingDirectory from exePath parent
+        if (p.exePath && /^[A-Za-z]:\\|^\\\\|^\//.test(p.exePath)) {
+          const parentDir = p.exePath.replace(/[\\/][^\\/]+$/, "");
+          if (parentDir) {
+            if (!entry.installDir || !/^[A-Za-z]:\\|^\\\\|^\//.test(entry.installDir)) {
+              entry.installDir = parentDir;
+            }
+            entry.workingDirectory = parentDir;
+          }
+        }
         saveManualGame(entry);
         lastId = `manual:${entry.id}`;
+        lastName = p.name;
       }
       // Auto-scroll to the last added game
       if (lastId) {
-        setPendingLibraryFocus(lastId);
+        setPendingLibraryFocus(lastId, lastName ?? undefined);
+        notifyPendingFocusReady();
       }
       setScannerOpen(false);
     };

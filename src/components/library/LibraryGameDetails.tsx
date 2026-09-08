@@ -449,6 +449,7 @@ export default function LibraryGameDetails({
           gameSource,
           platform: achSource,
           installDir: game.installDir,
+          exePath: game.executablePath,
           epicNamespace,
         });
         if (appIdStr && s && s.achievements?.length > 0) {
@@ -911,9 +912,8 @@ export default function LibraryGameDetails({
     });
   }, [appIdStr, achSource]);
 
-  // Load achievements on mount when auto-load is enabled, or on explicit refresh
-  // Safe: reads existing disk cache for current visible appId only.
-  // No stats/schema scan, no migration, no cache write, no full library scan.
+  // Load achievements on mount — always reads disk cache first (instant, no skeleton),
+  // then falls back to full resolve only when no fresh cached data exists.
   const shouldAutoLoadAchievements = ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS;
   const ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP = true;
   const diskCacheRef = useRef<{ updatedAt: number } | null>(null);
@@ -921,171 +921,184 @@ export default function LibraryGameDetails({
   useEffect(() => {
     if (!appIdStr) return;
     if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
-    if (!shouldAutoLoadAchievements) {
-      let cancelled = false;
-      // 1. Check in-memory store first
-      const stored = achievementStore.getSummary(appIdStr, achSource);
-      if (stored) {
-        setAchievementsSummary(stored);
-        if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${stored.unlocked} total=${stored.total} progressAvailable=${stored.progressAvailable} source=${stored.source}`);
-        if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_CACHE_HIT] appid=${appIdStr} unlocked=${stored.unlocked}/${stored.total} storeUpdatedAt=${stored.updatedAt}`);
-      }
-      // 2. If ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP, check if disk cache is newer than store
-      if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP) {
-        const appIdNum = numericAppIdHash(appIdStr);
-        if (Number.isFinite(appIdNum)) {
-          import("../../services/tauri").then(({ readAchievementCache }) => {
-            if (cancelled) return;
-            readAchievementCache(appIdNum, achSource).then((diskCache) => {
-              if (cancelled) return;
-              const diskUpdatedAt = diskCache?.summary?.updated_at ?? 0;
-              const storeUpdatedAt = achievementStore.getSummary(appIdStr, achSource)?.updatedAt ?? 0;
-              const lastSeenAt = diskCacheRef.current?.updatedAt ?? 0;
-              if (!diskCache || !diskCache.achievements?.length) {
-                if (appIdStr === "1167630") console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=no-disk-cache`);
-                if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false`);
-                if (!stored) setAchievementsLoading(false);
-                return;
-              }
-              // Apply if disk is newer than what we last saw, or newer than store
-              const shouldApply = diskUpdatedAt > lastSeenAt || diskUpdatedAt > storeUpdatedAt;
-              if (!shouldApply) {
-                if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=false diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
-                if (!stored) setAchievementsLoading(false);
-                return;
-              }
-              diskCacheRef.current = { updatedAt: diskUpdatedAt };
-              const total = diskCache.summary?.total ?? diskCache.achievements.length;
-              const unlocked = diskCache.summary?.unlocked ?? diskCache.achievements.filter((a: any) => a.unlocked).length;
-              const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
-              const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
-              const summary = {
-                appId: appIdStr,
-                source: "local-cache" as const,
-                total,
-                unlocked,
-                percent,
-                progressAvailable: hasRealProgress,
-                updatedAt: diskCache.summary?.updated_at ?? Date.now(),
-                achievements: diskCache.achievements.map((a: any) => ({
-                  id: a.api_name ?? a.id ?? "",
-                  apiName: a.api_name ?? a.name ?? "",
-                  name: a.display_name ?? a.name ?? a.api_name ?? "",
-                  description: a.description ?? "",
-                  iconUrl: a.icon_url ?? a.icon ?? undefined,
-                  iconGrayUrl: a.icon_gray_url ?? a.icon_gray ?? undefined,
-                  unlocked: !!a.unlocked,
-                  unlockTime: a.unlock_time ?? undefined,
-                  progress: a.progress ?? undefined,
-                  progressMax: a.progress_max ?? undefined,
-                  rarityPercent: a.rarity_percent ?? undefined,
-                })),
-              };
-              console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=true diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
-              console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${unlocked}/${total} reason=newer-local-cache`);
-              if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=${hasRealProgress} source=local-cache`);
-              achievementStore.setSummary(appIdStr, summary, achSource);
-              setAchievementsSummary(summary);
-              setAchievementsLoading(false);
-              // ── Fallback: schema-only disk cache → try resolver for librarycache progress ──
-              if (!hasRealProgress && total > 0 && appIdStr) {
-                if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=false source=local-cache`);
-                console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=${appIdStr} reason=disk-cache-schema-only triggering-resolver-fallback`);
-                resolveSteamAchievements({
-                  appId: appIdStr,
-                  steamWebApiKey: settings.steamWebApiKey || undefined,
-                  steamId64: settings.steamId64 || undefined,
-                  accountId: settings.steamAccountId || undefined,
-                  steamPath: settings.steamRoot || undefined,
-                  steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                  achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                  gameSource: game.source,
-                  platform: achSource,
-                  installDir: game.installDir,
-                  epicNamespace,
-                }).then((resolved) => {
-                  if (cancelled || !resolved.progressAvailable) {
-                    if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
-                    return;
-                  }
-                  const stored = achievementStore.getSummary(appIdStr, achSource);
-                  if (stored && !isSourceNewerOrEqual(resolved.source, resolved.updatedAt, stored.source, stored.updatedAt)) return;
-                  achievementStore.setSummary(appIdStr, resolved, achSource);
-                  setAchievementsSummary(resolved);
-                  console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${resolved.unlocked}/${resolved.total} reason=resolver-librarycache-fallback`);
-                }).catch(() => { });
-              }
-            }).catch(() => {
-              if (!cancelled && !stored) {
-                if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false reason=disk-read-failed`);
-                setAchievementsLoading(false);
-              }
-            });
-          });
-        } else {
-          if (!stored) setAchievementsLoading(false);
-        }
-        return;
-      }
-      setAchievementsLoading(false);
-      return;
-    }
-    // On first mount: if store already has data (from previous mount or auto-sync), skip full resolve
-    if (isInitialAchMountRef.current) {
-      isInitialAchMountRef.current = false;
-      const existing = achievementStore.getSummary(appIdStr, achSource);
-      if (existing && existing.progressAvailable) {
+    let cancelled = false;
+
+    // Helper: fall back to full resolve when disk cache didn't have fresh data
+    const tryFullResolve = () => {
+      if (cancelled) return;
+      if (!shouldAutoLoadAchievements) {
         setAchievementsLoading(false);
         return;
       }
+      // On first mount: if store already has data (from previous mount or auto-sync), skip full resolve
+      if (isInitialAchMountRef.current) {
+        isInitialAchMountRef.current = false;
+        const existing = achievementStore.getSummary(appIdStr, achSource);
+        if (existing && existing.progressAvailable) {
+          setAchievementsLoading(false);
+          return;
+        }
+      }
+      setAchievementsLoading(true);
+      resolveSteamAchievements({
+        appId: appIdStr,
+        steamWebApiKey: settings.steamWebApiKey || undefined,
+        steamId64: settings.steamId64 || undefined,
+        accountId: settings.steamAccountId || undefined,
+        steamPath: settings.steamRoot || undefined,
+        steamAchievementsEnabled: settings.steamAchievementsEnabled,
+        achievementSchemaPath: settings.achievementSchemaPath || undefined,
+        gameSource: game.source,
+        platform: achSource,
+        installDir: game.installDir,
+        exePath: game.executablePath,
+        epicNamespace,
+      })
+        .then((summary) => {
+          if (!cancelled) {
+            if (userSwitchedSourceRef.current) return; // user already switched — this resolve is stale
+            // Only update local state if resolver result is fresher than store
+            const stored = achievementStore.getSummary(appIdStr, achSource);
+            if (stored && stored.source !== summary.source) {
+              if (!isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt)) {
+                console.debug(`[ACH][DETAILS] skip-set-from-resolver reason=store-newer source=${stored.source} updatedAt=${stored.updatedAt}`);
+                setAchievementsLoading(false);
+                return;
+              }
+            }
+            achievementStore.deleteSummary(appIdStr, achSource);
+            setAchievementsSummary(summary);
+            achievementStore.setSummary(appIdStr, summary, achSource);
+            setAchievementsLoading(false);
+            // Enqueue image downloads for this game (fire-and-forget)
+            import("../../services/backgroundJobQueue").then(({ enqueueAchievementImageJobs }) => {
+              enqueueAchievementImageJobs([appIdStr], "normal", achSource);
+            }).catch(() => { });
+            if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${summary.unlocked} total=${summary.total} progressAvailable=${summary.progressAvailable} source=${summary.source}`);
+            console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
+            console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
+            console.debug(`[ACH][PROGRESS] progressAvailable=${summary.progressAvailable}`);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setAchievementsLoading(false);
+            console.warn(`[ACH][PROGRESS] failed appid=${appIdStr} reason=${err}`);
+          }
+        });
+    };
+
+    // 1. Check in-memory store first (instant)
+    const stored = achievementStore.getSummary(appIdStr, achSource);
+    if (stored) {
+      setAchievementsSummary(stored);
+      if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${stored.unlocked} total=${stored.total} progressAvailable=${stored.progressAvailable} source=${stored.source}`);
+      if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_CACHE_HIT] appid=${appIdStr} unlocked=${stored.unlocked}/${stored.total} storeUpdatedAt=${stored.updatedAt}`);
     }
-    let cancelled = false;
-    setAchievementsLoading(true);
-    resolveSteamAchievements({
-      appId: appIdStr,
-      steamWebApiKey: settings.steamWebApiKey || undefined,
-      steamId64: settings.steamId64 || undefined,
-      accountId: settings.steamAccountId || undefined,
-      steamPath: settings.steamRoot || undefined,
-      steamAchievementsEnabled: settings.steamAchievementsEnabled,
-      achievementSchemaPath: settings.achievementSchemaPath || undefined,
-      gameSource: game.source,
-      platform: achSource,
-      installDir: game.installDir,
-      epicNamespace,
-    })
-      .then((summary) => {
-        if (!cancelled) {
-          if (userSwitchedSourceRef.current) return; // user already switched — this resolve is stale
-          // Only update local state if resolver result is fresher than store
-          const stored = achievementStore.getSummary(appIdStr, achSource);
-          if (stored && stored.source !== summary.source) {
-            if (!isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt)) {
-              console.debug(`[ACH][DETAILS] skip-set-from-resolver reason=store-newer source=${stored.source} updatedAt=${stored.updatedAt}`);
-              setAchievementsLoading(false);
+
+    // 2. Check disk cache (always — eliminates skeleton on re-mount)
+    if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP) {
+      const appIdNum = numericAppIdHash(appIdStr);
+      if (Number.isFinite(appIdNum)) {
+        import("../../services/tauri").then(({ readAchievementCache }) => {
+          if (cancelled) return;
+          readAchievementCache(appIdNum, achSource).then((diskCache) => {
+            if (cancelled) return;
+            const diskUpdatedAt = diskCache?.summary?.updated_at ?? 0;
+            const storeUpdatedAt = achievementStore.getSummary(appIdStr, achSource)?.updatedAt ?? 0;
+            const lastSeenAt = diskCacheRef.current?.updatedAt ?? 0;
+            if (!diskCache || !diskCache.achievements?.length) {
+              if (appIdStr === "1167630") console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=no-disk-cache`);
+              if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false`);
+              if (!stored) setAchievementsLoading(false);
+              tryFullResolve();
               return;
             }
-          }
-          achievementStore.deleteSummary(appIdStr, achSource);
-          setAchievementsSummary(summary);
-          achievementStore.setSummary(appIdStr, summary, achSource);
-          setAchievementsLoading(false);
-          // Enqueue image downloads for this game (fire-and-forget)
-          import("../../services/backgroundJobQueue").then(({ enqueueAchievementImageJobs }) => {
-            enqueueAchievementImageJobs([appIdStr], "normal", achSource);
-          }).catch(() => { });
-          if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${summary.unlocked} total=${summary.total} progressAvailable=${summary.progressAvailable} source=${summary.source}`);
-          console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
-          console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
-          console.debug(`[ACH][PROGRESS] progressAvailable=${summary.progressAvailable}`);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setAchievementsLoading(false);
-          console.warn(`[ACH][PROGRESS] failed appid=${appIdStr} reason=${err}`);
-        }
-      });
+            // Apply if disk is newer than what we last saw, or newer than store
+            const shouldApply = diskUpdatedAt > lastSeenAt || diskUpdatedAt > storeUpdatedAt;
+            if (!shouldApply) {
+              if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=false diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
+              if (!stored) setAchievementsLoading(false);
+              tryFullResolve();
+              return;
+            }
+            diskCacheRef.current = { updatedAt: diskUpdatedAt };
+            const total = diskCache.summary?.total ?? diskCache.achievements.length;
+            const unlocked = diskCache.summary?.unlocked ?? diskCache.achievements.filter((a: any) => a.unlocked).length;
+            const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
+            const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
+            const summary = {
+              appId: appIdStr,
+              source: "local-cache" as const,
+              total,
+              unlocked,
+              percent,
+              progressAvailable: hasRealProgress,
+              updatedAt: diskCache.summary?.updated_at ?? Date.now(),
+              achievements: diskCache.achievements.map((a: any) => ({
+                id: a.api_name ?? a.id ?? "",
+                apiName: a.api_name ?? a.name ?? "",
+                name: a.display_name ?? a.name ?? a.api_name ?? "",
+                description: a.description ?? "",
+                iconUrl: a.icon_url ?? a.icon ?? undefined,
+                iconGrayUrl: a.icon_gray_url ?? a.icon_gray ?? undefined,
+                unlocked: !!a.unlocked,
+                unlockTime: a.unlock_time ?? undefined,
+                progress: a.progress ?? undefined,
+                progressMax: a.progress_max ?? undefined,
+                rarityPercent: a.rarity_percent ?? undefined,
+              })),
+            };
+            console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=true diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
+            console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${unlocked}/${total} reason=newer-local-cache`);
+            if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=${hasRealProgress} source=local-cache`);
+            achievementStore.setSummary(appIdStr, summary, achSource);
+            setAchievementsSummary(summary);
+            setAchievementsLoading(false);
+            // ── Fallback: schema-only disk cache → try resolver for librarycache progress ──
+            if (!hasRealProgress && total > 0 && appIdStr) {
+              if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=false source=local-cache`);
+              console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=${appIdStr} reason=disk-cache-schema-only triggering-resolver-fallback`);
+              resolveSteamAchievements({
+                appId: appIdStr,
+                steamWebApiKey: settings.steamWebApiKey || undefined,
+                steamId64: settings.steamId64 || undefined,
+                accountId: settings.steamAccountId || undefined,
+                steamPath: settings.steamRoot || undefined,
+                steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                gameSource: game.source,
+                platform: achSource,
+                installDir: game.installDir,
+                exePath: game.executablePath,
+                epicNamespace,
+              }).then((resolved) => {
+                if (cancelled || !resolved.progressAvailable) {
+                  if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
+                  return;
+                }
+                const stored = achievementStore.getSummary(appIdStr, achSource);
+                if (stored && !isSourceNewerOrEqual(resolved.source, resolved.updatedAt, stored.source, stored.updatedAt)) return;
+                achievementStore.setSummary(appIdStr, resolved, achSource);
+                setAchievementsSummary(resolved);
+                console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${resolved.unlocked}/${resolved.total} reason=resolver-librarycache-fallback`);
+              }).catch(() => { });
+            }
+          }).catch(() => {
+            if (!cancelled && !stored) {
+              if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false reason=disk-read-failed`);
+              setAchievementsLoading(false);
+            }
+          });
+        });
+      } else {
+        if (!stored) setAchievementsLoading(false);
+        tryFullResolve();
+      }
+      return () => { cancelled = true; };
+    }
+    // No disk cache check possible — go straight to resolve
+    tryFullResolve();
     return () => { cancelled = true; };
   }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
@@ -1155,6 +1168,8 @@ export default function LibraryGameDetails({
       achievementSchemaPath: settings.achievementSchemaPath || undefined,
       platform: achSource,
       gameSource: game.source,
+      installDir: game.installDir,
+      exePath: game.executablePath,
       epicNamespace,
     });
     return () => {
@@ -2486,6 +2501,7 @@ export default function LibraryGameDetails({
                                                                     gameSource,
                                   platform: achSource,
                                   installDir: game.installDir,
+                                  exePath: game.executablePath,
                                   epicNamespace,
                                 });
                                 if (appIdStr) {
@@ -2570,6 +2586,7 @@ export default function LibraryGameDetails({
                               gameSource,
                               platform: achSource,
                               installDir: game.installDir,
+                              exePath: game.executablePath,
                               epicNamespace,
                             });
                             if (appIdStr) {
@@ -2748,6 +2765,7 @@ export default function LibraryGameDetails({
               platform: achSource,
               gameSource: game.source,
               installDir: game.installDir,
+              exePath: game.executablePath,
               epicNamespace,
             }).then(handleResult).catch(handleError);
           }}

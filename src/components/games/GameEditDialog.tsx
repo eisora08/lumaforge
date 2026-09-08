@@ -322,7 +322,7 @@ export default function GameEditDialog({
   // ── Load drafts from userData ──
   function loadDraftsFromUserData(info: GameAppInfo | null) {
     const ud = info?.userData ?? {};
-    setNameDraft(info?.name ?? "");
+    if (info?.name) setNameDraft(info.name);
     setGenresDraft(typeof ud.genres === "string" ? ud.genres : "");
     setDevelopersDraft(typeof ud.developers === "string" ? ud.developers : "");
     setPublishersDraft(typeof ud.publishers === "string" ? ud.publishers : "");
@@ -371,7 +371,15 @@ export default function GameEditDialog({
     setExecutablePathDraft(entry.executablePath ?? "");
     setWorkingDirectoryDraft(entry.workingDirectory ?? "");
     setLaunchArgsDraft(entry.launchArguments ?? "");
-    setInstallDirDraft(entry.installDir ?? "");
+    // Auto-fix: if installDir is just a name and exePath has full path, derive installDir from exe parent
+    let installDirValue = entry.installDir ?? "";
+    if (installDirValue && !/^[A-Za-z]:\\|^\\\\|^\//.test(installDirValue) && entry.executablePath && /^[A-Za-z]:\\|^\\\\|^\//.test(entry.executablePath)) {
+      const parentDir = entry.executablePath.replace(/[\\/][^\\/]+$/, "");
+      if (parentDir) {
+        installDirValue = parentDir;
+      }
+    }
+    setInstallDirDraft(installDirValue);
     setAppIdDraft(entry.appId ?? entry.linkedSteamAppId ?? "");
   }
 
@@ -402,10 +410,6 @@ export default function GameEditDialog({
         setManualEntry(entry);
         loadDraftsFromManualEntry(entry);
         setAppIdDraft(entry.appId ?? "");
-        setExecutablePathDraft(entry.executablePath ?? "");
-        setWorkingDirectoryDraft(entry.workingDirectory ?? "");
-        setLaunchArgsDraft(entry.launchArguments ?? "");
-        setInstallDirDraft(entry.installDir ?? "");
         resolvedAppId = entry.appId ?? "";
       }
       // Manual WITHOUT appId → standalone (no Steam data)
@@ -429,7 +433,13 @@ export default function GameEditDialog({
       const wd = game?.workingDirectory || savedMeta?.workingDirectory || savedGame?.workingDirectory || "";
       const args = game?.launchArguments || savedMeta?.launchArguments || savedGame?.launchArguments || "";
       setNameDraft(game?.title ?? savedGame?.title ?? "");
-      if (dir) setInstallDirDraft(dir);
+      // Auto-fix: if dir is a name and exe has full path, derive installDir from exe parent
+      if (dir && !/^[A-Za-z]:\\|^\\\\|^\//.test(dir) && exe && /^[A-Za-z]:\\|^\\\\|^\//.test(exe)) {
+        const parentDir = exe.replace(/[\\/][^\\/]+$/, "");
+        if (parentDir) { setInstallDirDraft(parentDir); }
+      } else {
+        if (dir) setInstallDirDraft(dir);
+      }
       if (exe) setExecutablePathDraft(exe);
       if (wd) setWorkingDirectoryDraft(wd);
       if (args) setLaunchArgsDraft(args);

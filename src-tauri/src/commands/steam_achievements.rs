@@ -2707,6 +2707,41 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
     entry
   }).collect();
 
+  // Helper: skip write if content is identical to what's already on disk (ignores updated_at)
+  fn write_if_changed(path: &std::path::Path, content: &str, label: &str, _app_id: u32) -> Result<(), String> {
+    if path.exists() {
+      if let Ok(existing) = fs::read_to_string(path) {
+        // Strip updated_at field before comparing to avoid timestamp-only diffs
+        let normalize = |s: &str| -> String {
+          if let Some(pos) = s.find("\"updated_at\"") {
+            let mut result = s.to_string();
+            // Find the value after "updated_at": and replace digits with zeros
+            if let Some(colon_pos) = result[pos..].find(':') {
+              let val_start = pos + colon_pos + 1;
+              let bytes = result.as_bytes();
+              let mut i = val_start;
+              while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') { i += 1; }
+              let num_start = i;
+              while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+              if i > num_start {
+                let replacement = "0".repeat(i - num_start);
+                result.replace_range(num_start..i, &replacement);
+              }
+            }
+            result
+          } else {
+            s.to_string()
+          }
+        };
+        if normalize(&existing) == normalize(content) {
+          return Ok(());
+        }
+      }
+    }
+    fs::write(path, content)
+      .map_err(|e| format!("Failed to write {}: {}", label, e))
+  }
+
   // Write summary.json
   let mut summary = data.summary;
   // Preserve caller-provided cache_version (TS sets 7, schema gen sets 7)
@@ -2716,21 +2751,19 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
   let summary_path = cache_dir.join("summary.json");
   let summary_content =
     serde_json::to_string_pretty(&summary).map_err(|e| format!("Failed to serialize summary: {}", e))?;
-  fs::write(&summary_path, &summary_content)
-    .map_err(|e| format!("Failed to write summary: {}", e))?;
+  write_if_changed(&summary_path, &summary_content, "summary", app_id)?;
 
   // Write achievements.json (with normalized relative icon paths)
   let achievements_path = cache_dir.join("achievements.json");
   let achievements_content =
     serde_json::to_string_pretty(&normalized_achievements).map_err(|e| format!("Failed to serialize achievements: {}", e))?;
-  fs::write(&achievements_path, &achievements_content)
-    .map_err(|e| format!("Failed to write achievements: {}", e))?;
+  write_if_changed(&achievements_path, &achievements_content, "achievements", app_id)?;
 
   // Write achievementpercentages.json
   let pcts_path = cache_dir.join("achievementpercentages.json");
   let pcts_content = serde_json::to_string_pretty(&data.achievement_percentages)
     .map_err(|e| format!("Failed to serialize percentages: {}", e))?;
-  fs::write(&pcts_path, &pcts_content).map_err(|e| format!("Failed to write percentages: {}", e))?;
+  write_if_changed(&pcts_path, &pcts_content, "achievementpercentages", app_id)?;
 
   // Write image_sources.json (separate remote URL metadata)
   let sources_path = cache_dir.join("image_sources.json");
@@ -4132,12 +4165,41 @@ pub fn generate_achievement_schema(
             let achievements_path = cache_dir.join("achievements.json");
             let summary_path = cache_dir.join("summary.json");
             let pcts_path = cache_dir.join("achievementpercentages.json");
-            fs::write(&achievements_path, serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?)
-              .map_err(|e| format!("Failed to write achievements: {}", e))?;
-            fs::write(&summary_path, serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?)
-              .map_err(|e| format!("Failed to write summary: {}", e))?;
-            fs::write(&pcts_path, serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?)
-              .map_err(|e| format!("Failed to write percentages: {}", e))?;
+            // Skip writes if content is identical to what's on disk
+            let ach_content = serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?;
+            let sum_content = serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?;
+            let pcts_content = serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?;
+            fn write_if_changed(path: &std::path::Path, content: &str, label: &str) -> Result<(), String> {
+              if path.exists() {
+                if let Ok(existing) = std::fs::read_to_string(path) {
+                  let normalize = |s: &str| -> String {
+                    if let Some(pos) = s.find("\"updated_at\"") {
+                      let mut result = s.to_string();
+                      if let Some(colon_pos) = result[pos..].find(':') {
+                        let val_start = pos + colon_pos + 1;
+                        let bytes = result.as_bytes();
+                        let mut i = val_start;
+                        while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') { i += 1; }
+                        let num_start = i;
+                        while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+                        if i > num_start {
+                          let replacement = "0".repeat(i - num_start);
+                          result.replace_range(num_start..i, &replacement);
+                        }
+                      }
+                      result
+                    } else {
+                      s.to_string()
+                    }
+                  };
+                  if normalize(&existing) == normalize(content) { return Ok(()); }
+                }
+              }
+              std::fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", label, e))
+            }
+            write_if_changed(&achievements_path, &ach_content, "achievements")?;
+            write_if_changed(&summary_path, &sum_content, "summary")?;
+            write_if_changed(&pcts_path, &pcts_content, "achievementpercentages")?;
             schema_log!("[ACH][SCHEMA_GEN] written {} entries to {} (unlocked={}/{}, progress={})",
               total, cache_dir.display(), unlocked_count, total, progress_available);
           } else {
@@ -4229,12 +4291,40 @@ pub fn generate_achievement_schema(
       let achievements_path = cache_dir.join("achievements.json");
       let summary_path = cache_dir.join("summary.json");
       let pcts_path = cache_dir.join("achievementpercentages.json");
-      fs::write(&achievements_path, serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("Failed to write achievements: {}", e))?;
-      fs::write(&summary_path, serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("Failed to write summary: {}", e))?;
-      fs::write(&pcts_path, serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("Failed to write percentages: {}", e))?;
+      let ach_content = serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?;
+      let sum_content = serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?;
+      let pcts_content = serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?;
+      fn write_if_changed(path: &std::path::Path, content: &str, label: &str) -> Result<(), String> {
+        if path.exists() {
+          if let Ok(existing) = std::fs::read_to_string(path) {
+            let normalize = |s: &str| -> String {
+              if let Some(pos) = s.find("\"updated_at\"") {
+                let mut result = s.to_string();
+                if let Some(colon_pos) = result[pos..].find(':') {
+                  let val_start = pos + colon_pos + 1;
+                  let bytes = result.as_bytes();
+                  let mut i = val_start;
+                  while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') { i += 1; }
+                  let num_start = i;
+                  while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+                  if i > num_start {
+                    let replacement = "0".repeat(i - num_start);
+                    result.replace_range(num_start..i, &replacement);
+                  }
+                }
+                result
+              } else {
+                s.to_string()
+              }
+            };
+            if normalize(&existing) == normalize(content) { return Ok(()); }
+          }
+        }
+        std::fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", label, e))
+      }
+      write_if_changed(&achievements_path, &ach_content, "achievements")?;
+      write_if_changed(&summary_path, &sum_content, "summary")?;
+      write_if_changed(&pcts_path, &pcts_content, "achievementpercentages")?;
       schema_log!("[ACH][SCHEMA_GEN] KV-only: {} entries written to {} (unlocked={}/{}, progress={})",
         total, cache_dir.display(), unlocked_count, total, progress_available);
     } else {

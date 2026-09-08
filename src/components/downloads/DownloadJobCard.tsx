@@ -178,8 +178,13 @@ export default function DownloadJobCard({
   }, [job.gameTitle, job.appId, snapshotGame]);
 
   const displayArtworkUrl = useMemo(() => {
-    if (job.artworkUrl) return job.artworkUrl;
-    if (isSteamInstall) {
+    if (job.artworkUrl) {
+      if (/^[A-Za-z]:\\|^\\\\|^\//.test(job.artworkUrl)) {
+        return localPathToUrl(job.artworkUrl) ?? "";
+      }
+      return job.artworkUrl;
+    }
+    if (isSteamInstall || isDepotDownload) {
       const mediaPath = snapshotGame?.media?.landscapePath || snapshotGame?.media?.coverPath || snapshotGame?.media?.backgroundPath;
       if (mediaPath) {
         const url = localPathToUrl(mediaPath);
@@ -187,7 +192,7 @@ export default function DownloadJobCard({
       }
     }
     return "";
-  }, [job.artworkUrl, job.appId, isSteamInstall, snapshotGame]);
+  }, [job.artworkUrl, job.appId, isSteamInstall, isDepotDownload, snapshotGame]);
 
   const installPath = useMemo(() => {
     if (!isSteamInstall) return null;

@@ -300,6 +300,7 @@ export async function autoDetectAndCreateConfig(
   gameName?: string,
   gameSource?: string, // "steam" | "lua" | "debrid" | "manual" | "epic"
   installDir?: string,
+  exePath?: string,
 ): Promise<AutoDetectResult | null> {
   const appDataDir = await getAppDataDir();
 
@@ -307,7 +308,8 @@ export async function autoDetectAndCreateConfig(
   let effectiveSource = gameSource;
   let effectiveInstallDir = installDir;
   let effectiveName = gameName;
-  if (!effectiveSource || !effectiveInstallDir || !effectiveName) {
+  let effectiveExePath = exePath;
+  if (!effectiveSource || !effectiveInstallDir || !effectiveName || !effectiveExePath) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const game = await invoke<any>("get_game_v2_by_app_id", { appId });
@@ -315,22 +317,24 @@ export async function autoDetectAndCreateConfig(
         if (!effectiveSource) effectiveSource = game.source;
         if (!effectiveInstallDir) effectiveInstallDir = game.installDir;
         if (!effectiveName) effectiveName = game.title;
+        if (!effectiveExePath) effectiveExePath = game.exePath;
       }
     } catch { /* not critical */ }
   }
 
   // Resolve installDir: if it's just a name (not an absolute path), derive from exePath
   if (effectiveInstallDir && !/^[A-Za-z]:\\|^\\\\|^\//.test(effectiveInstallDir)) {
-    // installDir is a relative name — try to derive full path from exePath
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const game = await invoke<any>("get_game_v2_by_app_id", { appId });
-      if (game?.exePath) {
-        // exePath = "E:\GAMES\Dodo Duckie\DoDoDuck.exe" → parent = "E:\GAMES\Dodo Duckie"
-        const parentDir = game.exePath.replace(/[\\/][^\\/]+$/, "");
+    // installDir is a relative name — derive full path from exePath
+    const isAbsoluteExe = effectiveExePath && /^[A-Za-z]:\\|^\\\\|^\//.test(effectiveExePath);
+    if (isAbsoluteExe) {
+      const parentDir = effectiveExePath!.replace(/[\\/][^\\/]+$/, "");
+      if (parentDir) {
+        console.log(`[ACH][CONFIG] resolved installDir from exePath: "${effectiveInstallDir}" → "${parentDir}" (appId=${appId})`);
         effectiveInstallDir = parentDir;
       }
-    } catch { /* not critical */ }
+    } else {
+      console.log(`[ACH][CONFIG] installDir is relative but no exePath available appId=${appId} installDir="${effectiveInstallDir}" exePath="${effectiveExePath ?? "null"}"`);
+    }
   }
 
   // Determine platform based on game source
@@ -423,6 +427,7 @@ export async function getOrCreateConfig(
   gameName?: string,
   gameSource?: string,
   installDir?: string,
+  exePath?: string,
 ): Promise<AchievementGameConfig | null> {
   // If another call is already handling this appId, piggyback on it
   const pending = _pendingCreations.get(appId);
@@ -431,7 +436,7 @@ export async function getOrCreateConfig(
     return pending;
   }
 
-  const promise = _doGetOrCreateConfig(appId, gameName, gameSource, installDir);
+  const promise = _doGetOrCreateConfig(appId, gameName, gameSource, installDir, exePath);
   _pendingCreations.set(appId, promise);
   try {
     return await promise;
@@ -445,6 +450,7 @@ async function _doGetOrCreateConfig(
   gameName?: string,
   gameSource?: string,
   installDir?: string,
+  exePath?: string,
 ): Promise<AchievementGameConfig | null> {
   // 1. Try existing config
   const existing = await readConfig(appId);
@@ -465,7 +471,7 @@ async function _doGetOrCreateConfig(
     }
     if (effectiveSource === "debrid" || effectiveSource === "manual") {
       console.log(`[ACH][CONFIG] stale save_path for cracked game appId=${appId} old=${existing.save_path} re-detecting...`);
-      const result = await autoDetectAndCreateConfig(appId, gameName ?? existing.name, effectiveSource, installDir);
+      const result = await autoDetectAndCreateConfig(appId, gameName ?? existing.name, effectiveSource, installDir, exePath);
       console.log(`[ACH][CONFIG] stale re-detect appId=${appId} newSavePath=${result?.config?.save_path ?? "null"} changed=${result?.config?.save_path !== existing.save_path}`);
       if (result?.config?.save_path && !result.config.save_path.includes("appcache\\stats")) {
         // Save path changed — restart watcher so extraWatchDirMap picks up the new directory
@@ -486,7 +492,7 @@ async function _doGetOrCreateConfig(
   if (existing) return existing;
 
   // 2. Auto-detect and create
-  const result = await autoDetectAndCreateConfig(appId, gameName, gameSource, installDir);
+  const result = await autoDetectAndCreateConfig(appId, gameName, gameSource, installDir, exePath);
 
   // Restart watcher so extraWatchDirMap picks up any new save_path directories
   if (result?.config) {

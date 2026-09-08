@@ -1,5 +1,5 @@
 import { resolveSteamAchievements, numericAppIdHash } from "./steamAchievementsResolver";
-import { checkAchievementLibraryCacheMetadata, readAchievementCache, writeAchievementCache } from "./tauri";
+import { checkAchievementLibraryCacheMetadata, readAchievementCache } from "./tauri";
 import { achievementStore } from "./achievementStore";
 import type { GameAchievementsSummary } from "../types/gameAchievements";
 import {
@@ -21,6 +21,8 @@ export type AutoSyncParams = {
   achievementSchemaPath?: string;
   platform?: "steam-official" | "steam" | "epic-official";
   gameSource?: string;
+  installDir?: string;
+  exePath?: string;
   epicNamespace?: string;
 };
 
@@ -225,14 +227,7 @@ class AchievementAutoSyncService {
       } as GameAchievementsSummary;
       achievementStore.setSummary(appId, summary, this.watchers.get(appId)?.params.platform ?? (cached.summary.source === "crack" ? "steam" : "steam-official"));
       console.log(`[ACH][SUMMARY_APPLY] appid=${appId} unlocked=${newUnlocked}/${newTotal} reason=session-stop-local-cache`);
-      // Phase 4: Persist to disk cache immediately — pass platform to avoid cross-directory write
-      const watchPlatform = this.watchers.get(appId)?.params.platform;
-      try {
-        await writeAchievementCache(numericAppIdHash(appId), cached, false, watchPlatform);
-        console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt} platform=${watchPlatform ?? "none"}`);
-      } catch (writeErr) {
-        console.warn(`[ACH][CACHE_WRITE] failed appid=${appId}`, String(writeErr));
-      }
+      // Disk cache already has this data (we just read it above) — no need to write back
       // Schedule snapshot write
       const { notifyMediaUpdated } = await import("./startupSnapshotService");
       await notifyMediaUpdated(appId, { source: "achievement-refresh" });
@@ -383,6 +378,8 @@ class AchievementAutoSyncService {
         steamPath: params.steamPath,
         platform: params.platform,
         gameSource: params.gameSource,
+        installDir: params.installDir,
+        exePath: params.exePath,
         epicNamespace: params.epicNamespace,
         forceRefresh: true,
         skipImageDownload: true, // Auto-sync should NOT download images — only manual refresh does
