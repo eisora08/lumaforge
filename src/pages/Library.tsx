@@ -222,6 +222,9 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
       if (filter === "installed" && !isSidebarInstalledGame(g)) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;
       if (filter === "epic" && g.source !== "epic") return false;
+      if (filter === "steam" && g.source !== "steam") return false;
+      if (filter === "manual" && g.source !== "manual") return false;
+      if (filter === "debrid" && g.source !== "debrid") return false;
       return true;
     });
 
@@ -237,17 +240,21 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   // ─── Infinite scroll ───────────────────────────────────────────────────────
   const INFINITE_CHUNK = 44;
   const [renderedCount, setRenderedCount] = useState(INFINITE_CHUNK);
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
   // Reset rendered count when filters change
   useEffect(() => {
     setRenderedCount(INFINITE_CHUNK);
   }, [filter, sort, searchQuery, focusAppId]);
 
-  // IntersectionObserver to load more cards
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
+  // Callback ref: attach/detach IntersectionObserver when sentinel mounts/unmounts
+  const sentinelCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    // Clean up previous observer
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (!node) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -260,8 +267,8 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
       },
       { rootMargin: "400px" },
     );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
+    observer.observe(node);
+    observerRef.current = observer;
   }, [filteredGames.length]);
 
   const visibleGames = useMemo(() => {
@@ -973,7 +980,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
 
                     {/* Infinite scroll sentinel */}
                     {renderedCount < filteredGames.length && (
-                      <div ref={sentinelRef} className="flex justify-center py-8">
+                      <div ref={sentinelCallbackRef} className="flex justify-center py-8">
                         <RefreshCcw className="h-5 w-5 animate-spin text-(--color-muted)/40" />
                       </div>
                     )}
@@ -998,8 +1005,8 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
                 query={searchQuery}
                 filteredCount={filteredGames.length}
                 totalCount={displayGames.length}
-                onFilterChange={setFilter}
-                onSortChange={setSort}
+                onFilterChange={(f) => startTransition(() => setFilter(f))}
+                onSortChange={(s) => startTransition(() => setSort(s))}
                 onQueryChange={setSearchQuery}
                 onReset={() => { handleResetFilters(); setFilterPopupOpen(false); }}
               />

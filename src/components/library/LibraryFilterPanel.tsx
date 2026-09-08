@@ -1,7 +1,7 @@
   import { useTranslation } from "react-i18next";
   import { RotateCcw } from "lucide-react";
 
-  export type LibraryFilter = "all" | "lua" | "installed" | "disabled" | "epic";
+  export type LibraryFilter = "all" | "lua" | "installed" | "disabled" | "epic" | "steam" | "manual" | "debrid";
 
   export type LibrarySort = "name" | "size" | "updated";
 
@@ -32,9 +32,12 @@
 
     const statusFilters: { key: LibraryFilter; label: string }[] = [
       { key: "all", label: t("library_page.filter.all", "All") },
+      { key: "steam", label: t("library_page.filter.steam", "Steam") },
       { key: "lua", label: t("library_page.filter.lua", "Lua") },
-      { key: "installed", label: t("library_page.filter.installed", "Installed") },
       { key: "epic", label: t("library_page.filter.epic", "Epic") },
+      { key: "debrid", label: t("library_page.filter.debrid", "Debrid") },
+      { key: "manual", label: t("library_page.filter.manual", "Manual") },
+      { key: "installed", label: t("library_page.filter.installed", "Installed") },
       { key: "disabled", label: t("library_page.filter.disabled", "Disabled") },
     ];
 
