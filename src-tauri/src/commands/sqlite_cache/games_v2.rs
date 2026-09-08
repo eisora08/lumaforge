@@ -161,7 +161,7 @@ pub fn upsert_game_v2_inner(db: &Mutex<Connection>, game: &GameV2) -> Result<(),
             ?46, ?47, ?48, ?49, ?50
         )
         ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
+            title = COALESCE(NULLIF(excluded.title, ''), games_v2.title),
             source = excluded.source,
             app_id = COALESCE(excluded.app_id, games_v2.app_id),
             provider_game_id = COALESCE(excluded.provider_game_id, games_v2.provider_game_id),
@@ -300,7 +300,7 @@ pub fn batch_upsert_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> 
                 ?46, ?47, ?48, ?49, ?50
             )
             ON CONFLICT(id) DO UPDATE SET
-                title = excluded.title,
+                title = COALESCE(NULLIF(excluded.title, ''), games_v2.title),
                 source = excluded.source,
                 app_id = COALESCE(excluded.app_id, games_v2.app_id),
                 provider_game_id = COALESCE(excluded.provider_game_id, games_v2.provider_game_id),

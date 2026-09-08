@@ -9,6 +9,7 @@ export type InstalledGameEntry = {
   installDir: string;
   exePath: string;
   exeName: string;
+  title?: string;
   provider: "steam" | "local" | "lua" | "unknown";
   lastValidated: number;
 };
@@ -136,7 +137,7 @@ async function syncToDb(entry: InstalledGameEntry): Promise<void> {
 
     const game: GameV2 = {
       id: targetId,
-      title: targetExisting?.title || "",
+      title: targetExisting?.title || entry.title || "",
       source: targetExisting?.source || entry.provider,
       appId,
       providerGameId: targetExisting?.providerGameId || appId,
@@ -185,7 +186,7 @@ export async function discoverAndRegister(
     });
     if (win64.length > 0) {
       const best = win64[0];
-      return registerExe(gameId, installDir, best.exe_path, best.file_name, provider);
+      return registerExe(gameId, installDir, best.exe_path, best.file_name, provider, title);
     }
 
     // Priority 2: /bin/ directory
@@ -196,7 +197,7 @@ export async function discoverAndRegister(
     });
     if (bin.length > 0) {
       const best = bin[0];
-      return registerExe(gameId, installDir, best.exe_path, best.file_name, provider);
+      return registerExe(gameId, installDir, best.exe_path, best.file_name, provider, title);
     }
 
     // Priority 3: Title keyword match
@@ -209,7 +210,7 @@ export async function discoverAndRegister(
         );
       });
       if (titleMatch) {
-        return registerExe(gameId, installDir, titleMatch.exe_path, titleMatch.file_name, provider);
+        return registerExe(gameId, installDir, titleMatch.exe_path, titleMatch.file_name, provider, title);
       }
     }
 
@@ -223,12 +224,12 @@ export async function discoverAndRegister(
     });
     if (rootCandidates.length > 0) {
       const best = rootCandidates[0];
-      return registerExe(gameId, installDir, best.exe_path, best.file_name, provider);
+      return registerExe(gameId, installDir, best.exe_path, best.file_name, provider, title);
     }
 
     // Priority 5: Largest file
     const best = candidates[0];
-    return registerExe(gameId, installDir, best.exe_path, best.file_name, provider);
+    return registerExe(gameId, installDir, best.exe_path, best.file_name, provider, title);
   } catch (err) {
     console.warn("[Registry] discoverAndRegister failed", err);
     return null;
@@ -240,13 +241,15 @@ async function registerExe(
   installDir: string,
   exePath: string,
   exeName: string,
-  provider: InstalledGameEntry["provider"]
+  provider: InstalledGameEntry["provider"],
+  title?: string,
 ): Promise<InstalledGameEntry> {
   const entry: InstalledGameEntry = {
     gameId,
     installDir,
     exePath,
     exeName,
+    title,
     provider,
     lastValidated: Date.now(),
   };

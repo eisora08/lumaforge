@@ -854,6 +854,16 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     ls.scanTimeouts = [];
   }, []);
 
+  // Check if Steam client is currently running
+  const isSteamRunning = useCallback(async (): Promise<boolean> => {
+    try {
+      const processes = await listProcesses();
+      return processes.some((p) => p.name?.toLowerCase() === "steam.exe");
+    } catch {
+      return false;
+    }
+  }, []);
+
   // Scan for process after launch
   const scanForProcessAfterLaunch = useCallback(async (
     computedKey: string,
@@ -1131,9 +1141,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
     // Timeout guard — prevents infinite launching
     // Epic needs longer: extended scan runs up to ~55s; use 65s guard
-    // Steam/local: 30s is sufficient (faster launch)
+    // Steam cold-start: initialWait 5s + scans up to 15s = ~35s total; use 45s guard
     const isEpicSource = game.source === "epic";
-    const guardTimeoutMs = isEpicSource ? 65000 : 30000;
+    const guardTimeoutMs = isEpicSource ? 65000 : game.source === "steam" ? 45000 : 30000;
     ls.guardTimer = setTimeout(() => {
       ls.guardTimer = null;
       if (ls.token === token && !ls.cancelled) {
@@ -1239,17 +1249,32 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             ls.launchTimeout = null;
             if (ls.token !== token || ls.cancelled) return;
 
-            await scanForProcessAfterLaunch(computedKey, game, token, 0);
-            if (sessionsRef.current[computedKey]?.state !== "running") {
-              await scanForProcessAfterLaunch(computedKey, game, token, 3000);
-            }
-            if (sessionsRef.current[computedKey]?.state !== "running") {
-              await scanForProcessAfterLaunch(computedKey, game, token, 5000);
+            // Detect if Steam client is running to adjust scan timing
+            const steamOpen = await isSteamRunning();
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] steam client running", { gameKey: computedKey, steamOpen });
             }
 
+            // Cold start: Steam needs time to open + launch game → more scans, longer delays
+            // Already open: Steam just needs to launch game → fewer scans, shorter delays
+            const scanDelays = steamOpen ? [0, 3000, 5000] : [0, 3000, 6000, 10000, 15000];
+            const initialWait = steamOpen ? 2000 : 5000;
+
+            // Wait before first scan (gives Steam time to cold-start)
+            await new Promise<void>((r) => {
+              ls.scanTimeouts.push(setTimeout(r, initialWait));
+            });
+            if (ls.token !== token || ls.cancelled) return;
+
+            for (const delay of scanDelays) {
+              await scanForProcessAfterLaunch(computedKey, game, token, delay);
+              if (sessionsRef.current[computedKey]?.state === "running") break;
+            }
+
+            // Force soft session if still launching after all scans
             if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
               if (ENABLE_VERBOSE_LAUNCH_LOGS) {
-                console.debug("[Launch] no process detected, marking soft session", { gameKey: computedKey });
+                console.debug("[Launch] no process detected, marking soft session", { gameKey: computedKey, steamOpen });
               }
               setSessions((prev) => {
                 const existing = prev[computedKey];
