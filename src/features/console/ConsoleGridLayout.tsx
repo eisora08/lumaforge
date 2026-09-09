@@ -8,6 +8,7 @@ import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession } from "../../context/GameSessionContext";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { getPlatformShortName } from "../../utils/platformUtils";
 import { getConsoleHeroBackground } from "./consoleMedia";
 import { formatBytes, formatRelativeTime, formatPlaytime, getGameCompletionStatus, getGameLastPlayedTimestamp } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
@@ -466,6 +467,11 @@ export default function ConsoleGridLayout({
                   )}
                   {focusedGame.source === "debrid" && focusedGame.repacker && (
                     <span className="rounded-md bg-cyan-500/80 px-2.5 py-0.5 text-xs font-medium text-black">{focusedGame.repacker.toUpperCase()}</span>
+                  )}
+                  {focusedGame.source === "emulator" && (
+                    <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white">
+                      {getPlatformShortName(focusedGame.emulatorPlatform) ? `${getPlatformShortName(focusedGame.emulatorPlatform)} • EMULATOR` : "EMULATOR"}
+                    </span>
                   )}
                 </div>
 

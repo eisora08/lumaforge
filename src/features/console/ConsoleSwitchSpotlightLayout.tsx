@@ -6,6 +6,7 @@ import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { getPlatformShortName } from "../../utils/platformUtils";
 import { getGameAchievementSummary, getGameLastPlayedTimestamp, formatPlaytime, formatRelativeTime } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleTopHud from "./ConsoleTopHud";
@@ -299,7 +300,7 @@ export default function ConsoleSwitchSpotlightLayout({
           }}
         >
           {/* Row 1: Status badges */}
-          {(focusedGame.steamInstalled || focusedGame.isLuaActive || focusedGame.hasUpdate || focusedGame.source === "steam" || focusedGame.source === "epic" || isFav) && (
+          {(focusedGame.steamInstalled || focusedGame.isLuaActive || focusedGame.hasUpdate || focusedGame.source === "steam" || focusedGame.source === "epic" || focusedGame.source === "emulator" || isFav) && (
             <div className="flex flex-wrap justify-end gap-1.5">
               {focusedGame.steamInstalled && (
                 <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[11px] font-medium text-black backdrop-blur-sm">{t("settings.installed", "Installed")}</span>
@@ -315,6 +316,11 @@ export default function ConsoleSwitchSpotlightLayout({
               )}
               {focusedGame.source === "epic" && (
                 <span className="rounded-md bg-purple-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">{t("console_settings.epic", "Epic")}</span>
+              )}
+              {focusedGame.source === "emulator" && (
+                <span className="rounded-md bg-rose-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
+                  {getPlatformShortName(focusedGame.emulatorPlatform) ? `${getPlatformShortName(focusedGame.emulatorPlatform)} • EMULATOR` : "EMULATOR"}
+                </span>
               )}
               {isFav && (
                 <span className="rounded-md bg-rose-500/80 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">{t("console_settings.favorite", "Favorite")}</span>

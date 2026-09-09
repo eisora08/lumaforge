@@ -168,12 +168,15 @@ export async function resolveConsoleDetailsArtwork(
   options?: ConsoleArtworkOptions,
 ): Promise<ConsoleArtwork> {
   const appId = game.appId;
-  if (!appId) return emptyResult();
-
-  const cached = _cache.get(appId);
-  if (cached) return cached.artwork;
-
   const existingMedia = (game as { _consoleMedia?: ConsoleMedia })._consoleMedia;
+
+  // No appId and no pre-resolved media → nothing to resolve
+  if (!appId && !existingMedia) return emptyResult();
+
+  if (appId) {
+    const cached = _cache.get(appId);
+    if (cached) return cached.artwork;
+  }
   const existing: ConsoleArtwork = existingMedia
     ? {
         coverSrc: existingMedia.coverSrc,
@@ -196,8 +199,12 @@ export async function resolveConsoleDetailsArtwork(
   const needsNetwork = !hasLocalArtwork && !hasMetaArtwork;
   if (!needsNetwork) {
     const result = mergeExisting(existing, meta);
-    _cache.set(appId, { artwork: result, ts: Date.now() });
+    if (appId) _cache.set(appId, { artwork: result, ts: Date.now() });
     return result;
+  }
+
+  if (!appId) {
+    return mergeExisting(existing, meta);
   }
 
   const appIdNum = Number(appId);

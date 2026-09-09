@@ -14,6 +14,7 @@ import { useTheme } from "../../context/ThemeContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getFavoriteKey } from "../../services/gameCacheService";
+import { getPlatformShortName } from "../../utils/platformUtils";
 import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { buildStoreMedia } from "../../services/storeMediaService";
@@ -266,9 +267,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game?.appId]);
 
   const mediaBundle = useMemo(() => {
-    if (!game?.appId) return null;
     if (!artwork) return null;
-    return consoleArtworkToBundle(game.appId, artwork);
+    const bundleAppId = game?.appId ?? game?.id;
+    if (!bundleAppId) return null;
+    return consoleArtworkToBundle(bundleAppId, artwork);
   }, [game, artwork]);
 
   /* ══════════════════════════════════════════
@@ -1164,6 +1166,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   )}
                   {game.source === "debrid" && game.repacker && (
                     <span className="rounded bg-cyan-500/80 px-1.5 py-0.5 font-semibold text-black">{game.repacker.toUpperCase()}</span>
+                  )}
+                  {game.source === "emulator" && (
+                    <span className="rounded bg-rose-500/80 px-1.5 py-0.5 font-semibold text-white">
+                      {getPlatformShortName(game.emulatorPlatform) ? `${getPlatformShortName(game.emulatorPlatform)} • EMULATOR` : "EMULATOR"}
+                    </span>
                   )}
                 </div>
               </div>

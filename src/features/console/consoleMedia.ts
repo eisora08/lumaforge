@@ -18,14 +18,10 @@ type ConsoleMediaShape = {
   logoSrc?: string | null;
 };
 
-const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif|bmp|tiff?|avif|svg)(\?.*)?$/i;
-
-function isRawDirectoryPath(p: string | null | undefined): boolean {
+function isValidMediaUrl(p: string | null | undefined): boolean {
   if (!p) return false;
-  if (/^https?:\/\//i.test(p)) return false;
-  if (p.startsWith("asset://") || p.startsWith("data:") || p.startsWith("file://")) return false;
-  if (IMAGE_EXTENSIONS.test(p)) return false;
-  if (/^[a-zA-Z]:[\\/]/.test(p) || p.startsWith("/")) return true;
+  if (/^https?:\/\//i.test(p)) return true;
+  if (p.startsWith("asset://") || p.startsWith("data:") || p.startsWith("file://")) return true;
   return false;
 }
 
@@ -41,7 +37,7 @@ export function getConsoleHeroBackground(game: LibraryGame | null): string | nul
     game.metadata?.header_image,
     game.imageUrl,
   ];
-  return candidates.find(Boolean) ?? null;
+  return candidates.find((c) => isValidMediaUrl(c)) ?? null;
 }
 
 export function getConsoleCardSrc(
@@ -61,8 +57,7 @@ export function getConsoleCardSrc(
       game.metadata?.header_image,
       game.imageUrl,
     ];
-    const result = candidates.find((c) => !!c && !isRawDirectoryPath(c)) ?? null;
-    return result;
+    return candidates.find((c) => isValidMediaUrl(c)) ?? null;
   }
 
   if (variant === "poster") {
@@ -72,8 +67,7 @@ export function getConsoleCardSrc(
       game.metadata?.header_image,
       game.imageUrl,
     ];
-    const result = candidates.find((c) => !!c && !isRawDirectoryPath(c)) ?? null;
-    return result;
+    return candidates.find((c) => isValidMediaUrl(c)) ?? null;
   }
 
   const localLandscape = cm?.landscapeSrc || cm?.backgroundSrc;
@@ -83,8 +77,7 @@ export function getConsoleCardSrc(
     game.metadata?.library_hero_image,
     game.imageUrl,
   ];
-  const result = candidates.find((c) => !!c && !isRawDirectoryPath(c)) ?? null;
-  return result;
+  return candidates.find((c) => isValidMediaUrl(c)) ?? null;
 }
 
 export function getConsoleLogoSrc(game: LibraryGame | null): string | null {
@@ -97,5 +90,5 @@ export function getConsoleLogoSrc(game: LibraryGame | null): string | null {
     game.metadata?.logo_image,
     game.metadata?.library_logo_image,
   ];
-  return candidates.find(Boolean) ?? null;
+  return candidates.find((c) => isValidMediaUrl(c)) ?? null;
 }

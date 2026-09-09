@@ -195,6 +195,24 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
             const meta: ConsoleMeta = { resolved: true, resolvedAt };
             return { key: g.id, media, meta };
           }
+          // Emulator games (no appId): resolve provider-relative media paths directly
+          if (g.source === "emulator") {
+            const [coverSrc, landscapeSrc, backgroundSrc, logoSrc] = await Promise.all([
+              g.coverPath ? resolveProviderMediaPreviewUrl(g.coverPath) : Promise.resolve(null),
+              g.landscapePath ? resolveProviderMediaPreviewUrl(g.landscapePath) : Promise.resolve(null),
+              g.backgroundPath ? resolveProviderMediaPreviewUrl(g.backgroundPath) : Promise.resolve(null),
+              g.logoPath ? resolveProviderMediaPreviewUrl(g.logoPath) : Promise.resolve(null),
+            ]);
+            const media: ConsoleMedia = {
+              coverSrc,
+              landscapeSrc,
+              backgroundSrc,
+              logoSrc,
+              heroSrc: backgroundSrc || landscapeSrc || coverSrc,
+            };
+            const meta: ConsoleMeta = { resolved: true, resolvedAt };
+            return { key: g.id, media, meta };
+          }
           return { key: g.id, media: undefined, meta: undefined };
         }),
       );
@@ -210,17 +228,22 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
         }
       }
 
-      setEnriched(
-        currentGames.map((g) => {
+      setEnriched((prev) => {
+        const prevMediaMap = new Map<string, ConsoleMedia>();
+        for (const g of prev) {
+          const cm = (g as { _consoleMedia?: ConsoleMedia })._consoleMedia;
+          if (cm) prevMediaMap.set(g.appId || g.id, cm);
+        }
+        return currentGames.map((g) => {
           const out: ConsoleLibraryGame = { ...g } as ConsoleLibraryGame;
           const key = g.appId || g.id;
-          const m = mediaMap.get(key);
+          const m = mediaMap.get(key) ?? prevMediaMap.get(key);
           if (m) out._consoleMedia = m;
           const mt = metaMap.get(key);
           if (mt) out._consoleMeta = mt;
           return out;
-        }),
-      );
+        });
+      });
 
       if (DEBUG_EPIC_CONSOLE_MEDIA) {
         for (const g of currentGames) {

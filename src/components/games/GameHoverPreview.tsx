@@ -110,9 +110,30 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
     return null;
   }, [game.id, game.appId, game.libraryId, game.source, game.steamPlaytimeMinutes, game.localPlaytimeMinutes, game.steamLastPlayedAt, game.localLastPlayedAt]);
 
-  // Cover image for fallback — skip unresolved relative paths
+  // Cover image for fallback — resolve relative paths via provider media
   const coverRaw = game.coverPath || game.imageUrl || "";
-  const coverSrc = (coverRaw.startsWith("media/") || coverRaw.startsWith("img/") || coverRaw.startsWith("games/")) ? "" : coverRaw;
+  const isRelativePath = coverRaw.startsWith("media/") || coverRaw.startsWith("img/") || coverRaw.startsWith("games/");
+  const [resolvedCoverSrc, setResolvedCoverSrc] = useState<string>("");
+
+  useEffect(() => {
+    if (!isRelativePath) {
+      setResolvedCoverSrc(coverRaw);
+      return;
+    }
+    if (!coverRaw) {
+      setResolvedCoverSrc("");
+      return;
+    }
+    let cancelled = false;
+    import("../../services/gameCacheService").then(({ resolveProviderMediaPreviewUrl }) => {
+      resolveProviderMediaPreviewUrl(coverRaw).then((url) => {
+        if (!cancelled) setResolvedCoverSrc(url ?? "");
+      });
+    });
+    return () => { cancelled = true; };
+  }, [coverRaw, isRelativePath]);
+
+  const coverSrc = isRelativePath ? resolvedCoverSrc : coverRaw;
 
   // Position: right of card, clamp to viewport
   const style = useMemo(() => {

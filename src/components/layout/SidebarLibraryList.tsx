@@ -472,6 +472,60 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     };
   }, [filtered]);
 
+  // Resolve sidebar media for Emulator games (no appId — use coverPath/landscapePath from emulator store)
+  const emulatorMediaLoading = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const emulatorGames = filtered.filter((g) => !g.appId && g.source === "emulator");
+    if (emulatorGames.length === 0) return;
+    const unloaded = emulatorGames.filter((g) => {
+      if (emulatorMediaLoading.current.has(g.id)) return false;
+      return sidebarMediaMap[g.id] === undefined;
+    });
+    if (unloaded.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        unloaded.map(async (g) => {
+          emulatorMediaLoading.current.add(g.id);
+
+          const iconLocal = g.iconPath ?? undefined;
+          const coverLocal = g.coverPath ?? g.imageUrl ?? undefined;
+          const landscapeLocal = g.landscapePath ?? undefined;
+          const backgroundLocal = g.backgroundPath ?? undefined;
+
+          const [resolvedIcon, resolvedCover, resolvedLandscape, resolvedBackground] = await Promise.all([
+            iconLocal ? resolveProviderMediaPreviewUrl(iconLocal).catch(() => null) : Promise.resolve(null),
+            coverLocal ? resolveProviderMediaPreviewUrl(coverLocal).catch(() => null) : Promise.resolve(null),
+            landscapeLocal ? resolveProviderMediaPreviewUrl(landscapeLocal).catch(() => null) : Promise.resolve(null),
+            backgroundLocal ? resolveProviderMediaPreviewUrl(backgroundLocal).catch(() => null) : Promise.resolve(null),
+          ]);
+
+          const media: ResolvedSidebarMedia = {
+            icon: resolvedIcon ? { src: resolvedIcon, localPath: iconLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            cover: resolvedCover ? { src: resolvedCover, localPath: coverLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            landscape: resolvedLandscape ? { src: resolvedLandscape, localPath: landscapeLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            background: resolvedBackground ? { src: resolvedBackground, localPath: backgroundLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            logo: { src: null, localPath: null, exists: false },
+          };
+
+          return [g.id, media] as const;
+        })
+      );
+      if (cancelled) return;
+      setSidebarMediaMap((prev) => {
+        const next = { ...prev };
+        for (const [id, media] of results) next[id] = media;
+        return next;
+      });
+      for (const g of unloaded) emulatorMediaLoading.current.delete(g.id);
+    })();
+    return () => {
+      cancelled = true;
+      for (const g of unloaded) emulatorMediaLoading.current.delete(g.id);
+    };
+  }, [filtered]);
+
   // High-priority media resolution for visible games with missing thumbnails
   // useEffect(() => {
   //   const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];

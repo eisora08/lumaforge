@@ -4,6 +4,7 @@ import type { LibraryGame } from "../../types/libraryGame";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleCardSrc } from "./consoleMedia";
 import { getFavoriteKey } from "../../services/gameCacheService";
+import { getPlatformShortName } from "../../utils/platformUtils";
 
 type Props = {
   game: LibraryGame;
@@ -75,6 +76,9 @@ function ConsoleGameCardRaw({ game, isFocused, isRunning, onClick, compact, vari
             src={src}
             alt={game.title}
             className="h-full w-full object-cover"
+            onLoad={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "";
+            }}
             onError={(e) => {
               (e.currentTarget as HTMLImageElement).style.display = "none";
             }}
@@ -129,6 +133,28 @@ function ConsoleGameCardRaw({ game, isFocused, isRunning, onClick, compact, vari
               Update
             </span>
           )}
+          {(() => {
+            const emulatorPlatformLabel = game.source === "emulator" ? getPlatformShortName(game.emulatorPlatform) : null;
+            const srcBadge = game.hasLua
+              ? { label: "LUA", cls: "bg-emerald-500/80" }
+              : game.source === "steam" && !game.hasLua
+                ? { label: "STEAM", cls: "bg-blue-500/80" }
+                : game.source === "epic"
+                  ? { label: "EPIC", cls: "bg-purple-500/80" }
+                  : game.source === "debrid"
+                    ? { label: "DEBRID", cls: "bg-cyan-500/80" }
+                    : game.source === "manual"
+                      ? { label: "MANUAL", cls: "bg-sky-500/80" }
+                      : game.source === "emulator"
+                        ? { label: emulatorPlatformLabel ? `${emulatorPlatformLabel} • EMULATOR` : "EMULATOR", cls: "bg-rose-500/80" }
+                        : null;
+            if (!srcBadge) return null;
+            return (
+              <span className={`rounded-md ${srcBadge.cls} px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm`}>
+                {srcBadge.label}
+              </span>
+            );
+          })()}
         </div>
 
         {/* Title gradient overlay for landscape variant — hidden with noTitle */}
