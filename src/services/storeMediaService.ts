@@ -96,7 +96,9 @@ function deduplicateMedia(items: StoreMediaItem[]): StoreMediaItem[] {
 function buildScreenshots(meta: SteamAppMetadata): StoreScreenshotMedia[] {
   const screenshots = meta.screenshots ?? [];
   return screenshots.map((url, idx) => {
-    const thumbnail = url.replace(/\/[^/]+\.jpg$/, "/") + `${url.match(/ss_[\da-f]+/)?.[0] || idx}_thumb.jpg`;
+    const thumbnail = url.includes("images.igdb.com")
+      ? url.replace("/t_screenshot_big/", "/t_thumb/")
+      : url.replace(/\/[^/]+\.jpg$/, "/") + `${url.match(/ss_[\da-f]+/)?.[0] || idx}_thumb.jpg`;
     return {
       type: "screenshot",
       id: `ss-${idx}`,

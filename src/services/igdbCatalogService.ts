@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { StoreCatalogGame } from "./storeCatalogProvider";
-import { getIgdbAccessToken } from "./igdbAccessTokenService";
+import { getIgdbAccessToken, resolveIgdbCredentials } from "./igdbAccessTokenService";
 import { igdbQueryCatalog, type IgdbCatalogGame } from "./tauri";
 
 const DEBUG_STORE_CATALOG = false;
@@ -198,14 +198,15 @@ export async function fetchIgdbCatalogSections(
   clientId: string,
   clientSecret: string,
 ): Promise<Map<string, StoreCatalogGame[]>> {
-  if (!clientId || !clientSecret) return new Map();
+  const creds = resolveIgdbCredentials(clientId, clientSecret);
+  if (!creds.clientId || !creds.clientSecret) return new Map();
 
   let accessToken: string;
   try {
     if (DEBUG_STORE_CATALOG) {
       console.log(`[STORE_CATALOG][IGDB_QUERY_START] sectionId=token queryName=acquire-token`);
     }
-    accessToken = await getIgdbAccessToken(clientId, clientSecret);
+    accessToken = await getIgdbAccessToken(creds.clientId, creds.clientSecret);
     if (DEBUG_STORE_CATALOG) {
       console.log(`[STORE_CATALOG][IGDB_QUERY_RESULT] sectionId=token rawCount=1 mappedCount=1 firstTitles=[token-ok]`);
     }
@@ -218,7 +219,7 @@ export async function fetchIgdbCatalogSections(
 
   const sections = buildIgdbSectionQueries();
   const results = await Promise.allSettled(
-    sections.map((sec) => fetchIgdbSection(clientId, accessToken, sec)),
+    sections.map((sec) => fetchIgdbSection(creds.clientId, accessToken, sec)),
   );
 
   const map = new Map<string, StoreCatalogGame[]>();

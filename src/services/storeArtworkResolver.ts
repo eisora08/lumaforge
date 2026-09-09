@@ -1,6 +1,6 @@
 import { resolveSteamGridDbArtwork, igdbSearchBySteamAppId, igdbSearchGamesByName, readStoreSgdbArtworkCache, writeStoreSgdbArtworkCache } from "./tauri";
 import type { SteamGridDbArtwork } from "../types/steamGridDb";
-import { getIgdbAccessToken } from "./igdbAccessTokenService";
+import { getIgdbAccessToken, resolveIgdbCredentials } from "./igdbAccessTokenService";
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILURE_TTL_MS = 60 * 60 * 1000;
@@ -244,16 +244,17 @@ const _igdbInFlight = new Set<string>();
 export async function fetchIgdbArtworkDeduped(
   options: FetchIgdbArtworkOptions,
 ): Promise<IgdbArtworkData> {
-  if (!options.clientId || !options.clientSecret) return {};
+  const creds = resolveIgdbCredentials(options.clientId, options.clientSecret);
+  if (!creds.clientId || !creds.clientSecret) return {};
 
   const key = `igdb::${options.appId}::*`;
   if (_igdbInFlight.has(key)) return {};
 
   _igdbInFlight.add(key);
   try {
-    const accessToken = await getIgdbAccessToken(options.clientId, options.clientSecret);
+    const accessToken = await getIgdbAccessToken(creds.clientId, creds.clientSecret);
     const result = await igdbSearchBySteamAppId(
-      options.clientId,
+      creds.clientId,
       accessToken,
       options.appId,
     );
@@ -285,11 +286,13 @@ export interface IgdbMetadataByNameResult {
   publishers?: string[];
   coverUrl?: string;
   screenshotUrls?: string[];
+  videoUrls?: { name?: string; videoId: string }[];
+  rating?: number;
 }
 
 const _igdbNameInFlight = new Set<string>();
 
-const DEBUG_MANUAL_META = false;
+const DEBUG_MANUAL_META = true;
 
 /**
  * Search IGDB by game name and return metadata + artwork URLs.
@@ -305,8 +308,14 @@ export async function fetchIgdbMetadataByName(
   clientSecret: string,
   gameName: string,
 ): Promise<IgdbMetadataByNameResult | null> {
-  if (!clientId || !clientSecret || !gameName.trim()) {
-    if (DEBUG_MANUAL_META) console.log(`[IGDB_NAME] early return: clientId=${!!clientId} clientSecret=${!!clientSecret} gameName="${gameName.trim()}"`);
+  if (!gameName.trim()) {
+    if (DEBUG_MANUAL_META) console.log(`[IGDB_NAME] early return: empty gameName`);
+    return null;
+  }
+
+  const creds = resolveIgdbCredentials(clientId, clientSecret);
+  if (!creds.clientId || !creds.clientSecret) {
+    console.error("[IGDB_NAME] no credentials available after fallback resolution");
     return null;
   }
 
@@ -319,11 +328,11 @@ export async function fetchIgdbMetadataByName(
   _igdbNameInFlight.add(key);
   try {
     if (DEBUG_MANUAL_META) console.log(`[IGDB_NAME] exchanging client credentials for access token...`);
-    const accessToken = await getIgdbAccessToken(clientId, clientSecret);
+    const accessToken = await getIgdbAccessToken(creds.clientId, creds.clientSecret);
 
     if (DEBUG_MANUAL_META) console.log(`[IGDB_NAME] calling igdbSearchGamesByName("${gameName}", 3)...`);
     const results = await igdbSearchGamesByName(
-      clientId,
+      creds.clientId,
       accessToken,
       gameName,
       3,
@@ -345,16 +354,23 @@ export async function fetchIgdbMetadataByName(
       publishers: game.publishers?.length ? game.publishers : undefined,
       coverUrl: game.cover_url ?? undefined,
       screenshotUrls: game.screenshot_urls?.length ? game.screenshot_urls : undefined,
+      videoUrls: game.video_urls?.length ? game.video_urls.map(v => ({ name: v.name ?? undefined, videoId: v.video_id })) : undefined,
+      rating: game.rating ?? undefined,
     };
     if (DEBUG_MANUAL_META) console.log(`[IGDB_NAME] mapped result:`, mapped);
     return mapped;
   } catch (e) {
-    if (DEBUG_MANUAL_META) console.error("[IGDB_NAME] error:", e);
+    console.error("[IGDB_NAME] RAW ERROR:", e, "type:", typeof e, "constructor:", e?.constructor?.name);
     // Re-throw user-friendly auth errors (strings from getIgdbAccessToken)
     // so the caller (GameEditDialog) can show the correct toast.
     // Silently swallow transient IGDB API errors (return null).
     if (typeof e === "string" && (e.includes("authenticate") || e.includes("credentials"))) {
       throw e;
+    }
+    // Also check if it's an InvokeError with a message property containing auth keywords
+    const msg = String(e);
+    if (msg.includes("authenticate") || msg.includes("credentials")) {
+      throw msg;
     }
     return null;
   } finally {

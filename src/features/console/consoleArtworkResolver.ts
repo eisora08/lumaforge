@@ -252,12 +252,12 @@ export async function resolveConsoleDetailsArtwork(
   }
 
   /* ── Tier 3: IGDB (cover + background) ── */
-  if (options?.useIgdb !== false && options?.igdbClientId && options?.igdbClientSecret) {
+  if (options?.useIgdb !== false) {
     if (!current.coverSrc || !current.backgroundSrc) {
       try {
         const igdbData = await fetchIgdbArtworkDeduped({
-          clientId: options.igdbClientId,
-          clientSecret: options.igdbClientSecret ?? "",
+          clientId: options?.igdbClientId ?? "",
+          clientSecret: options?.igdbClientSecret ?? "",
           appId,
         });
         if (igdbData?.igdbCoverUrl || igdbData?.igdbArtworkUrl) {

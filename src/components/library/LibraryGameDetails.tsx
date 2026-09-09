@@ -301,6 +301,7 @@ export default function LibraryGameDetails({
   const [showStickyBar, setShowStickyBar] = useState(false);
   const isManualGame = game.source === "manual";
   const isEpicGame = game.source === "epic";
+  const isEmulatorGame = game.source === "emulator";
   // Epic games always support achievements via Epic API — override snapshot value
   const achievementsSupported = game.achievementsSupported || isEpicGame;
   const linkedSteamAppId = isManualGame ? ((localDetailsData as any)?.linkedSteamAppId ?? null) : null;
@@ -2051,8 +2052,8 @@ export default function LibraryGameDetails({
                 </p>
               )}
 
-              {/* Updates — Steam news only (hidden for manual without appId and epic games) */}
-              {(!isManualGame || !!appIdStr) && !isEpicGame && (
+              {/* Updates — Steam news only (hidden for manual without appId, epic, and emulator games) */}
+              {(!isManualGame || !!appIdStr) && !isEpicGame && !isEmulatorGame && (
                 <section>
                   <h2 className="mb-3 text-base font-bold text-(--color-text)">
                     <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
@@ -2132,7 +2133,7 @@ export default function LibraryGameDetails({
 
             {/* Right: Side panel */}
             <aside className="mt-8 lg:mt-0">
-              {(!isManualGame || linkedSteamAppId || !!appIdStr) && (!isEpicGame || linkedSteamAppId) && (
+              {(!isManualGame || linkedSteamAppId || !!appIdStr) && (!isEpicGame || linkedSteamAppId) && !isEmulatorGame && (
                 <div className="space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                   <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                     {isManualGame ? t("library_details.steamLinks") : t("library_details.links")}

@@ -221,6 +221,10 @@ export type EmulatorGameEntry = {
   publishers?: string[];
   releaseDate?: string;
   description?: string;
+  /** IGDB screenshots (persisted via provider_metadata). */
+  screenshots?: string[];
+  /** IGDB trailers/movies (persisted via provider_metadata). */
+  movies?: import("../../types/gameMetadata").SteamMovie[];
   /** User flags */
   isFavorite?: boolean;
   /** Timestamps */

@@ -128,11 +128,16 @@ export function writeEpicOverrides(
 ): EpicOverrideData {
   const all = loadAllFromStorage();
   const existing = all[providerGameId] ?? {};
+  // Filter out undefined values to avoid overwriting existing data with undefined
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) cleaned[key] = value;
+  }
   const merged: EpicOverrideData = {
     ...existing,
-    ...data,
+    ...cleaned,
     updatedAt: Date.now(),
-  };
+  } as EpicOverrideData;
   all[providerGameId] = merged;
   persistAllToStorage(all);
   notifyOverrideChanged(providerGameId);

@@ -418,6 +418,26 @@ export default function GameEditDialog({
         loadDraftsFromManualEntry(entry);
         setAppIdDraft(entry.appId ?? "");
         resolvedAppId = entry.appId ?? "";
+        // Load IGDB screenshots/movies from persisted store
+        if (entry.screenshots?.length || entry.movies?.length) {
+          setMetadata({
+            app_id: 0,
+            name: entry.name ?? "",
+            screenshots: entry.screenshots ?? [],
+            movies: (entry.movies as any[]) ?? [],
+            genres: entry.genres ?? [],
+            publishers: entry.publishers ?? [],
+            developer: entry.developers?.join(", ") ?? null,
+            release_date: entry.releaseDate ?? null,
+            short_description: entry.description ?? null,
+            platforms: [],
+            languages: [],
+            dlc_count: 0,
+            categories: [],
+            dlc_app_ids: [],
+            resolved: true,
+          });
+        }
       }
       // Manual WITHOUT appId → standalone (no Steam data)
       if (!resolvedAppId) {
@@ -508,6 +528,26 @@ export default function GameEditDialog({
           setGenresDraft(emulatorGame.genres?.join(", ") ?? "");
           setDescriptionDraft(emulatorGame.description ?? "");
           setReleaseDateDraft(emulatorGame.releaseDate ?? "");
+          // Load IGDB screenshots/movies from persisted store
+          if (emulatorGame.screenshots?.length || emulatorGame.movies?.length) {
+            setMetadata({
+              app_id: 0,
+              name: emulatorGame.title ?? "",
+              screenshots: emulatorGame.screenshots ?? [],
+              movies: (emulatorGame.movies as any[]) ?? [],
+              genres: emulatorGame.genres ?? [],
+              publishers: emulatorGame.publishers ?? [],
+              developer: emulatorGame.developers?.join(", ") ?? null,
+              release_date: emulatorGame.releaseDate ?? null,
+              short_description: emulatorGame.description ?? null,
+              platforms: [],
+              languages: [],
+              dlc_count: 0,
+              categories: [],
+              dlc_app_ids: [],
+              resolved: true,
+            });
+          }
         }
       }).finally(() => {
         setLoading(false);
@@ -621,6 +661,31 @@ export default function GameEditDialog({
             if (result.publishers?.length) setPublishersDraft(result.publishers.join(", "));
             if (result.releaseDate) setReleaseDateDraft(result.releaseDate);
             if (result.summary) setDescriptionDraft(result.summary);
+            // Build metadata with screenshots + trailers from IGDB for Media tab
+            const igdbMovies = result.videoUrls?.map((v, idx) => ({
+              id: idx,
+              name: v.name ?? "Trailer",
+              thumbnail: null,
+              mp4_max: `https://www.youtube.com/embed/${v.videoId}`,
+              highlight: idx === 0,
+            })) ?? [];
+            setMetadata({
+              app_id: 0,
+              name: result.name ?? searchName,
+              screenshots: result.screenshotUrls ?? [],
+              movies: igdbMovies,
+              genres: result.genres ?? [],
+              publishers: result.publishers ?? [],
+              developer: result.developers?.join(", ") ?? null,
+              release_date: result.releaseDate ?? null,
+              short_description: result.summary ?? null,
+              platforms: [],
+              languages: [],
+              dlc_count: 0,
+              categories: [],
+              dlc_app_ids: [],
+              resolved: true,
+            });
             setHasEdits(true);
             if (result.coverUrl) {
               showSuccess(t("game_edit.found_on_igdb", `Found "{{name}}" on IGDB — metadata filled. Use Media tab to add artwork.`, { name: result.name ?? searchName }));
@@ -719,6 +784,31 @@ export default function GameEditDialog({
             if (result.publishers?.length) setPublishersDraft(result.publishers.join(", "));
             if (result.releaseDate) setReleaseDateDraft(result.releaseDate);
             if (result.summary) setDescriptionDraft(result.summary);
+            // Build metadata with screenshots + trailers from IGDB for Media tab
+            const igdbMovies = result.videoUrls?.map((v, idx) => ({
+              id: idx,
+              name: v.name ?? "Trailer",
+              thumbnail: null,
+              mp4_max: `https://www.youtube.com/embed/${v.videoId}`,
+              highlight: idx === 0,
+            })) ?? [];
+            setMetadata({
+              app_id: 0,
+              name: result.name ?? searchName,
+              screenshots: result.screenshotUrls ?? [],
+              movies: igdbMovies,
+              genres: result.genres ?? [],
+              publishers: result.publishers ?? [],
+              developer: result.developers?.join(", ") ?? null,
+              release_date: result.releaseDate ?? null,
+              short_description: result.summary ?? null,
+              platforms: [],
+              languages: [],
+              dlc_count: 0,
+              categories: [],
+              dlc_app_ids: [],
+              resolved: true,
+            });
             setHasEdits(true);
             showSuccess(`Found "${result.name ?? searchName}" on IGDB — metadata filled. Use Media tab to add artwork.`);
           } else {
@@ -782,6 +872,31 @@ export default function GameEditDialog({
             if (result.publishers?.length) setPublishersDraft(result.publishers.join(", "));
             if (result.releaseDate) setReleaseDateDraft(result.releaseDate);
             if (result.summary) setDescriptionDraft(result.summary);
+            // Build metadata with screenshots + trailers from IGDB for Media tab
+            const igdbMovies = result.videoUrls?.map((v, idx) => ({
+              id: idx,
+              name: v.name ?? "Trailer",
+              thumbnail: null,
+              mp4_max: `https://www.youtube.com/embed/${v.videoId}`,
+              highlight: idx === 0,
+            })) ?? [];
+            setMetadata({
+              app_id: 0,
+              name: result.name ?? searchName,
+              screenshots: result.screenshotUrls ?? [],
+              movies: igdbMovies,
+              genres: result.genres ?? [],
+              publishers: result.publishers ?? [],
+              developer: result.developers?.join(", ") ?? null,
+              release_date: result.releaseDate ?? null,
+              short_description: result.summary ?? null,
+              platforms: [],
+              languages: [],
+              dlc_count: 0,
+              categories: [],
+              dlc_app_ids: [],
+              resolved: true,
+            });
             setHasEdits(true);
             showSuccess(`Found "${result.name ?? searchName}" on IGDB — metadata filled. Use Media tab to add artwork.`);
           } else {
@@ -1041,6 +1156,8 @@ export default function GameEditDialog({
           backgroundPath: freshMediaEntry?.backgroundPath,
           logoPath: freshMediaEntry?.logoPath,
           iconPath: freshMediaEntry?.iconPath,
+          screenshots: metadata?.screenshots,
+          movies: metadata?.movies,
         };
 
         if (createdManualId || (manualGameId && !isCreateMode)) {
@@ -1121,6 +1238,8 @@ export default function GameEditDialog({
             installDir: patch.installDir,
             linkedIgdbId: patch.linkedIgdbId,
             appId: patch.appId,
+            screenshots: metadata?.screenshots,
+            movies: metadata?.movies,
             // Preserve media paths from store (already in patch from freshMediaEntry)
             coverPath: patch.coverPath,
             landscapePath: patch.landscapePath,
@@ -1174,6 +1293,8 @@ export default function GameEditDialog({
           series: seriesDraft || undefined,
           ageRating: ageRatingDraft || undefined,
           region: regionDraft || undefined,
+          screenshots: metadata?.screenshots,
+          movies: metadata?.movies,
         });
 
         // Title update is handled by the epicOverrideStore → epicGameStore subscription chain.
@@ -1261,6 +1382,22 @@ export default function GameEditDialog({
             genres: genresDraft ? genresDraft.split(",").map((s) => s.trim()).filter(Boolean) : existing.genres,
             description: descriptionDraft || existing.description,
             releaseDate: releaseDateDraft || existing.releaseDate,
+            screenshots: metadata?.screenshots,
+            movies: metadata?.movies,
+          });
+          // Update context state so LibraryGameDetails/ConsoleMode refresh immediately
+          const metaPatch: Record<string, unknown> = {};
+          if (nameDraft) metaPatch.name = nameDraft;
+          if (descriptionDraft) { metaPatch.short_description = descriptionDraft; metaPatch.about_the_game = descriptionDraft; }
+          if (genresDraft) metaPatch.genres = genresDraft.split(",").map((s) => s.trim()).filter(Boolean);
+          if (releaseDateDraft) metaPatch.release_date = releaseDateDraft;
+          if (developersDraft) metaPatch.developer = developersDraft;
+          if (publishersDraft) metaPatch.publishers = publishersDraft.split(",").map((s) => s.trim()).filter(Boolean);
+          if (metadata) metaPatch.screenshots = metadata.screenshots;
+          if (metadata?.movies) metaPatch.movies = metadata.movies;
+          updateGame(emulatorProviderGameId, {
+            title: nameDraft || existing.title,
+            metadata: { ...(game?.metadata ?? {}), ...metaPatch } as any,
           });
           showSuccess(t("game_edit.save_success", "Game details saved"));
         } else {
@@ -1320,7 +1457,7 @@ export default function GameEditDialog({
       showError(t("game_edit.save_failed", "Failed to save game details"));
     }
     setSaving(false);
-  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, game, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged]);
+  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, game, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged, metadata]);
 
   // ── Track edits ──
   useEffect(() => {
@@ -3043,7 +3180,9 @@ export default function GameEditDialog({
             </p>
             <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
               {metadata.screenshots!.map((url, i) => {
-                const thumbUrl = url.replace(/\.(jpg|png|webp)$/, "_thumb.$1");
+                const thumbUrl = url.includes("images.igdb.com")
+                  ? url.replace("/t_screenshot_big/", "/t_thumb/")
+                  : url.replace(/\.(jpg|png|webp)$/, "_thumb.$1");
                 return (
                   <a
                     key={i}
@@ -3111,17 +3250,21 @@ export default function GameEditDialog({
                         {movie.name}
                       </p>
                       <p className="mt-0.5 text-[10px] text-(--color-muted)/60">
-                        Formats: {formats || "N/A"}
+                        {movie.mp4_max?.includes("youtube.com")
+                          ? "YouTube"
+                          : formats || "N/A"}
                       </p>
                       {hasMp4 && (
                         <a
-                          href={movie.mp4_max!}
+                          href={movie.mp4_max!.includes("youtube.com")
+                            ? `https://www.youtube.com/watch?v=${movie.mp4_max!.split("/embed/")[1]}`
+                            : movie.mp4_max!}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="mt-1 inline-flex items-center gap-1 text-[10px] text-(--color-accent) hover:underline"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          Open MP4
+                          {movie.mp4_max?.includes("youtube.com") ? "Watch on YouTube" : "Open MP4"}
                         </a>
                       )}
                       {!hasMp4 && hasStream && (

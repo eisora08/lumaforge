@@ -762,6 +762,8 @@ export async function refreshOwnedGames(): Promise<{
             features: Array.isArray(meta.features) ? meta.features as string[] : undefined,
             shortDescription: (meta.short_description as string) ?? undefined,
             releaseDate: (meta.release_date as string) ?? undefined,
+            screenshots: Array.isArray(meta.screenshots) ? meta.screenshots as string[] : undefined,
+            movies: Array.isArray(meta.movies) ? meta.movies : undefined,
             playtimeMinutes: g.steamPlaytimeMinutes,
             lastPlayedSeconds: g.steamLastPlayedAt,
             isInstalled: g.isInstalled,
@@ -785,7 +787,9 @@ export async function refreshOwnedGames(): Promise<{
     // Fire-and-forget: fetch artwork + metadata (and correct titles) for games.
     // Runs for both owned and installed games. Corrected titles and artwork are
     // persisted to the override store + SQLite so next boot has full data instantly.
-    enrichEpicGamesFromCatalog([...ownedMapped, ..._epicGames]).catch((err) =>
+    // Use _ownedGames (with overrides applied) instead of raw ownedMapped to prevent
+    // applySteamMetadataToEpicGame from overwriting user IGDB data.
+    enrichEpicGamesFromCatalog([..._ownedGames, ..._epicGames]).catch((err) =>
       console.warn("[EPIC_STORE] metadata fetch batch failed:", err),
     );
 
@@ -939,6 +943,9 @@ async function persistEpicGamesToSqlite(games: LibraryGame[]): Promise<void> {
           features: Array.isArray(meta.features) ? meta.features as string[] : undefined,
           shortDescription: (meta.short_description as string) ?? undefined,
           releaseDate: (meta.release_date as string) ?? undefined,
+          // Screenshots / Movies (IGDB)
+          screenshots: Array.isArray(meta.screenshots) ? meta.screenshots as string[] : undefined,
+          movies: Array.isArray(meta.movies) ? meta.movies : undefined,
           // Playtime
           playtimeMinutes: g.steamPlaytimeMinutes,
           lastPlayedSeconds: g.steamLastPlayedAt,
@@ -1031,6 +1038,9 @@ function _applyEpicOverridesUpdateInner(providerGameId: string): void {
       );
     }
 
+    // Re-persist to games_v2 so screenshots/movies survive app restart
+    persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
+
     notifyListeners();
     return;
   }
@@ -1057,4 +1067,7 @@ function _applyEpicOverridesUpdateInner(providerGameId: string): void {
   // Always notify — metadata changes (description, genres, etc.) may not
   // affect the fingerprint but still need UI re-render
   notifyListeners();
+
+  // Re-persist to games_v2 so screenshots/movies survive app restart
+  persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
 }

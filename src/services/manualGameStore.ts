@@ -1,5 +1,7 @@
 // ─── Types ──────────────────────────────────────────────────────────────
 
+import type { SteamMovie } from "../types/gameMetadata";
+
 export type ManualGameEntry = {
   id: string;
   name: string;
@@ -44,6 +46,11 @@ export type ManualGameEntry = {
 
   /** Steam appId for metadata resolution in GameDetails. */
   appId?: string;
+
+  /** IGDB screenshots (persisted via provider_metadata). */
+  screenshots?: string[];
+  /** IGDB trailers/movies (persisted via provider_metadata). */
+  movies?: SteamMovie[];
 
   sizeOnDisk?: number;
   isFavorite?: boolean;
@@ -122,7 +129,9 @@ export function manualGameEntryToGameV2(entry: ManualGameEntry): GameV2 {
     region: entry.region,
     completionStatus: entry.completionStatus,
 
-    providerMetadata: undefined,
+    providerMetadata: (entry.screenshots?.length || entry.movies?.length)
+      ? JSON.stringify({ screenshots: entry.screenshots ?? [], movies: entry.movies ?? [] })
+      : undefined,
 
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
@@ -188,6 +197,19 @@ export function gameV2ToManualGameEntry(game: GameV2): ManualGameEntry {
 
     sizeOnDisk: game.installSize,
     isFavorite: game.isFavorite,
+
+    screenshots: (() => {
+      try {
+        const pm = game.providerMetadata ? JSON.parse(game.providerMetadata) : null;
+        return Array.isArray(pm?.screenshots) ? pm.screenshots : undefined;
+      } catch { return undefined; }
+    })(),
+    movies: (() => {
+      try {
+        const pm = game.providerMetadata ? JSON.parse(game.providerMetadata) : null;
+        return Array.isArray(pm?.movies) ? pm.movies : undefined;
+      } catch { return undefined; }
+    })(),
 
     createdAt: game.createdAt,
     updatedAt: game.updatedAt,

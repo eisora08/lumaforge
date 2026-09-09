@@ -4195,6 +4195,13 @@ export interface IgdbGameSearchResult {
   publishers: string[] | null;
   cover_url: string | null;
   screenshot_urls: string[] | null;
+  video_urls: IgdbVideoResult[] | null;
+  rating: number | null;
+}
+
+export interface IgdbVideoResult {
+  name: string | null;
+  video_id: string;
 }
 
 export async function igdbGetAccessToken(

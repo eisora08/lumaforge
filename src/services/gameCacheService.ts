@@ -3448,18 +3448,17 @@ export async function refreshGameDetailsArtwork(
       _logSkip(appId, "rawg", !options?.rawgApiKey ? "missing-api-key" : "disabled");
     }
 
-    const igdbHasCredentials = !!options?.igdbClientId && !!options?.igdbClientSecret;
-    const shouldCallIgdb = options?.useIgdb !== false && igdbHasCredentials;
-    _debugLog(appId, "IGDB", `hasCredentials=${igdbHasCredentials} called=${!!shouldCallIgdb}${!shouldCallIgdb ? ` reason=${!igdbHasCredentials ? "missing-credentials" : ""}` : ""}`);
+    const shouldCallIgdb = options?.useIgdb !== false;
+    _debugLog(appId, "IGDB", `called=${!!shouldCallIgdb}`);
     let igdbData = undefined;
     if (shouldCallIgdb) {
       try {
         const { fetchIgdbArtworkDeduped } = await import("./storeArtworkResolver");
-        igdbData = await fetchIgdbArtworkDeduped({ clientId: options.igdbClientId!, clientSecret: options.igdbClientSecret!, appId });
+        igdbData = await fetchIgdbArtworkDeduped({ clientId: options?.igdbClientId ?? "", clientSecret: options?.igdbClientSecret ?? "", appId });
         _debugLog(appId, "IGDB", `resultBackground=${(igdbData as any)?.igdbArtworkUrl ?? "(null)"} resultCover=${(igdbData as any)?.igdbCoverUrl ?? "(null)"}`);
       } catch (e) { _debugLog(appId, "IGDB", `error=${e}`); }
     } else {
-      _logSkip(appId, "igdb", !options?.igdbClientId || !options?.igdbClientSecret ? "missing-credentials" : "disabled");
+      _logSkip(appId, "igdb", "disabled");
     }
 
     const inputs: MediaResolutionInputs = {

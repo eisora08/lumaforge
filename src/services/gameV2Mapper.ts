@@ -7,7 +7,7 @@
 
 import type { GameV2 } from "../types/gameV2";
 import type { LibraryGame, LibraryGameSource } from "../types/libraryGame";
-import type { SteamAppMetadata } from "../types/gameMetadata";
+import type { SteamAppMetadata, SteamMovie } from "../types/gameMetadata";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,6 +72,27 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
     ? game.description
     : null;
 
+  // Parse providerMetadata for source-specific fields (e.g. repacker for Debrid)
+  let repacker: string | undefined;
+  let emulatorConfigId: string | undefined;
+  let emulatorProfileId: string | undefined;
+  let emulatorPlatform: string | undefined;
+  let pmScreenshots: string[] = [];
+  let pmMovies: unknown[] = [];
+  try {
+    if (game.providerMetadata) {
+      const pm = JSON.parse(game.providerMetadata);
+      repacker = pm.repacker ?? undefined;
+      if (game.source === "emulator") {
+        emulatorConfigId = pm.emulatorConfigId;
+        emulatorProfileId = pm.emulatorProfileId;
+        emulatorPlatform = pm.platform;
+      }
+      if (Array.isArray(pm.screenshots)) pmScreenshots = pm.screenshots;
+      if (Array.isArray(pm.movies)) pmMovies = pm.movies;
+    }
+  } catch { /* ignore */ }
+
   const metadata: SteamAppMetadata = {
     app_id: game.appId ? parseInt(game.appId, 10) || 0 : 0,
     name: game.title,
@@ -87,29 +108,12 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
     languages: [],
     dlc_count: 0,
     dlc_app_ids: [],
-    screenshots: [],
-    movies: [],
+    screenshots: pmScreenshots.length > 0 ? pmScreenshots : [],
+    movies: pmMovies.length > 0 ? pmMovies as SteamMovie[] : [],
     resolved: false,
   };
 
   const libraryId = game.libraryId ?? game.id;
-
-  // Parse providerMetadata for source-specific fields (e.g. repacker for Debrid)
-  let repacker: string | undefined;
-  let emulatorConfigId: string | undefined;
-  let emulatorProfileId: string | undefined;
-  let emulatorPlatform: string | undefined;
-  try {
-    if (game.providerMetadata) {
-      const pm = JSON.parse(game.providerMetadata);
-      repacker = pm.repacker ?? undefined;
-      if (game.source === "emulator") {
-        emulatorConfigId = pm.emulatorConfigId;
-        emulatorProfileId = pm.emulatorProfileId;
-        emulatorPlatform = pm.platform;
-      }
-    }
-  } catch { /* ignore */ }
 
   const imageUrl =
     game.coverPath ??
@@ -397,6 +401,9 @@ export function epicGameToGameV2(entry: {
   features?: string[];
   shortDescription?: string;
   releaseDate?: string;
+  // Screenshots / Movies (IGDB)
+  screenshots?: string[];
+  movies?: unknown[];
   // Playtime
   playtimeMinutes?: number;
   lastPlayedSeconds?: number;
@@ -452,6 +459,11 @@ export function epicGameToGameV2(entry: {
     features: entry.features ? JSON.stringify(entry.features) : undefined,
     shortDescription: entry.shortDescription,
     releaseDate: entry.releaseDate,
+
+    // Screenshots / Movies (IGDB) — persisted in provider_metadata
+    providerMetadata: (entry.screenshots?.length || entry.movies?.length)
+      ? JSON.stringify({ screenshots: entry.screenshots ?? [], movies: entry.movies ?? [] })
+      : undefined,
 
     // Playtime
     playtimeSeconds: entry.playtimeMinutes ? entry.playtimeMinutes * 60 : 0,
@@ -630,6 +642,8 @@ export function emulatorGameEntryToGameV2(entry: {
   publishers?: string[];
   releaseDate?: string;
   description?: string;
+  screenshots?: string[];
+  movies?: unknown[];
   isInstalled?: boolean;
   isFavorite?: boolean;
   lastPlayedAt?: number;
@@ -646,6 +660,8 @@ export function emulatorGameEntryToGameV2(entry: {
     region: entry.region,
     fileSize: entry.fileSize,
     scanPath: entry.scanPath,
+    screenshots: entry.screenshots ?? [],
+    movies: entry.movies ?? [],
   });
 
   return {

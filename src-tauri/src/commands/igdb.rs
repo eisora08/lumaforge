@@ -40,6 +40,14 @@ pub struct IgdbGameSearchResult {
     pub publishers: Option<Vec<String>>,
     pub cover_url: Option<String>,
     pub screenshot_urls: Option<Vec<String>>,
+    pub video_urls: Option<Vec<IgdbVideoResult>>,
+    pub rating: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IgdbVideoResult {
+    pub name: Option<String>,
+    pub video_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +60,8 @@ struct IgdbGameRaw {
     involved_companies: Option<Vec<IgdbInvolvedCompany>>,
     cover: Option<IgdbImageRef>,
     screenshots: Option<Vec<IgdbImageRef>>,
+    videos: Option<Vec<IgdbGameVideo>>,
+    rating: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +79,12 @@ struct IgdbInvolvedCompany {
 #[derive(Debug, Deserialize)]
 struct IgdbImageRef {
     url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IgdbGameVideo {
+    name: Option<String>,
+    video_id: Option<String>,
 }
 
 // ── Helpers ──
@@ -186,6 +202,7 @@ pub async fn igdb_get_access_token(
     client_id: String,
     client_secret: String,
 ) -> Result<IgdbAccessToken, String> {
+    eprintln!("[IGDB][TOKEN] Requesting token for client_id={}", &client_id[..client_id.len().min(8)]);
     let client = build_client()?;
 
     let url = format!(
@@ -199,11 +216,15 @@ pub async fn igdb_get_access_token(
         .post(&url)
         .send()
         .await
-        .map_err(|e| format!("[IGDB][TOKEN] Request failed: {}", e))?;
+        .map_err(|e| {
+            eprintln!("[IGDB][TOKEN] Request failed: {}", e);
+            format!("[IGDB][TOKEN] Request failed: {}", e)
+        })?;
 
+    let status = response.status().as_u16();
     if !response.status().is_success() {
-        let status = response.status().as_u16();
         let body = response.text().await.unwrap_or_default();
+        eprintln!("[IGDB][TOKEN] FAILED HTTP {}: {}", status, truncate(&body, 300));
         return Err(format!(
             "[IGDB][TOKEN] Authentication failed (HTTP {}): {}",
             status,
@@ -211,11 +232,16 @@ pub async fn igdb_get_access_token(
         ));
     }
 
-    let token: IgdbAccessToken = response
-        .json()
-        .await
-        .map_err(|e| format!("[IGDB][TOKEN] Failed to parse response: {}", e))?;
+    let body_text = response.text().await.unwrap_or_default();
+    eprintln!("[IGDB][TOKEN] HTTP {} body_len={}", status, body_text.len());
 
+    let token: IgdbAccessToken = serde_json::from_str(&body_text)
+        .map_err(|e| {
+            eprintln!("[IGDB][TOKEN] Parse error: {} body={}", e, truncate(&body_text, 200));
+            format!("[IGDB][TOKEN] Failed to parse response: {}", e)
+        })?;
+
+    eprintln!("[IGDB][TOKEN] SUCCESS expires_in={:?}", token.expires_in);
     Ok(token)
 }
 
@@ -306,6 +332,7 @@ pub async fn igdb_search_games_by_name(
     limit: Option<u32>,
 ) -> Result<Vec<IgdbGameSearchResult>, String> {
     if client_id.is_empty() || access_token.is_empty() {
+        eprintln!("[IGDB][SEARCH] Missing credentials: client_id empty={} access_token empty={}", client_id.is_empty(), access_token.is_empty());
         return Err("[IGDB][SEARCH] Missing credentials".to_string());
     }
 
@@ -318,12 +345,14 @@ pub async fn igdb_search_games_by_name(
     let safe_name = name.replace('"', "\\\"");
 
     let body = format!(
-        "fields name, summary, first_release_date, genres.name, \
+        "fields name, summary, first_release_date, rating, genres.name, \
          involved_companies.company.name, involved_companies.publisher, involved_companies.developer, \
-         cover.url, screenshots.url; \
+         cover.url, screenshots.url, videos.name, videos.video_id; \
          search \"{}\"; limit {};",
         safe_name, query_limit
     );
+
+    eprintln!("[IGDB][SEARCH] Searching for \"{}\" limit={}", &safe_name, query_limit);
 
     let response = client
         .post(format!("{}/games", IGDB_BASE_URL))
@@ -331,11 +360,15 @@ pub async fn igdb_search_games_by_name(
         .body(body)
         .send()
         .await
-        .map_err(|e| format!("[IGDB][SEARCH] Request failed: {}", e))?;
+        .map_err(|e| {
+            eprintln!("[IGDB][SEARCH] Request failed: {}", e);
+            format!("[IGDB][SEARCH] Request failed: {}", e)
+        })?;
 
+    let status = response.status().as_u16();
     if !response.status().is_success() {
-        let status = response.status().as_u16();
         let body = response.text().await.unwrap_or_default();
+        eprintln!("[IGDB][SEARCH] FAILED HTTP {}: {}", status, truncate(&body, 300));
         return Err(format!(
             "[IGDB][SEARCH] HTTP {} for \"{}\": {}",
             status,
@@ -344,10 +377,16 @@ pub async fn igdb_search_games_by_name(
         ));
     }
 
-    let games: Vec<IgdbGameRaw> = response
-        .json()
-        .await
-        .map_err(|e| format!("[IGDB][SEARCH] Failed to parse response: {}", e))?;
+    let body_text = response.text().await.unwrap_or_default();
+    eprintln!("[IGDB][SEARCH] HTTP {} body_len={} preview={}", status, body_text.len(), truncate(&body_text, 200));
+
+    let games: Vec<IgdbGameRaw> = serde_json::from_str(&body_text)
+        .map_err(|e| {
+            eprintln!("[IGDB][SEARCH] Parse error: {} body={}", e, truncate(&body_text, 300));
+            format!("[IGDB][SEARCH] Failed to parse response: {}", e)
+        })?;
+
+    eprintln!("[IGDB][SEARCH] Found {} games", games.len());
 
     let results: Vec<IgdbGameSearchResult> = games
         .into_iter()
@@ -392,6 +431,17 @@ pub async fn igdb_search_games_by_name(
                     .collect()
             });
 
+            let video_urls: Option<Vec<IgdbVideoResult>> = g.videos.as_ref().map(|vs| {
+                vs.iter()
+                    .filter_map(|v| {
+                        v.video_id.as_ref().map(|vid| IgdbVideoResult {
+                            name: v.name.clone(),
+                            video_id: vid.clone(),
+                        })
+                    })
+                    .collect()
+            });
+
             let release_date = g.first_release_date.map(|ts| timestamp_to_date(ts));
 
             IgdbGameSearchResult {
@@ -404,6 +454,8 @@ pub async fn igdb_search_games_by_name(
                 publishers,
                 cover_url,
                 screenshot_urls,
+                video_urls,
+                rating: g.rating,
             }
         })
         .collect();

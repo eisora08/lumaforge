@@ -165,15 +165,16 @@ export default function ConsoleSelectedPreview({
   /* ── Video source (remote-only, no local video cache) ──
    *  Priority matches StoreGameMediaGallery.getPreferredSrc:
    *  mp4 > webm > hls_h264 > dash_h264 > dash_av1 > hls */
-  const { videoSrc, playType } = useMemo(() => {
-    if (!detailsMode || !trailerData) return { videoSrc: null as string | null, playType: "none" as const };
+  const { videoSrc, playType, isYouTube } = useMemo(() => {
+    if (!detailsMode || !trailerData) return { videoSrc: null as string | null, playType: "none" as const, isYouTube: false };
 
     const vSrc = trailerData.playableUrl ?? null;
     const vType = trailerData.playableType;
+    const yt = !!vSrc && vSrc.includes("youtube.com/embed/");
     if (DEBUG_PREVIEW) {
-      console.log(`${LOG_PREFIX}[VIDEO_SRC] appid=${game?.appId ?? "?"} videoSrc=${vSrc?.substring(0, 80) ?? "null"} playType=${vType}`);
+      console.log(`${LOG_PREFIX}[VIDEO_SRC] appid=${game?.appId ?? "?"} videoSrc=${vSrc?.substring(0, 80) ?? "null"} playType=${vType} youtube=${yt}`);
     }
-    return { videoSrc: vSrc, playType: vType };
+    return { videoSrc: vSrc, playType: vType, isYouTube: yt };
   }, [detailsMode, trailerData, game?.appId]);
 
   const hasVideo = playType !== "none";
@@ -475,7 +476,7 @@ export default function ConsoleSelectedPreview({
 
   // Setup video source on trailer/playableUrl change
   useEffect(() => {
-    if (!detailsMode || !videoSrc || playType === "none") return;
+    if (!detailsMode || !videoSrc || playType === "none" || isYouTube) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -749,7 +750,19 @@ export default function ConsoleSelectedPreview({
       )}
 
       {/* ── Video layer (always renders when video source exists) ── */}
-      {detailsMode && hasVideo && !videoError && !screenshotActive && (
+      {detailsMode && hasVideo && !videoError && !screenshotActive && isYouTube && videoSrc && (
+        <iframe
+          key={`${game.appId}-yt-${mediaIdentityKey ?? trailerData?.playableUrl ?? "none"}`}
+          src={videoSrc}
+          className={`absolute inset-0 h-full w-full border-0 transition-opacity duration-300 ${
+            isPlaying ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+          title={trailerData?.playableUrl ?? "YouTube trailer"}
+        />
+      )}
+      {detailsMode && hasVideo && !videoError && !screenshotActive && !isYouTube && (
         <video
           ref={videoRef}
           data-console-preview-video={game.appId || game.id}

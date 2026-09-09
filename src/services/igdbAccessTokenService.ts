@@ -36,6 +36,20 @@ const REFRESH_BUFFER_MS = 60_000;
 // ── Public API ──
 
 /**
+ * Resolve effective IGDB credentials, falling back to embedded .env values
+ * when the user hasn't configured their own in Settings.
+ */
+export function resolveIgdbCredentials(
+  clientId: string,
+  clientSecret: string,
+): { clientId: string; clientSecret: string } {
+  return {
+    clientId: clientId || EMBEDDED_IGDB_CLIENT_ID,
+    clientSecret: clientSecret || EMBEDDED_IGDB_CLIENT_SECRET,
+  };
+}
+
+/**
  * Return a valid IGDB access token, refreshing via Twitch OAuth if needed.
  *
  * @throws {string} User-friendly error when credentials are missing or auth fails.
@@ -48,22 +62,29 @@ export async function getIgdbAccessToken(
   const effectiveClientId = clientId || EMBEDDED_IGDB_CLIENT_ID;
   const effectiveClientSecret = clientSecret || EMBEDDED_IGDB_CLIENT_SECRET;
 
+  const usingEmbedded = !clientId && !!EMBEDDED_IGDB_CLIENT_ID;
+  console.log(`[IGDB_TOKEN] clientId="${clientId}" embedded="${EMBEDDED_IGDB_CLIENT_ID}" usingEmbedded=${usingEmbedded} hasSecret=${!!effectiveClientSecret}`);
+
   if (!effectiveClientId || !effectiveClientSecret) {
+    console.error("[IGDB_TOKEN] MISSING CREDENTIALS — cannot authenticate");
     throw "IGDB credentials are not configured. Add VITE_IGDB_CLIENT_ID and VITE_IGDB_CLIENT_SECRET to your .env file, or set them in Settings.";
   }
 
   // Return cached token if still valid (with 60 s buffer)
   if (_cache && Date.now() < _cache.expiresAt - REFRESH_BUFFER_MS) {
+    console.log("[IGDB_TOKEN] returning cached token");
     return _cache.accessToken;
   }
 
   // Exchange client credentials for an OAuth access token via Rust backend
   try {
+    console.log("[IGDB_TOKEN] exchanging credentials for access token via Rust...");
     const resp = await igdbGetAccessToken(effectiveClientId, effectiveClientSecret);
     const accessToken = resp.access_token;
     const expiresInMs = (resp.expires_in ?? 3600) * 1000;
 
     if (!accessToken) {
+      console.error("[IGDB_TOKEN] empty access_token in response:", resp);
       throw "Empty access_token in Twitch OAuth response.";
     }
 
@@ -72,10 +93,13 @@ export async function getIgdbAccessToken(
       expiresAt: Date.now() + expiresInMs,
     };
 
+    console.log(`[IGDB_TOKEN] SUCCESS token="${accessToken.slice(0, 10)}..." expiresIn=${resp.expires_in}s`);
     return accessToken;
   } catch (err) {
     // Invalidate cache on auth failure
     _cache = null;
+
+    console.error("[IGDB_TOKEN] FAILED:", err);
 
     // If the error is already a user-friendly string from above, re-throw
     if (typeof err === "string") throw err;
