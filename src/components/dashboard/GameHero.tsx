@@ -966,6 +966,57 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           }
         }
 
+        // Emulator snapshot games: find matching LibraryGame for correct provider media paths
+        if (heroAppId.startsWith("emulator:")) {
+          // Fast path: find in LibraryGame (works when library is loaded)
+          const libMatch = libraryGames.find((g) => g.id === heroAppId || g.libraryId === heroAppId);
+          if (libMatch) {
+            const candidates = [
+              { role: "backgroundPath", value: libMatch.backgroundPath },
+              { role: "landscapePath", value: libMatch.landscapePath },
+              { role: "coverPath", value: libMatch.coverPath },
+              { role: "imageUrl", value: libMatch.imageUrl },
+            ];
+            const selected = candidates.find((c) => c.value) ?? null;
+            const rawPath = selected?.value ?? null;
+            if (rawPath) {
+              try {
+                const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+                const url = await resolveProviderMediaPreviewUrl(rawPath);
+                if (url) {
+                  console.log(`[DASH][HERO] branch=snapshot→emulator title="${heroGame.title}" appId=${heroAppId} rawPath=${rawPath} resolved=${url}`);
+                  if (!cancelled && generation === bgUrlGenerationRef.current) {
+                    setBgUrl(url);
+                    setAmbientSource("dashboard", url);
+                  }
+                  return;
+                }
+              } catch { /* fall through to fallback */ }
+            }
+          }
+
+          // Fallback: read directly from emulator game store (works before library loads)
+          try {
+            const { getEmulatorGame } = await import("../../services/emulatorGameStore");
+            const entry = getEmulatorGame(heroAppId);
+            if (entry) {
+              const rawPath = entry.backgroundPath ?? entry.landscapePath ?? entry.coverPath ?? null;
+              if (rawPath) {
+                const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+                const url = await resolveProviderMediaPreviewUrl(rawPath);
+                if (url) {
+                  console.log(`[DASH][HERO] branch=snapshot→emulator(store) title="${heroGame.title}" appId=${heroAppId} rawPath=${rawPath} resolved=${url}`);
+                  if (!cancelled && generation === bgUrlGenerationRef.current) {
+                    setBgUrl(url);
+                    setAmbientSource("dashboard", url);
+                  }
+                  return;
+                }
+              }
+            }
+          } catch { /* fall through to legacy path */ }
+        }
+
         const m = heroGame.media;
         const imgPath = m?.backgroundPath ?? m?.landscapePath ?? m?.coverPath ?? null;
 

@@ -39,6 +39,7 @@ import type { SteamAppMetadata } from "../../types/gameMetadata";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { getManualGame, saveManualGame, updateManualGame } from "../../services/manualGameStore";
+import { getEmulatorGame } from "../../services/emulatorGameStore";
 import { readEpicOverrides, writeEpicOverrides } from "../../services/epicOverrideStore";
 import { updateDebridGamePath, updateDebridGameAppId, updateDebridGameTitle, getDebridLaunchMetadata, getDebridGame } from "../../services/debridGameStore";
 import GameImageSearchDialog from "./GameImageSearchDialog";
@@ -570,7 +571,7 @@ export default function GameEditDialog({
   // ── Download Metadata handler ──
   const handleDownloadMetadata = useCallback(async (source: MetadataSourceId) => {
     setMetadataMenuOpen(false);
-    if (!appId && !isManualMode && !isCreateMode && !isEpicMode && !isDebridMode) return;
+    if (!appId && !isManualMode && !isCreateMode && !isEpicMode && !isDebridMode && !isEmulatorMode) return;
 
     // Manual/create: IGDB or Steam name search
     if (isManualMode || isCreateMode) {
@@ -732,6 +733,69 @@ export default function GameEditDialog({
       return;
     }
 
+    // Emulator games: search IGDB/Steam by game name (same as Epic path)
+    if (isEmulatorMode) {
+      const searchName = nameDraft.trim() || game?.title || "";
+      if (!searchName) {
+        showError(t("game_edit.enter_name_or_title", "Enter a game name first or use the game title"));
+        setMetadataDownloading(false);
+        return;
+      }
+      setMetadataDownloading(true);
+      try {
+        if (source === "steam") {
+          if (DEBUG_MANUAL_METADATA) console.log(`[EMULATOR][META] source=steam searchName="${searchName}"`);
+          const steamResults = await resolveSteamStoreSearch({ term: searchName, limit: 5 });
+          if (DEBUG_MANUAL_METADATA) console.log("[EMULATOR][META] Steam results:", steamResults);
+          if (!steamResults || steamResults.length === 0) {
+            showError(`No Steam results for "${searchName}"`);
+            setMetadataDownloading(false);
+            return;
+          }
+          const best = steamResults[0];
+          if (DEBUG_MANUAL_METADATA) console.log(`[EMULATOR][META] best match: appId=${best.app_id} name="${best.name}"`);
+          if (best.name) setNameDraft(best.name);
+          const metaMap = await resolveGameMetadata([best.app_id]);
+          const meta = metaMap[best.app_id];
+          if (DEBUG_MANUAL_METADATA) console.log("[EMULATOR][META] Steam metadata:", meta);
+          if (meta) {
+            if (meta.developer) setDevelopersDraft(meta.developer);
+            if (meta.publishers?.length) setPublishersDraft(meta.publishers.join(", "));
+            if (meta.genres?.length) setGenresDraft(meta.genres.join(", "));
+            if (meta.release_date) setReleaseDateDraft(meta.release_date);
+            if (meta.short_description || meta.about_the_game) setDescriptionDraft(meta.short_description ?? meta.about_the_game ?? "");
+            if (meta.name && meta.name !== best.name) setNameDraft(meta.name);
+            setHasEdits(true);
+            showSuccess(`Found "${meta.name ?? best.name}" on Steam — metadata filled. Use Media tab to add artwork.`);
+          } else {
+            setHasEdits(true);
+            showSuccess(`Found "${best.name}" on Steam — name filled. Metadata not available for this app.`);
+          }
+        } else if (source === "igdb") {
+          if (DEBUG_MANUAL_METADATA) console.log(`[EMULATOR][META] source=igdb searchName="${searchName}"`);
+          const result = await fetchIgdbMetadataByName(settings?.igdbClientId ?? "", settings?.igdbClientSecret ?? "", searchName);
+          if (DEBUG_MANUAL_METADATA) console.log("[EMULATOR][META] IGDB result:", result);
+          if (result) {
+            if (result.name) setNameDraft(result.name);
+            if (result.genres?.length) setGenresDraft(result.genres.join(", "));
+            if (result.developers?.length) setDevelopersDraft(result.developers.join(", "));
+            if (result.publishers?.length) setPublishersDraft(result.publishers.join(", "));
+            if (result.releaseDate) setReleaseDateDraft(result.releaseDate);
+            if (result.summary) setDescriptionDraft(result.summary);
+            setHasEdits(true);
+            showSuccess(`Found "${result.name ?? searchName}" on IGDB — metadata filled. Use Media tab to add artwork.`);
+          } else {
+            showError(`No IGDB results for "${searchName}"`);
+          }
+        }
+      } catch (e) {
+        if (DEBUG_MANUAL_METADATA) console.error("[EMULATOR][META] error:", e);
+        showError(t("game_edit.failed_search_source", `Failed to search {{source}}`, { source: source === "steam" ? "Steam" : "IGDB" }));
+      }
+      setMetadataDownloading(false);
+      return;
+    }
+
     // Debrid games — resolve by the Steam appId from the dialog or game data.
     // Repack installs share the Steam appId; metadata only fills the dialog
     // fields (nothing is written to appinfo.json — that stays session-level).
@@ -878,6 +942,8 @@ export default function GameEditDialog({
     try {
       if (isEpicMode && epicProviderGameId) {
         await openProviderMediaFolder("epic", epicProviderGameId);
+      } else if (isEmulatorMode && emulatorProviderGameId) {
+        await openProviderMediaFolder("emulator", emulatorProviderGameId);
       } else if (appId || appIdDraft) {
         await openGameMediaFolder(appId || appIdDraft);
       } else if (isManualMode && manualGameId) {
@@ -886,7 +952,7 @@ export default function GameEditDialog({
     } catch {
       showError(t("game_edit.error_media_folder", "Could not open media folder"));
     }
-  }, [appId, appIdDraft, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
+  }, [appId, appIdDraft, manualGameId, epicProviderGameId, isManualMode, isEpicMode, emulatorProviderGameId, isEmulatorMode]);
 
   const handleBrowseExe = useCallback(async () => {
     const fullPath = await pickFile(t("game_edit.select_executable", "Select Executable"), [
@@ -1549,6 +1615,14 @@ export default function GameEditDialog({
         const fresh = getManualGame(targetId);
         if (fresh) setManualEntry(fresh);
       }
+    } else if (isEmulatorMode && emulatorProviderGameId) {
+      const fresh = getEmulatorGame(emulatorProviderGameId);
+      if (fresh) {
+        setNameDraft(fresh.title ?? "");
+        setGenresDraft(fresh.genres?.join(", ") ?? "");
+        setDescriptionDraft(fresh.description ?? "");
+        setReleaseDateDraft(fresh.releaseDate ?? "");
+      }
     } else {
       const effectiveAppId = appId || appIdDraft;
       if (effectiveAppId) {
@@ -1560,7 +1634,7 @@ export default function GameEditDialog({
     loadRolePreviews();
     // Notify parent (e.g. LibraryGameDetails) so it can re-resolve hero artwork
     onMediaChanged?.();
-  }, [appId, appIdDraft, isEpicMode, epicProviderGameId, isManualMode, manualGameId, createdManualId, onMediaChanged]);
+  }, [appId, appIdDraft, isEpicMode, epicProviderGameId, isManualMode, manualGameId, createdManualId, isEmulatorMode, emulatorProviderGameId, onMediaChanged]);
 
   // ── Notify library grid after web search download completes ──
   const handleDownloadComplete = useCallback(() => {
@@ -2045,6 +2119,25 @@ export default function GameEditDialog({
       setRolePreviews(previews);
       return;
     }
+    // Emulator game → read from emulator game store
+    if (isEmulatorMode && emulatorProviderGameId) {
+      const freshEntry = getEmulatorGame(emulatorProviderGameId);
+      if (!freshEntry) return;
+      const previews: Record<string, RolePreviewEntry> = {};
+      const entryMap = freshEntry as Record<string, unknown>;
+      for (const { role } of MEDIA_ROLES) {
+        const key = ROLE_TO_PATH_KEY[role];
+        const relPath = entryMap[key] as string | undefined;
+        if (relPath) {
+          const url = await resolveProviderMediaPreviewUrl(relPath);
+          previews[role] = { url, status: url ? "set" : "missing" };
+        } else {
+          previews[role] = { url: null, status: "unset" };
+        }
+      }
+      setRolePreviews(previews);
+      return;
+    }
     // Steam, Debrid+appId → use mediaAdapter
     if (!mediaAdapter) return;
     const states = await mediaAdapter.getAllRoleStates();
@@ -2102,6 +2195,32 @@ export default function GameEditDialog({
         relPath = overrideRelPath;
       } else {
         relPath = eo[key] as string | undefined;
+      }
+      if (relPath) {
+        const url = await resolveProviderMediaPreviewUrl(relPath);
+        setRolePreviews((prev) => ({
+          ...prev,
+          [role]: { url, status: url ? "set" : "missing" },
+        }));
+      } else {
+        setRolePreviews((prev) => ({
+          ...prev,
+          [role]: { url: null, status: "unset" },
+        }));
+      }
+      return;
+    }
+    // Emulator game → read from emulator game store
+    if (isEmulatorMode && emulatorProviderGameId) {
+      const freshEntry = getEmulatorGame(emulatorProviderGameId);
+      const key = ROLE_TO_PATH_KEY[role];
+      let relPath: string | undefined;
+      if (overrideRelPath === null) {
+        relPath = undefined;
+      } else if (overrideRelPath !== undefined) {
+        relPath = overrideRelPath;
+      } else {
+        relPath = freshEntry ? ((freshEntry as Record<string, unknown>)[key] as string | undefined) : undefined;
       }
       if (relPath) {
         const url = await resolveProviderMediaPreviewUrl(relPath);
@@ -2192,6 +2311,11 @@ export default function GameEditDialog({
     if (isEpicMode && epicOverrides) {
       const eo = epicOverrides as Record<string, unknown>;
       return (eo[key] as string) ?? null;
+    }
+    // Emulator game → read from emulator game store
+    if (isEmulatorMode && emulatorProviderGameId) {
+      const entry = getEmulatorGame(emulatorProviderGameId);
+      return entry ? ((entry as Record<string, unknown>)[key] as string ?? null) : null;
     }
     // Steam, Debrid+appId → read from appInfo (Steam appinfo)
     return appInfo?.media?.[key] ?? null;
@@ -3016,7 +3140,7 @@ export default function GameEditDialog({
         <button
           type="button"
           onClick={handleOpenMediaFolder}
-          disabled={!appId && !manualGameId && !appIdDraft && !debridProviderGameId && !epicProviderGameId}
+          disabled={!appId && !manualGameId && !appIdDraft && !debridProviderGameId && !epicProviderGameId && !emulatorProviderGameId}
           className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-40"
         >
           <FolderOpen className="h-4 w-4" />
@@ -3202,12 +3326,12 @@ export default function GameEditDialog({
         </div>
       </div>
 
-      {imageSearchOpen && imageSearchRole && (appId || appIdDraft || manualGameId || epicProviderGameId) && (
+      {imageSearchOpen && imageSearchRole && (appId || appIdDraft || manualGameId || epicProviderGameId || emulatorProviderGameId) && (
         <GameImageSearchDialog
           open={imageSearchOpen}
           onClose={() => { setImageSearchOpen(false); setImageSearchRole(null); }}
           appId={appId || appIdDraft || undefined}
-          libraryId={(!appId && !appIdDraft) ? (manualGameId ?? (isEpicMode ? `epic:${epicProviderGameId}` : undefined)) : undefined}
+          libraryId={(!appId && !appIdDraft) ? (manualGameId ?? (isEpicMode ? `epic:${epicProviderGameId}` : isEmulatorMode ? emulatorProviderGameId : undefined)) : undefined}
           gameTitle={(epicOverrides?.name as string) ?? appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
           role={imageSearchRole}
           onMediaUpdated={handleMediaUpdated}

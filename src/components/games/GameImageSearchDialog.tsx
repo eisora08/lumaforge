@@ -24,6 +24,7 @@ import type { GameMediaPaths } from "../../services/tauri";
 import { openExternalUrl } from "../../services/externalLinks";
 import { downloadProviderMediaFromUrl } from "../../services/tauri";
 import { updateManualGame } from "../../services/manualGameStore";
+import { getEmulatorGame, saveEmulatorGame } from "../../services/emulatorGameStore";
 import WebImageGrid from "./WebImageGrid";
 
 type MediaRole = "cover" | "landscape" | "background" | "logo" | "icon";
@@ -198,8 +199,9 @@ export default function GameImageSearchDialog({
   const applyUrl = useCallback(async (url: string, source: string) => {
     if (!url.startsWith("http://") && !url.startsWith("https://")) return;
     const isEpic = !!libraryId && libraryId.startsWith("epic:");
-    const isManual = !!libraryId && !appId && !isEpic;
-    console.log(`[WEB_IMAGE_SEARCH][APPLY_URL_START] role=${role} source=${source} manual=${isManual} epic=${isEpic}`);
+    const isEmulator = !!libraryId && libraryId.startsWith("emulator:");
+    const isManual = !!libraryId && !appId && !isEpic && !isEmulator;
+    console.log(`[WEB_IMAGE_SEARCH][APPLY_URL_START] role=${role} source=${source} manual=${isManual} epic=${isEpic} emulator=${isEmulator}`);
     setApplying(true);
     try {
       if (isEpic && libraryId) {
@@ -221,6 +223,29 @@ export default function GameImageSearchDialog({
           onClose();
         } else {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result epic=${providerGameId}`);
+          showError(`Failed to download ${role}`);
+        }
+      } else if (isEmulator && libraryId) {
+        // ── Emulator game — use provider media adapter ──
+        const providerGameId = libraryId;
+        const relativePath = await downloadProviderMediaFromUrl("emulator", providerGameId, role, url, true);
+        if (relativePath) {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath} emulator=${providerGameId}`);
+          const mediaKey = `${role}Path` as keyof GameMediaPaths;
+          const existing = getEmulatorGame(providerGameId);
+          if (existing) {
+            const patch = { [mediaKey]: relativePath };
+            saveEmulatorGame({ ...existing, ...patch });
+          }
+          invalidateResolvedMediaCache(providerGameId);
+          clearSessionAppInfoCache(providerGameId);
+          notifyMediaUpdated(providerGameId, { source: `image-search-${source}` });
+          showSuccess(`${role} downloaded`);
+          onMediaUpdated?.();
+          onDownloadComplete?.();
+          onClose();
+        } else {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result emulator=${providerGameId}`);
           showError(`Failed to download ${role}`);
         }
       } else if (isManual && libraryId) {

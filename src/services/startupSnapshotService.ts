@@ -1400,7 +1400,7 @@ export async function buildStartupSnapshotFromCurrentState(
     const syntheticId = game.id;
     const title = game.title || "Unknown Game";
 
-    // Try to read media paths from Epic override store or SQLite cache
+    // Try to read media paths from Epic override store, emulator game store, or SQLite cache
     let media: SnapshotGameMedia = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
     try {
       if (game.source === "epic") {
@@ -1424,6 +1424,16 @@ export async function buildStartupSnapshotFromCurrentState(
             if (m.logoPath) media.logoPath = m.logoPath;
             if (m.iconPath) media.iconPath = m.iconPath;
           }
+        }
+      } else if (game.source === "emulator") {
+        const { getEmulatorGame } = await import("./emulatorGameStore");
+        const entry = getEmulatorGame(syntheticId);
+        if (entry) {
+          if (entry.coverPath) media.coverPath = entry.coverPath;
+          if (entry.landscapePath) media.landscapePath = entry.landscapePath;
+          if (entry.backgroundPath) media.backgroundPath = entry.backgroundPath;
+          if (entry.logoPath) media.logoPath = entry.logoPath;
+          if (entry.iconPath) media.iconPath = entry.iconPath;
         }
       }
     } catch {

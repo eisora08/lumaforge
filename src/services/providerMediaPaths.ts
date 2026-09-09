@@ -72,6 +72,8 @@ export function sanitizeProviderGameId(raw: string, providerId?: string): string
   let value = raw;
   if (providerId === "manual" && value.startsWith("manual:")) {
     value = value.slice("manual:".length);
+  } else if (providerId === "emulator" && value.startsWith("emulator:")) {
+    value = value.slice("emulator:".length);
   }
   const sanitized = value
     .replace(/[^a-zA-Z0-9_-]/g, "_")

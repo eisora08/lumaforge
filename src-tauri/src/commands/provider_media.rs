@@ -48,7 +48,15 @@ fn sanitize_provider_game_id(raw: &str) -> Result<String, String> {
     if raw.contains("..") || raw.contains('/') || raw.contains('\\') {
         return Err(format!("Invalid provider game ID (path traversal): {}", raw));
     }
-    let safe: String = raw
+    // Strip provider prefix if present (e.g. "emulator:uuid" -> "uuid", "manual:uuid" -> "uuid")
+    let stripped = if let Some(rest) = raw.strip_prefix("emulator:") {
+        rest
+    } else if let Some(rest) = raw.strip_prefix("manual:") {
+        rest
+    } else {
+        raw
+    };
+    let safe: String = stripped
         .chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' || c == '_' {
