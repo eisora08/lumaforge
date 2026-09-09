@@ -1080,6 +1080,9 @@ function GameLauncherTileInner({
                 appId={Number(game.appId) || 0}
                 gameName={game.title || ""}
                 headerImage={game.imageUrl}
+                coverPath={game.coverPath}
+                landscapePath={game.landscapePath}
+                backgroundPath={game.backgroundPath}
                 onClose={() => { setDepotModalOpen(false); onOverlayToggle?.(false); }}
                 onDownloadStart={(btn) => {
                   window.dispatchEvent(new CustomEvent("lumaforge-download-fly", {

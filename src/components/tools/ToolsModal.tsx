@@ -826,7 +826,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative mx-4 flex max-h-[85vh] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl border border-(--color-border) lf-surface shadow-2xl">
+      <div className="lf-modal-panel relative mx-4 flex max-h-[85vh] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl border border-(--color-border) lf-surface shadow-2xl">
         {/* Hero band */}
         {heroUrl && !heroError ? (
           <div className="relative shrink-0 h-[200px] overflow-hidden sm:h-[220px]">
@@ -839,20 +839,20 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
               onError={() => setHeroError(true)}
             />
             <div className="absolute inset-0 bg-linear-to-t from-(--color-bg) via-(--color-bg)/60 to-transparent" />
-            <div className="absolute inset-x-0 top-0 flex items-start justify-between px-6 pt-4">
+            <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-6 pb-4 pt-8">
               <div className="flex items-center gap-2">
                 <Wrench className="h-4 w-4 text-(--color-accent)" />
                 <h2 className="text-base font-semibold text-white drop-shadow-md">{title}</h2>
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label={t("tools_modal.close")}
-                className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/40 text-white backdrop-blur-md transition hover:bg-black/60"
-              >
-                <X className="h-4 w-4" />
-              </button>
             </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t("tools_modal.close")}
+              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg bg-black/40 text-white backdrop-blur-md transition hover:bg-black/60"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         ) : (
           <div className="relative z-10 flex shrink-0 items-center justify-between px-6 pb-2 pt-5">
@@ -1050,7 +1050,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="online-fix-launch-title"
-            className="relative mx-4 w-full max-w-[440px] overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface p-5 shadow-2xl"
+            className="lf-modal-panel relative mx-4 w-full max-w-[440px] overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface p-5 shadow-2xl"
           >
             {/* Header */}
             <div className="mb-4 flex items-center justify-between">

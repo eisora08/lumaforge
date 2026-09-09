@@ -17,6 +17,7 @@ import {
   Puzzle,
   Share2,
   Lock,
+  ChevronDown,
 } from "lucide-react";
 import {
   pickFolder,
@@ -28,6 +29,7 @@ import {
 import type { DepotInfo, DepotSelection } from "../../types/download";
 import { showError } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
+import { resolveGameMediaUrl } from "../../services/gameCacheService";
 
 type Props = {
   open: boolean;
@@ -35,6 +37,9 @@ type Props = {
   appId: number;
   gameName: string;
   headerImage?: string;
+  coverPath?: string;
+  landscapePath?: string;
+  backgroundPath?: string;
   onDownloadStart?: (buttonEl: HTMLElement) => void;
 };
 
@@ -74,6 +79,9 @@ export default function DepotPickerModal({
   appId,
   gameName,
   headerImage,
+  coverPath,
+  landscapePath,
+  backgroundPath,
   onDownloadStart,
 }: Props) {
   const { t } = useTranslation();
@@ -87,8 +95,31 @@ export default function DepotPickerModal({
   const [downloading, setDownloading] = useState(false);
   const [toolInstalled, setToolInstalled] = useState<boolean | null>(null);
   const [gameNameFromApi, setGameNameFromApi] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(["DLC", "Shared Redistributables"])
+  );
+  const [resolvedImageUrl, setResolvedImageUrl] = useState<string | null>(null);
 
-  const resolvedImage = headerImage || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+  const fallbackImage = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+
+  // Resolve image from media paths (landscape > background > cover > header > Steam CDN)
+  useEffect(() => {
+    if (!open || !appId) return;
+    const mediaPath = landscapePath ?? backgroundPath ?? coverPath ?? headerImage;
+    if (!mediaPath) {
+      setResolvedImageUrl(fallbackImage);
+      return;
+    }
+    let cancelled = false;
+    resolveGameMediaUrl(String(appId), mediaPath).then((url) => {
+      if (!cancelled) setResolvedImageUrl(url ?? fallbackImage);
+    }).catch(() => {
+      if (!cancelled) setResolvedImageUrl(fallbackImage);
+    });
+    return () => { cancelled = true; };
+  }, [open, appId, landscapePath, backgroundPath, coverPath, headerImage]);
+
+  const resolvedImage = resolvedImageUrl || fallbackImage;
 
   // Check tool status and resolve depots when opened
   useEffect(() => {
@@ -170,6 +201,15 @@ export default function DepotPickerModal({
       return new Set(available);
     });
   }, [depots]);
+
+  const toggleGroup = useCallback((label: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }, []);
 
   const handlePickFolder = useCallback(async () => {
     const folder = await pickFolder();
@@ -276,7 +316,7 @@ export default function DepotPickerModal({
       aria-modal="true"
       className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
     >
-      <div className="relative mx-4 flex max-h-[85vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-(--color-border) lf-surface shadow-2xl">
+      <div className="lf-modal-panel relative mx-4 flex h-[min(680px,85vh)] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-(--color-border) lf-surface shadow-2xl">
         {/* Header Image */}
         <div className="relative h-[200px] shrink-0 overflow-hidden">
           <img
@@ -302,8 +342,31 @@ export default function DepotPickerModal({
           </div>
         </div>
 
-        {/* Scrollable Content */}
-        <div className="relative z-10 flex-1 overflow-y-auto px-6 py-4">
+        {/* Select All — fixed, never scrolls */}
+        {!loading && !error && depots.length > 0 && selectableCount > 1 && (
+          <div className="shrink-0 border-b border-(--surface-active-border)/30 px-6 py-3">
+            <button
+              onClick={toggleAll}
+              className="flex w-full items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/5"
+            >
+              <div
+                className={`flex h-4 w-4 items-center justify-center rounded border transition ${
+                  selectedDepots.size === selectableCount
+                    ? "border-(--color-accent) bg-(--color-accent)"
+                    : "border-white/30"
+                }`}
+              >
+                {selectedDepots.size === selectableCount && (
+                  <Check size={10} className="text-white" />
+                )}
+              </div>
+              {t("store.depot_select_all", "Select All")} ({selectableCount})
+            </button>
+          </div>
+        )}
+
+        {/* Scrollable Content — only depot groups */}
+        <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-6 py-4">
           {/* Tool not installed */}
           {toolInstalled === false && (
             <div className="text-center py-8">
@@ -359,38 +422,27 @@ export default function DepotPickerModal({
           {/* Depot Groups */}
           {!loading && !error && depots.length > 0 && (
             <>
-              {/* Select All */}
-              {selectableCount > 1 && (
-                <button
-                  onClick={toggleAll}
-                  className="mb-3 flex w-full items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/5"
-                >
-                  <div
-                    className={`flex h-4 w-4 items-center justify-center rounded border transition ${
-                      selectedDepots.size === selectableCount
-                        ? "border-(--color-accent) bg-(--color-accent)"
-                        : "border-white/30"
-                    }`}
-                  >
-                    {selectedDepots.size === selectableCount && (
-                      <Check size={10} className="text-white" />
-                    )}
-                  </div>
-                  {t("store.depot_select_all", "Select All")} ({selectableCount})
-                </button>
-              )}
-
-              {/* Groups */}
-              {groups.map((group) => (
-                <div key={group.label} className="mb-4">
-                  <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-(--color-muted)">
-                    {group.icon}
-                    {group.label}
-                    <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
-                      {group.depots.length}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
+              {groups.map((group) => {
+                const isCollapsed = collapsedGroups.has(group.label);
+                return (
+                  <div key={group.label} className="mb-4">
+                    <button
+                      onClick={() => toggleGroup(group.label)}
+                      className="mb-2 flex w-full items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-(--color-muted) transition hover:text-(--color-text)"
+                    >
+                      {group.icon}
+                      {group.label}
+                      <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
+                        {group.depots.length}
+                      </span>
+                      <ChevronDown
+                        className={`ml-auto h-3 w-3 transition-transform duration-200 ${
+                          isCollapsed ? "" : "rotate-180"
+                        }`}
+                      />
+                    </button>
+                    {!isCollapsed && (
+                      <div className="space-y-1">
                     {group.depots.map((depot) => {
                       const isSelected = selectedDepots.has(depot.depotId);
                       const hasManifest = !!depot.manifestId;
@@ -469,9 +521,11 @@ export default function DepotPickerModal({
                         </button>
                       );
                     })}
+                    </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           )}
         </div>
