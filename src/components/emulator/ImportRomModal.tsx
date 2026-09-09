@@ -249,25 +249,25 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
       />
 
       {/* Panel */}
-      <div className="relative mx-4 max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-900 shadow-2xl">
+      <div className="relative mx-4 max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-500/10">
-              <Gamepad2 className="h-5 w-5 text-purple-400" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-(--color-accent)/10">
+              <Gamepad2 className="h-5 w-5 text-(--color-accent)" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-neutral-100">
+              <h2 className="text-lg font-semibold text-(--color-text)">
                 {t("rom.import_title", "Import ROMs")}
               </h2>
-              <p className="text-sm text-neutral-400">
+              <p className="text-sm text-(--color-muted)">
                 {t("rom.import_desc", "Add ROM files to your emulator library")}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-2 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+            className="rounded-lg p-2 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
           >
             <X className="h-5 w-5" />
           </button>
@@ -277,21 +277,21 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
         <div className="space-y-4 px-6 py-4">
           {/* Scan Folder */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("rom.scan_folder", "Scan Folder")}
             </label>
             <div className="flex gap-2">
               <button
                 onClick={handleScanFolder}
                 disabled={importing}
-                className="flex items-center gap-2 rounded-lg border border-purple-500/30 bg-purple-500/5 px-4 py-2.5 text-sm text-purple-300 transition-colors hover:bg-purple-500/10 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg border border-(--color-accent)/30 bg-(--color-accent)/5 px-4 py-2.5 text-sm text-(--color-accent) transition-colors hover:bg-(--color-accent)/10 disabled:opacity-50"
               >
                 <FolderOpen className="h-4 w-4" />
                 {t("rom.browse_folder", "Browse...")}
               </button>
               <button
                 onClick={handleBrowseFiles}
-                className="flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800/50 px-4 py-2.5 text-sm text-neutral-300 transition-colors hover:bg-neutral-800"
+                className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm text-(--color-text) transition-colors hover:bg-white/10"
               >
                 <FileCode className="h-4 w-4" />
                 {t("rom.browse_files", "Browse Files")}
@@ -299,7 +299,7 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
               <button
                 onClick={handleScanFolder}
                 disabled={importing}
-                className="flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800/50 px-4 py-2.5 text-sm text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm text-(--color-text) transition-colors hover:bg-white/10 disabled:opacity-50"
               >
                 <Search className="h-4 w-4" />
                 {importing
@@ -313,10 +313,10 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
           <div
             onDrop={handleDrop}
             onDragOver={handleDragOver}
-            className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-neutral-700 bg-neutral-900/50 p-4 transition-colors hover:border-purple-500/50"
+            className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-(--surface-active-border) bg-(--surface-active)/50 p-4 transition-colors hover:border-(--color-accent)/50"
           >
-            <FolderOpen className="mb-2 h-6 w-6 text-neutral-500" />
-            <p className="text-sm text-neutral-400">
+            <FolderOpen className="mb-2 h-6 w-6 text-(--color-muted)" />
+            <p className="text-sm text-(--color-muted)">
               {t("rom.drag_drop", "Drag & drop ROM files here")}
             </p>
           </div>
@@ -325,27 +325,27 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
           <div className="grid grid-cols-2 gap-3">
             {/* Emulator */}
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("rom.emulator", "Emulator")}
               </label>
               <div className="relative">
                 <select
                   value={selectedConfigId}
                   onChange={(e) => setSelectedConfigId(e.target.value)}
-                  className="w-full appearance-none rounded border border-neutral-700 bg-neutral-800 px-3 py-2 pr-8 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                 >
                   <option value="">{t("rom.none", "None")}</option>
                   {configs.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
               </div>
             </div>
 
             {/* Profile */}
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("rom.profile", "Profile")}
               </label>
               <div className="relative">
@@ -353,14 +353,14 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
                   value={selectedProfileId}
                   onChange={(e) => setSelectedProfileId(e.target.value)}
                   disabled={!selectedConfig}
-                  className="w-full appearance-none rounded border border-neutral-700 bg-neutral-800 px-3 py-2 pr-8 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none disabled:opacity-50"
+                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none disabled:opacity-50"
                 >
                   <option value="">{t("rom.none", "None")}</option>
                   {selectedConfig?.profiles.map((p) => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
               </div>
             </div>
           </div>
@@ -368,28 +368,28 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
           {/* Override Platform */}
           {romFiles.length > 0 && (
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("rom.override_platform", "Override Platform")}
               </label>
               <div className="relative">
                 <select
                   value={overridePlatformId}
                   onChange={(e) => setOverridePlatformId(e.target.value)}
-                  className="w-full appearance-none rounded border border-neutral-700 bg-neutral-800 px-3 py-2 pr-8 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                 >
                   <option value="">{t("rom.auto_detect", "Auto-detect")}</option>
                   {emulatorPlatforms.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} ({p.shortName})</option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
               </div>
             </div>
           )}
 
           {/* Scan Options */}
           {romFiles.length > 0 && (
-            <div className="space-y-2 rounded border border-neutral-700 bg-neutral-800/50 p-3">
+            <div className="space-y-2 rounded border border-(--surface-active-border) bg-white/[0.04] p-3">
               <CheckboxField
                 checked={scanSubfolders}
                 onChange={setScanSubfolders}
@@ -416,20 +416,20 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
           {/* File List */}
           {romFiles.length > 0 && (
             <div>
-              <h3 className="mb-2 text-sm font-medium text-neutral-300">
+              <h3 className="mb-2 text-sm font-medium text-(--color-text)">
                 {romFiles.length} ROM{romFiles.length !== 1 ? "s" : ""} found
               </h3>
               <div className="max-h-64 space-y-1 overflow-y-auto">
                 {romFiles.map((rom, i) => (
                   <div
                     key={i}
-                    className="flex items-center gap-2 rounded bg-neutral-800/50 px-3 py-2"
+                    className="flex items-center gap-2 rounded bg-white/[0.04] px-3 py-2"
                   >
-                    <FileCode className="h-4 w-4 shrink-0 text-neutral-500" />
+                    <FileCode className="h-4 w-4 shrink-0 text-(--color-muted)" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-neutral-200">{rom.name}</p>
+                      <p className="truncate text-sm text-(--color-text)">{rom.name}</p>
                       {rom.region && (
-                        <p className="text-xs text-neutral-500">{rom.region}</p>
+                        <p className="text-xs text-(--color-muted)">{rom.region}</p>
                       )}
                     </div>
 
@@ -438,19 +438,19 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
                       <select
                         value={rom.platform ?? ""}
                         onChange={(e) => handleRomPlatformChange(i, e.target.value)}
-                        className="appearance-none rounded border border-neutral-700 bg-neutral-800 px-2 py-1 pr-6 text-xs text-neutral-200 focus:border-purple-500 focus:outline-none"
+                        className="appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-2 py-1 pr-6 text-xs text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                       >
                         <option value="">{t("rom.auto", "Auto")}</option>
                         {emulatorPlatforms.map((p) => (
                           <option key={p.id} value={p.id}>{p.shortName}</option>
                         ))}
                       </select>
-                      <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-400" />
+                      <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
                     </div>
 
                     <button
                       onClick={() => handleRemoveRom(i)}
-                      className="shrink-0 rounded p-1 text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
+                      className="shrink-0 rounded p-1 text-(--color-muted) hover:bg-red-500/10 hover:text-red-400"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -472,17 +472,17 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 border-t border-neutral-800 px-6 py-4">
+        <div className="flex justify-end gap-2 border-t border-(--surface-active-border) px-6 py-4">
           <button
             onClick={onClose}
-            className="rounded-lg px-3 py-1.5 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+            className="rounded-lg px-3 py-1.5 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
           >
             {t("common.cancel", "Cancel")}
           </button>
           <button
             onClick={handleImport}
             disabled={romFiles.length === 0 || importing}
-            className="rounded-lg bg-purple-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+            className="rounded-lg bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white hover:bg-(--color-accent) disabled:opacity-50"
           >
             {importing
               ? t("rom.importing", "Importing...")
@@ -512,9 +512,9 @@ function CheckboxField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="rounded border-neutral-600 bg-neutral-800 text-purple-500 focus:ring-purple-500"
+        className="rounded border-(--surface-active-border) bg-(--surface-active) text-(--color-accent) focus:ring-(--color-accent)"
       />
-      <span className="text-xs text-neutral-300">{label}</span>
+      <span className="text-xs text-(--color-text)">{label}</span>
     </label>
   );
 }

@@ -31,7 +31,7 @@ export function EmulatorListPanel({
   const { t } = useTranslation();
 
   return (
-    <div className="w-[250px] shrink-0 flex flex-col border border-neutral-800 rounded-lg bg-neutral-900/50">
+    <div className="w-[250px] shrink-0 flex flex-col border border-(--surface-active-border) rounded-lg bg-(--surface-active)/50">
       {/* List */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {configs.length > 0 ? (
@@ -41,22 +41,22 @@ export function EmulatorListPanel({
               onClick={() => onSelect(config.id)}
               className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${
                 selectedConfigId === config.id
-                  ? "bg-purple-500/10 text-purple-300"
-                  : "text-neutral-300 hover:bg-neutral-800"
+                  ? "bg-(--color-accent)/10 text-(--color-accent)"
+                  : "text-(--color-text) hover:bg-white/10"
               }`}
             >
-              <Monitor className="h-4 w-4 shrink-0 text-purple-400" />
+              <Monitor className="h-4 w-4 shrink-0 text-(--color-accent)" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{config.name}</p>
-                <p className="truncate text-xs text-neutral-500">
-                  {config.profiles.length} profile{config.profiles.length !== 1 ? "s" : ""}
+                <p className="truncate text-xs text-(--color-muted)">
+                  {t('emulator.profile_count', '{{count}} profile(s)', { count: config.profiles.length })}
                 </p>
               </div>
             </button>
           ))
         ) : (
           <div className="flex h-full items-center justify-center px-3 py-8">
-            <p className="text-xs text-neutral-500 text-center">
+            <p className="text-xs text-(--color-muted) text-center">
               {t("emulator.no_emulators", "No emulators configured")}
             </p>
           </div>
@@ -64,10 +64,10 @@ export function EmulatorListPanel({
       </div>
 
       {/* Action Buttons */}
-      <div className="flex border-t border-neutral-800 p-2 gap-1">
+      <div className="flex border-t border-(--surface-active-border) p-2 gap-1">
         <button
           onClick={onImport}
-          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-(--color-text) hover:bg-white/10"
           title={t("emulator.import_btn", "Import Emulators")}
         >
           <Search className="h-3.5 w-3.5" />
@@ -75,7 +75,7 @@ export function EmulatorListPanel({
         </button>
         <button
           onClick={onAdd}
-          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-(--color-text) hover:bg-white/10"
           title={t("emulator.add_btn", "Add Emulator")}
         >
           <Plus className="h-3.5 w-3.5" />
@@ -84,7 +84,7 @@ export function EmulatorListPanel({
         <button
           onClick={onCopy}
           disabled={!selectedConfigId}
-          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-30"
+          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-(--color-text) hover:bg-white/10 disabled:opacity-30"
           title={t("emulator.copy_btn", "Copy Emulator")}
         >
           <Copy className="h-3.5 w-3.5" />
@@ -93,7 +93,7 @@ export function EmulatorListPanel({
         <button
           onClick={onRemove}
           disabled={!selectedConfigId}
-          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-neutral-400 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-30"
+          className="flex flex-1 items-center justify-center gap-1 rounded px-2 py-1.5 text-xs text-(--color-muted) hover:bg-red-500/10 hover:text-red-400 disabled:opacity-30"
           title={t("emulator.remove_btn", "Remove Emulator")}
         >
           <Trash2 className="h-3.5 w-3.5" />

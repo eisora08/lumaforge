@@ -214,21 +214,21 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
       />
 
       {/* Panel */}
-      <div className="relative mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-900 shadow-2xl">
+      <div className="relative mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-500/10">
-              <Gamepad2 className="h-5 w-5 text-purple-400" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-(--color-accent)/10">
+              <Gamepad2 className="h-5 w-5 text-(--color-accent)" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-neutral-100">
+              <h2 className="text-lg font-semibold text-(--color-text)">
                 {view === "list" && t("emulator.settings_title", "Emulator Settings")}
                 {view === "import" && t("emulator.import_title", "Import Emulators")}
                 {view === "add" && t("emulator.add_title", "Add Emulator")}
                 {view === "edit" && t("emulator.edit_title", "Edit Emulator")}
               </h2>
-              <p className="text-sm text-neutral-400">
+              <p className="text-sm text-(--color-muted)">
                 {view === "list" && t("emulator.settings_desc", "Configure emulators to play ROM games")}
                 {view === "import" && t("emulator.import_desc", "Scan a folder to detect installed emulators")}
                 {view === "add" && t("emulator.add_desc", "Configure a new emulator manually")}
@@ -238,7 +238,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-2 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+            className="rounded-lg p-2 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
           >
             <X className="h-5 w-5" />
           </button>
@@ -252,7 +252,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
               {/* Configured Emulators */}
               {configs.length > 0 && (
                 <div>
-                  <h3 className="mb-2 text-sm font-medium text-neutral-300">
+                  <h3 className="mb-2 text-sm font-medium text-(--color-text)">
                     {t("emulator.configured", "Configured Emulators")}
                   </h3>
                   <div className="space-y-2">
@@ -261,15 +261,15 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                       return (
                         <div
                           key={config.id}
-                          className="flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900/50 p-3"
+                          className="flex items-center justify-between rounded-lg border border-(--surface-active-border) bg-(--surface-active)/50 p-3"
                         >
                           <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <Monitor className="h-4 w-4 shrink-0 text-purple-400" />
+                            <Monitor className="h-4 w-4 shrink-0 text-(--color-accent)" />
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-neutral-200">
+                              <p className="truncate text-sm font-medium text-(--color-text)">
                                 {config.name}
                               </p>
-                              <p className="truncate text-xs text-neutral-500">
+                              <p className="truncate text-xs text-(--color-muted)">
                                 {def?.name ?? "Custom"}
                                 {config.profiles.length > 0 && ` — ${config.profiles.length} profile(s)`}
                               </p>
@@ -278,13 +278,13 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                           <div className="flex items-center gap-1 shrink-0">
                             <button
                               onClick={() => handleEditConfig(config)}
-                              className="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                              className="rounded p-1.5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
                             >
                               <Pencil className="h-4 w-4" />
                             </button>
                             <button
                               onClick={() => handleDelete(config.id)}
-                              className="rounded p-1.5 text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
+                              className="rounded p-1.5 text-(--color-muted) hover:bg-red-500/10 hover:text-red-400"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -300,14 +300,14 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
               <div className="flex gap-2">
                 <button
                   onClick={() => setView("import")}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-purple-500/30 bg-purple-500/5 px-4 py-3 text-sm text-purple-300 transition-colors hover:bg-purple-500/10"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-(--color-accent)/30 bg-(--color-accent)/5 px-4 py-3 text-sm text-(--color-accent) transition-colors hover:bg-(--color-accent)/10"
                 >
                   <Search className="h-4 w-4" />
                   {t("emulator.import_btn", "Import Emulators")}
                 </button>
                 <button
                   onClick={() => setView("add")}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800/50 px-4 py-3 text-sm text-neutral-300 transition-colors hover:bg-neutral-800"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/5/50 px-4 py-3 text-sm text-(--color-text) transition-colors hover:bg-white/10"
                 >
                   <Cpu className="h-4 w-4" />
                   {t("emulator.add_btn", "Add Manually")}
@@ -316,7 +316,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
 
               {/* Available Emulators Grid */}
               <div>
-                <h3 className="mb-2 text-sm font-medium text-neutral-300">
+                <h3 className="mb-2 text-sm font-medium text-(--color-text)">
                   {t("emulator.available", "Available Emulators")}
                 </h3>
                 <div className="grid grid-cols-2 gap-2">
@@ -329,14 +329,14 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                         disabled={isConfigured}
                         className={`flex items-center gap-2 rounded-lg border p-3 text-left transition-colors ${
                           isConfigured
-                            ? "border-neutral-700 bg-neutral-800/50 opacity-50"
-                            : "border-neutral-700 bg-neutral-800/50 hover:border-purple-500/50 hover:bg-purple-500/5"
+                            ? "border-(--surface-active-border) bg-white/5/50 opacity-50"
+                            : "border-(--surface-active-border) bg-white/5/50 hover:border-(--color-accent)/50 hover:bg-(--color-accent)/5"
                         }`}
                       >
-                        <Cpu className="h-4 w-4 shrink-0 text-neutral-400" />
+                        <Cpu className="h-4 w-4 shrink-0 text-(--color-muted)" />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-neutral-200">{def.name}</p>
-                          <p className="truncate text-xs text-neutral-500">
+                          <p className="truncate text-sm font-medium text-(--color-text)">{def.name}</p>
+                          <p className="truncate text-xs text-(--color-muted)">
                             {def.profiles.length} profile{def.profiles.length !== 1 ? "s" : ""}
                           </p>
                         </div>
@@ -352,13 +352,13 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
           {/* ── IMPORT VIEW ── */}
           {view === "import" && (
             <div className="space-y-4">
-              <p className="text-sm text-neutral-400">
+              <p className="text-sm text-(--color-muted)">
                 {t("emulator.import_instructions", "Select the folder where your emulators are installed. LumaForge will scan for known emulator executables.")}
               </p>
 
               {/* Folder picker */}
               <div>
-                <label className="mb-1 block text-xs text-neutral-400">
+                <label className="mb-1 block text-xs text-(--color-muted)">
                   {t("emulator.emulator_folder", "Emulator Folder")}
                 </label>
                 <div className="flex gap-2">
@@ -367,11 +367,11 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                     value={importDir}
                     onChange={(e) => setImportDir(e.target.value)}
                     placeholder="C:\Emulators"
-                    className="flex-1 rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+                    className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                   />
                   <button
                     onClick={handleImportSelectFolder}
-                    className="rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700"
+                    className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
                   >
                     <FolderOpen className="h-4 w-4" />
                   </button>
@@ -382,7 +382,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
               <button
                 onClick={handleImportScan}
                 disabled={!importDir || importing}
-                className="w-full rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+                className="w-full rounded-lg bg-(--color-accent) px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
               >
                 {importing
                   ? t("emulator.scanning", "Scanning...")
@@ -392,14 +392,14 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
               {/* Detected emulators */}
               {detectedEmulators.length > 0 && (
                 <div>
-                  <h3 className="mb-2 text-sm font-medium text-neutral-300">
+                  <h3 className="mb-2 text-sm font-medium text-(--color-text)">
                     {t("emulator.detected", "Detected Emulators")}
                   </h3>
                   <div className="space-y-2">
                     {detectedEmulators.map((detected) => (
                       <label
                         key={detected.definitionId}
-                        className="flex items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900/50 p-3 cursor-pointer"
+                        className="flex items-center gap-3 rounded-lg border border-(--surface-active-border) bg-(--surface-active)/50 p-3 cursor-pointer"
                       >
                         <input
                           type="checkbox"
@@ -413,14 +413,14 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                             }
                             setSelectedDetected(next);
                           }}
-                          className="rounded border-neutral-600 bg-neutral-800 text-purple-500 focus:ring-purple-500"
+                          className="rounded border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
                         />
-                        <Monitor className="h-4 w-4 text-purple-400" />
+                        <Monitor className="h-4 w-4 text-(--color-accent)" />
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-neutral-200">
+                          <p className="text-sm font-medium text-(--color-text)">
                             {detected.definitionName}
                           </p>
-                          <p className="truncate text-xs text-neutral-500">
+                          <p className="truncate text-xs text-(--color-muted)">
                             {detected.matchedProfiles.length} profile(s) — {detected.detectedDir}
                           </p>
                         </div>
@@ -440,7 +440,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
 
               {/* No results */}
               {!importing && importDir && detectedEmulators.length === 0 && (
-                <p className="text-center text-sm text-neutral-500">
+                <p className="text-center text-sm text-(--color-muted)">
                   {t("emulator.no_emulators_found", "No known emulators found in this directory.")}
                 </p>
               )}
@@ -448,7 +448,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
               {/* Back button */}
               <button
                 onClick={() => setView("list")}
-                className="w-full rounded-lg px-4 py-2 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                className="w-full rounded-lg px-4 py-2 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
               >
                 {t("common.back", "Back")}
               </button>
@@ -461,21 +461,21 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
               {/* Emulator selector (add mode only) */}
               {view === "add" && !selectedDef && (
                 <div>
-                  <label className="mb-1 block text-xs text-neutral-400">
+                  <label className="mb-1 block text-xs text-(--color-muted)">
                     {t("emulator.select_emulator", "Select Emulator")}
                   </label>
-                  <div className="max-h-48 space-y-1 overflow-y-auto rounded border border-neutral-700 bg-neutral-800 p-2">
+                  <div className="max-h-48 space-y-1 overflow-y-auto rounded border border-(--surface-active-border) bg-white/5 p-2">
                     {emulatorDefinitions
                       .filter((def) => !configuredIds.has(def.id))
                       .map((def) => (
                         <button
                           key={def.id}
                           onClick={() => handleAddManual(def)}
-                          className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-700"
+                          className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-(--color-text) hover:bg-white/10"
                         >
-                          <Cpu className="h-4 w-4 text-neutral-400" />
+                          <Cpu className="h-4 w-4 text-(--color-muted)" />
                           <span>{def.name}</span>
-                          <span className="ml-auto text-xs text-neutral-500">
+                          <span className="ml-auto text-xs text-(--color-muted)">
                             {def.profiles.length} profiles
                           </span>
                         </button>
@@ -489,20 +489,20 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                 <div className="space-y-3">
                   {/* Name */}
                   <div>
-                    <label className="mb-1 block text-xs text-neutral-400">
+                    <label className="mb-1 block text-xs text-(--color-muted)">
                       {t("emulator.name", "Name")}
                     </label>
                     <input
                       type="text"
                       value={formName}
                       onChange={(e) => setFormName(e.target.value)}
-                      className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+                      className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                     />
                   </div>
 
                   {/* Installation Directory */}
                   <div>
-                    <label className="mb-1 block text-xs text-neutral-400">
+                    <label className="mb-1 block text-xs text-(--color-muted)">
                       {t("emulator.install_dir", "Installation Directory")}
                     </label>
                     <div className="flex gap-2">
@@ -511,11 +511,11 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                         value={formInstallDir}
                         onChange={(e) => setFormInstallDir(e.target.value)}
                         placeholder="C:\Emulators\RetroArch"
-                        className="flex-1 rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+                        className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                       />
                       <button
                         onClick={handleBrowseInstallDir}
-                        className="rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700"
+                        className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
                       >
                         <FolderOpen className="h-4 w-4" />
                       </button>
@@ -524,7 +524,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
 
                   {/* Executable Path */}
                   <div>
-                    <label className="mb-1 block text-xs text-neutral-400">
+                    <label className="mb-1 block text-xs text-(--color-muted)">
                       {t("emulator.exe_path", "Executable (optional)")}
                     </label>
                     <div className="flex gap-2">
@@ -533,11 +533,11 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                         value={formExePath}
                         onChange={(e) => setFormExePath(e.target.value)}
                         placeholder="C:\Emulators\RetroArch\retroarch.exe"
-                        className="flex-1 rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+                        className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                       />
                       <button
                         onClick={handleBrowseExe}
-                        className="rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700"
+                        className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
                       >
                         <FolderOpen className="h-4 w-4" />
                       </button>
@@ -547,14 +547,14 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                   {/* Profile Selection */}
                   {selectedDef && selectedDef.profiles.length > 0 && (
                     <div>
-                      <label className="mb-1 block text-xs text-neutral-400">
+                      <label className="mb-1 block text-xs text-(--color-muted)">
                         {t("emulator.default_profile", "Default Profile")}
                       </label>
                       <div className="relative">
                         <select
                           value={formProfile}
                           onChange={(e) => setFormProfile(e.target.value)}
-                          className="w-full appearance-none rounded border border-neutral-700 bg-neutral-800 px-3 py-2 pr-8 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+                          className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                         >
                           {selectedDef.profiles.map((p) => (
                             <option key={p.name} value={p.name}>
@@ -562,7 +562,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                             </option>
                           ))}
                         </select>
-                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
                       </div>
                     </div>
                   )}
@@ -575,14 +575,14 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                         setEditingConfig(null);
                         setSelectedDef(null);
                       }}
-                      className="rounded-lg px-3 py-1.5 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                      className="rounded-lg px-3 py-1.5 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
                     >
                       {t("common.cancel", "Cancel")}
                     </button>
                     <button
                       onClick={handleSaveForm}
                       disabled={!formName.trim() || !formInstallDir.trim()}
-                      className="rounded-lg bg-purple-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+                      className="rounded-lg bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
                     >
                       {editingConfig
                         ? t("common.save", "Save")
@@ -597,10 +597,10 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
 
         {/* Footer */}
         {view === "list" && (
-          <div className="flex justify-end border-t border-neutral-800 px-6 py-4">
+          <div className="flex justify-end border-t border-(--surface-active-border) px-6 py-4">
             <button
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+              className="rounded-lg px-3 py-1.5 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
             >
               {t("common.close", "Close")}
             </button>

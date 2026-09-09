@@ -43,7 +43,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
   );
 
   return (
-    <div className="rounded border border-neutral-700 bg-neutral-800/50 p-3 space-y-3">
+    <div className="rounded border border-(--surface-active-border) bg-white/5 p-3 space-y-3">
       {/* Profile Type Badge */}
       <div className="flex items-center gap-2">
         <span
@@ -58,13 +58,13 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
       </div>
 
       {/* Tab Bar */}
-      <div className="flex gap-0 border-b border-neutral-700">
+      <div className="flex gap-0 border-b border-(--surface-active-border)">
         <button
           onClick={() => setActiveTab("general")}
           className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition-colors ${
             activeTab === "general"
-              ? "border-b-2 border-purple-500 text-purple-400"
-              : "text-neutral-400 hover:text-neutral-200"
+              ? "border-b-2 border-(--color-accent) text-(--color-accent)"
+              : "text-(--color-muted) hover:text-(--color-text)"
           }`}
         >
           <Settings className="h-3 w-3" />
@@ -74,8 +74,8 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
           onClick={() => setActiveTab("scripts")}
           className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition-colors ${
             activeTab === "scripts"
-              ? "border-b-2 border-purple-500 text-purple-400"
-              : "text-neutral-400 hover:text-neutral-200"
+              ? "border-b-2 border-(--color-accent) text-(--color-accent)"
+              : "text-(--color-muted) hover:text-(--color-text)"
           }`}
         >
           <Code className="h-3 w-3" />
@@ -85,8 +85,8 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
           onClick={() => setActiveTab("startup")}
           className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition-colors ${
             activeTab === "startup"
-              ? "border-b-2 border-purple-500 text-purple-400"
-              : "text-neutral-400 hover:text-neutral-200"
+              ? "border-b-2 border-(--color-accent) text-(--color-accent)"
+              : "text-(--color-muted) hover:text-(--color-text)"
           }`}
         >
           <Terminal className="h-3 w-3" />
@@ -99,28 +99,28 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
         <div className="space-y-3">
           {/* Name */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.profile_name", "Name")}
             </label>
             <input
               type="text"
               value={profile.name}
               onChange={(e) => update({ name: e.target.value })}
-              className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
             />
           </div>
 
           {/* Builtin Profile Selector */}
           {profile.type === "builtin" && (
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.builtin_profile", "Built-in Profile")}
               </label>
               <div className="relative">
                 <select
                   value={profile.builtinProfileName ?? ""}
                   onChange={(e) => update({ builtinProfileName: e.target.value || undefined })}
-                  className="w-full appearance-none rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 pr-8 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                 >
                   <option value="">—</option>
                   {emulatorDefinitions.map((def) =>
@@ -131,7 +131,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                     ))
                   )}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
               </div>
             </div>
           )}
@@ -144,9 +144,9 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 id="overrideArgs"
                 checked={profile.overrideDefaultArgs ?? false}
                 onChange={(e) => update({ overrideDefaultArgs: e.target.checked })}
-                className="rounded border-neutral-600 bg-neutral-800 text-purple-500 focus:ring-purple-500"
+                className="rounded border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
               />
-              <label htmlFor="overrideArgs" className="text-xs text-neutral-400">
+              <label htmlFor="overrideArgs" className="text-xs text-(--color-muted)">
                 {t("emulator.override_args", "Override default arguments")}
               </label>
             </div>
@@ -155,7 +155,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
           {/* Custom Arguments */}
           {(profile.type === "custom" || profile.overrideDefaultArgs) && (
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.arguments", "Arguments")}
               </label>
               <input
@@ -169,9 +169,9 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                   )
                 }
                 placeholder='"{ImagePath}" -f'
-                className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+                className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
               />
-              <p className="mt-0.5 text-[10px] text-neutral-500">
+              <p className="mt-0.5 text-[10px] text-(--color-muted)">
                 {t("emulator.placeholders", "Placeholders: {ImagePath}, {ImageName}, {ImageNameNoExt}, {EmulatorDir}, {GameName}, {InstallDir}")}
               </p>
             </div>
@@ -180,7 +180,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
           {/* Executable (custom only) */}
           {profile.type === "custom" && (
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.executable", "Executable")}
               </label>
               <div className="flex gap-2">
@@ -189,7 +189,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                   value={profile.executable ?? ""}
                   onChange={(e) => update({ executable: e.target.value })}
                   placeholder="C:\Emulators\my-emulator.exe"
-                  className="flex-1 rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+                  className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                 />
                 <button
                   onClick={async () => {
@@ -206,7 +206,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                       showError(t("emulator.file_picker_failed", "File picker failed: {{error}}", { error: msg }));
                     }
                   }}
-                  className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-neutral-300 hover:bg-neutral-700"
+                  className="rounded border border-(--surface-active-border) bg-white/5 px-2 py-1.5 text-(--color-text) hover:bg-white/10"
                 >
                   <FolderOpen className="h-4 w-4" />
                 </button>
@@ -217,7 +217,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
           {/* Working Directory (custom only) */}
           {profile.type === "custom" && (
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.working_dir", "Working Directory")}
               </label>
               <input
@@ -225,17 +225,17 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 value={profile.workingDirectory ?? ""}
                 onChange={(e) => update({ workingDirectory: e.target.value })}
                 placeholder="{EmulatorDir}"
-                className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+                className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
               />
             </div>
           )}
 
           {/* Platforms */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.platforms", "Platforms")}
             </label>
-            <div className="max-h-32 overflow-y-auto rounded border border-neutral-700 bg-neutral-800 p-2 space-y-1">
+            <div className="max-h-32 overflow-y-auto rounded border border-(--surface-active-border) bg-white/5 p-2 space-y-1">
               {emulatorPlatforms.map((p) => {
                 const checked = profile.supportedPlatforms.includes(p.id);
                 return (
@@ -250,9 +250,9 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                           update({ supportedPlatforms: profile.supportedPlatforms.filter((id) => id !== p.id) });
                         }
                       }}
-                      className="rounded border-neutral-600 bg-neutral-800 text-purple-500 focus:ring-purple-500"
+                      className="rounded border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
                     />
-                    <span className="text-xs text-neutral-300">{p.shortName}</span>
+                    <span className="text-xs text-(--color-text)">{p.shortName}</span>
                   </label>
                 );
               })}
@@ -261,7 +261,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
 
           {/* File Types */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.file_types", "File Types")}
             </label>
             <input
@@ -276,20 +276,20 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 })
               }
               placeholder="sfc, smc, zip, 7z"
-              className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
             />
           </div>
 
           {/* Tracking Mode */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.tracking_mode", "Tracking Mode")}
             </label>
             <div className="relative">
               <select
                 value={profile.trackingMode}
                 onChange={(e) => update({ trackingMode: e.target.value as TrackingMode })}
-                className="w-full appearance-none rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 pr-8 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+                className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
               >
                 {TRACKING_MODES.map((m) => (
                   <option key={m.value} value={m.value}>
@@ -297,14 +297,14 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
             </div>
           </div>
 
           {/* Tracking Path (for process/folder modes) */}
           {profile.trackingMode !== "default" && (
             <div>
-              <label className="mb-1 block text-xs text-neutral-400">
+              <label className="mb-1 block text-xs text-(--color-muted)">
                 {profile.trackingMode === "process"
                   ? t("emulator.process_name", "Process Name")
                   : t("emulator.tracking_folder", "Tracking Folder")}
@@ -314,7 +314,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 value={profile.trackingPath ?? ""}
                 onChange={(e) => update({ trackingPath: e.target.value })}
                 placeholder={profile.trackingMode === "process" ? "retroarch.exe" : "C:\\Games\\Saves"}
-                className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+                className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
               />
             </div>
           )}
@@ -326,7 +326,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
         <div className="space-y-3">
           {/* Pre Script */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.pre_script", "Pre-launch Script")}
             </label>
             <textarea
@@ -334,13 +334,13 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ preScript: e.target.value || undefined })}
               placeholder="# Script to run before launching the emulator"
               rows={3}
-              className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none font-mono"
+              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
 
           {/* Post Script */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.post_script", "Post-launch Script")}
             </label>
             <textarea
@@ -348,13 +348,13 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ postScript: e.target.value || undefined })}
               placeholder="# Script to run after launching the emulator"
               rows={3}
-              className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none font-mono"
+              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
 
           {/* Exit Script */}
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.exit_script", "Exit Script")}
             </label>
             <textarea
@@ -362,7 +362,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ exitScript: e.target.value || undefined })}
               placeholder="# Script to run after emulator exits"
               rows={3}
-              className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none font-mono"
+              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
         </div>
@@ -371,11 +371,11 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
       {/* ── Startup Script Tab ── */}
       {activeTab === "startup" && (
         <div className="space-y-3">
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-(--color-muted)">
             {t("emulator.startup_script_hint", "A startup script replaces the normal launch command. When present, the emulator is started via this script instead of running the executable directly.")}
           </p>
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">
+            <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.startup_script", "Startup Script")}
             </label>
             <textarea
@@ -383,7 +383,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ startupScript: e.target.value || undefined })}
               placeholder="# Custom startup script (replaces normal launch)"
               rows={8}
-              className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none font-mono"
+              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
         </div>

@@ -35,20 +35,20 @@ export function EmulatorDetailPanel({ config, onChange }: EmulatorDetailPanelPro
     <div className="space-y-3">
       {/* Name */}
       <div>
-        <label className="mb-1 block text-xs text-neutral-400">
+        <label className="mb-1 block text-xs text-(--color-muted)">
           {t("emulator.name", "Name")}
         </label>
         <input
           type="text"
           value={config.name}
           onChange={(e) => onChange({ ...config, name: e.target.value })}
-          className="w-full rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+          className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
         />
       </div>
 
       {/* Installation Directory */}
       <div>
-        <label className="mb-1 block text-xs text-neutral-400">
+        <label className="mb-1 block text-xs text-(--color-muted)">
           {t("emulator.install_dir", "Installation Directory")}
         </label>
         <div className="flex gap-2">
@@ -57,11 +57,11 @@ export function EmulatorDetailPanel({ config, onChange }: EmulatorDetailPanelPro
             value={config.installDir}
             onChange={(e) => onChange({ ...config, installDir: e.target.value })}
             placeholder="C:\Emulators\RetroArch"
-            className="flex-1 rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:border-purple-500 focus:outline-none"
+            className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
           />
           <button
             onClick={handleBrowseInstallDir}
-            className="rounded border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-700"
+            className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
           >
             <FolderOpen className="h-4 w-4" />
           </button>
@@ -70,7 +70,7 @@ export function EmulatorDetailPanel({ config, onChange }: EmulatorDetailPanelPro
 
       {/* Emulator Specification */}
       <div>
-        <label className="mb-1 block text-xs text-neutral-400">
+        <label className="mb-1 block text-xs text-(--color-muted)">
           {t("emulator.specification", "Emulator Specification")}
         </label>
         <div className="relative">
@@ -80,7 +80,7 @@ export function EmulatorDetailPanel({ config, onChange }: EmulatorDetailPanelPro
               const val = e.target.value;
               onChange({ ...config, definitionId: val || undefined });
             }}
-            className="w-full appearance-none rounded border border-neutral-700 bg-neutral-800 px-3 py-2 pr-8 text-sm text-neutral-200 focus:border-purple-500 focus:outline-none"
+            className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
           >
             <option value="">{t("emulator.no_spec", "(none)")}</option>
             {emulatorDefinitions.map((def) => (
@@ -89,9 +89,9 @@ export function EmulatorDetailPanel({ config, onChange }: EmulatorDetailPanelPro
               </option>
             ))}
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
         </div>
-        <p className="mt-1 text-xs text-neutral-500">
+        <p className="mt-1 text-xs text-(--color-muted)">
           {t("emulator.spec_hint", "Link to a known emulator for auto-detected profiles")}
         </p>
       </div>

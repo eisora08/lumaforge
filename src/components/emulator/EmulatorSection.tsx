@@ -236,13 +236,13 @@ export default function EmulatorSection() {
       description={t("settings.emulators_desc", "Configure emulators for playing ROM games")}
     >
       {/* ── Tab Bar ── */}
-      <div className="flex gap-0 border-b border-neutral-800 mb-4">
+      <div className="flex gap-0 border-b border-(--surface-active-border) mb-4">
         <button
           onClick={() => setActiveTab("emulators")}
           className={`px-4 py-2 text-sm font-medium transition-colors ${
             activeTab === "emulators"
-              ? "border-b-2 border-purple-500 text-purple-400"
-              : "text-neutral-400 hover:text-neutral-200"
+              ? "border-b-2 border-(--color-accent) text-(--color-accent)"
+              : "text-(--color-muted) hover:text-(--color-text)"
           }`}
         >
           <Gamepad2 className="mr-1.5 inline h-4 w-4" />
@@ -252,8 +252,8 @@ export default function EmulatorSection() {
           onClick={() => setActiveTab("autoscan")}
           className={`px-4 py-2 text-sm font-medium transition-colors ${
             activeTab === "autoscan"
-              ? "border-b-2 border-purple-500 text-purple-400"
-              : "text-neutral-400 hover:text-neutral-200"
+              ? "border-b-2 border-(--color-accent) text-(--color-accent)"
+              : "text-(--color-muted) hover:text-(--color-text)"
           }`}
         >
           <Search className="mr-1.5 inline h-4 w-4" />
@@ -285,15 +285,15 @@ export default function EmulatorSection() {
                 />
 
                 {/* Profiles Section */}
-                <div className="border-t border-neutral-800 pt-4">
+                <div className="border-t border-(--surface-active-border) pt-4">
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-medium text-neutral-300">
+                    <h3 className="text-sm font-medium text-(--color-text)">
                       {t("emulator.profiles", "Profiles")}
                     </h3>
                     <div className="flex gap-1">
                       <button
                         onClick={handleAddProfile}
-                        className="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                        className="rounded p-1.5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
                         title={t("emulator.add_profile", "Add Profile")}
                       >
                         <Plus className="h-4 w-4" />
@@ -301,7 +301,7 @@ export default function EmulatorSection() {
                       <button
                         onClick={handleCopyProfile}
                         disabled={!selectedProfile}
-                        className="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-30"
+                        className="rounded p-1.5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text) disabled:opacity-30"
                         title={t("emulator.copy_profile", "Copy Profile")}
                       >
                         <Copy className="h-4 w-4" />
@@ -309,7 +309,7 @@ export default function EmulatorSection() {
                       <button
                         onClick={handleRemoveProfile}
                         disabled={!selectedProfileId}
-                        className="rounded p-1.5 text-neutral-400 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-30"
+                        className="rounded p-1.5 text-(--color-muted) hover:bg-red-500/10 hover:text-red-400 disabled:opacity-30"
                         title={t("emulator.remove_profile", "Remove Profile")}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -318,7 +318,7 @@ export default function EmulatorSection() {
                   </div>
 
                   {/* Profile List */}
-                  <div className="max-h-40 overflow-y-auto rounded border border-neutral-700 bg-neutral-800">
+                  <div className="max-h-40 overflow-y-auto rounded border border-(--surface-active-border) bg-white/5">
                     {selectedConfig.profiles.length > 0 ? (
                       selectedConfig.profiles.map((profile) => (
                         <button
@@ -328,19 +328,19 @@ export default function EmulatorSection() {
                           }}
                           className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
                             selectedProfileId === profile.id
-                              ? "bg-purple-500/10 text-purple-300"
-                              : "text-neutral-300 hover:bg-neutral-700"
+                              ? "bg-(--color-accent)/10 text-(--color-accent)"
+                              : "text-(--color-text) hover:bg-white/10"
                           }`}
                         >
-                          <Settings className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                          <Settings className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
                           <span className="truncate">{profile.name}</span>
-                          <span className="ml-auto text-xs text-neutral-500">
+                          <span className="ml-auto text-xs text-(--color-muted)">
                             {profile.type === "builtin" ? t("emulator.builtin", "Built-in") : t("emulator.custom", "Custom")}
                           </span>
                         </button>
                       ))
                     ) : (
-                      <p className="px-3 py-2 text-xs text-neutral-500">
+                      <p className="px-3 py-2 text-xs text-(--color-muted)">
                         {t("emulator.no_profiles", "No profiles. Click + to add one.")}
                       </p>
                     )}
@@ -358,7 +358,7 @@ export default function EmulatorSection() {
                 </div>
               </div>
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-neutral-500">
+              <div className="flex h-full items-center justify-center text-sm text-(--color-muted)">
                 {t("emulator.select_config", "Select an emulator from the list, or add a new one.")}
               </div>
             )}
