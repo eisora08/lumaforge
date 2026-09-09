@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LibraryGame } from "../../types/libraryGame";
 import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey, formatPlaytime, subscribePlaytimeStore } from "../../services/playtimeService";
+import { getPlatformShortName } from "../../utils/platformUtils";
 
 const POPUP_WIDTH = 300;
 const POPUP_IMAGE_HEIGHT = 170;
@@ -257,6 +258,7 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
           {/* Source + repacker badges */}
           <div className="mt-1.5 flex items-center gap-1.5">
             {(() => {
+              const emulatorPlatformLabel = game.source === "emulator" ? getPlatformShortName(game.emulatorPlatform) : null;
               const srcBadge = game.hasLua || game.source === "lua"
                 ? { label: "LUA", cls: "bg-emerald-500/30 text-emerald-300" }
                 : game.source === "epic"
@@ -266,7 +268,7 @@ export default function GameHoverPreview({ game, position }: GameHoverPreviewPro
                     : game.source === "manual"
                       ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
                       : game.source === "emulator"
-                        ? { label: "EMULATOR", cls: "bg-rose-500/30 text-rose-300" }
+                        ? { label: emulatorPlatformLabel ? `${emulatorPlatformLabel} • EMULATOR` : "EMULATOR", cls: "bg-rose-500/30 text-rose-300" }
                         : game.source === "steam"
                           ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
                           : null;

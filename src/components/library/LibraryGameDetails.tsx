@@ -68,6 +68,7 @@ import { useConfirm } from "../../services/confirmService";
 import UninstallGameDialog from "../games/UninstallGameDialog";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
+import { getPlatformShortName } from "../../utils/platformUtils";
 import { openExternalUrl } from "../../services/externalLinks";
 import {
   getSteamStoreUrl,
@@ -1640,6 +1641,7 @@ export default function LibraryGameDetails({
                   </span>
                 )}
                 {(() => {
+                  const emulatorPlatformLabel = game.source === "emulator" ? getPlatformShortName(game.emulatorPlatform) : null;
                   const srcBadge = game.hasLua || game.source === "lua"
                     ? { label: "LUA", cls: "bg-emerald-500/15 text-emerald-400 ring-emerald-500/25" }
                     : game.source === "epic"
@@ -1649,7 +1651,7 @@ export default function LibraryGameDetails({
                         : game.source === "manual"
                           ? { label: "MANUAL", cls: "bg-amber-500/15 text-amber-300 ring-amber-500/25" }
                           : game.source === "emulator"
-                            ? { label: "EMULATOR", cls: "bg-rose-500/15 text-rose-400 ring-rose-500/25" }
+                            ? { label: emulatorPlatformLabel ? `${emulatorPlatformLabel} • EMULATOR` : "EMULATOR", cls: "bg-rose-500/15 text-rose-400 ring-rose-500/25" }
                             : game.source === "steam"
                               ? { label: "STEAM", cls: "bg-blue-500/15 text-blue-400 ring-blue-500/25" }
                               : null;

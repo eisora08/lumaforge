@@ -15,6 +15,12 @@
 
 import { igdbGetAccessToken } from "./tauri";
 
+// ── Embedded credentials (zero-config fallback) ──
+// IGDB is free for non-commercial use. These credentials are for LumaForge's
+// built-in IGDB integration. Users can override with their own in Settings.
+const EMBEDDED_IGDB_CLIENT_ID = "7oygcgiu69nap8qi4dqjue8habh7xz";
+const EMBEDDED_IGDB_CLIENT_SECRET = "REPLACE_WITH_YOUR_SECRET"; // <-- paste your Twitch Client Secret here
+
 // ── Token cache ──
 
 interface TokenCache {
@@ -38,8 +44,12 @@ export async function getIgdbAccessToken(
   clientId: string,
   clientSecret: string,
 ): Promise<string> {
-  if (!clientId || !clientSecret) {
-    throw "IGDB credentials are not configured. Set your Twitch Client ID and Client Secret in Settings.";
+  // Fallback: if user hasn't configured credentials, use embedded ones
+  const effectiveClientId = clientId || EMBEDDED_IGDB_CLIENT_ID;
+  const effectiveClientSecret = clientSecret || EMBEDDED_IGDB_CLIENT_SECRET;
+
+  if (!effectiveClientId || !effectiveClientSecret || effectiveClientSecret === "REPLACE_WITH_YOUR_SECRET") {
+    throw "IGDB credentials are not configured. Set your Twitch Client ID and Client Secret in Settings, or paste the embedded Client Secret in igdbAccessTokenService.ts.";
   }
 
   // Return cached token if still valid (with 60 s buffer)
@@ -49,7 +59,7 @@ export async function getIgdbAccessToken(
 
   // Exchange client credentials for an OAuth access token via Rust backend
   try {
-    const resp = await igdbGetAccessToken(clientId, clientSecret);
+    const resp = await igdbGetAccessToken(effectiveClientId, effectiveClientSecret);
     const accessToken = resp.access_token;
     const expiresInMs = (resp.expires_in ?? 3600) * 1000;
 

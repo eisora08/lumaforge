@@ -455,6 +455,135 @@ export class ManualMediaAdapter implements GameMediaAdapter {
 }
 
 // ---------------------------------------------------------------------------
+// Emulator media adapter
+// ---------------------------------------------------------------------------
+
+export class EmulatorMediaAdapter implements GameMediaAdapter {
+  readonly providerId: MediaProviderId = "emulator";
+  readonly providerGameId: string;
+  readonly paths: ProviderMediaPathResult;
+
+  constructor(emulatorGameId: string) {
+    this.providerGameId = emulatorGameId.startsWith("emulator:")
+      ? emulatorGameId.slice("emulator:".length)
+      : emulatorGameId;
+    this.paths = buildProviderMediaPath({
+      providerId: "emulator",
+      providerGameId: this.providerGameId,
+      role: "cover",
+      extension: ROLE_DEFAULT_EXTENSIONS.cover,
+    });
+  }
+
+  getRolePath(role: MediaRole): string {
+    return buildProviderMediaPath({
+      providerId: "emulator",
+      providerGameId: this.providerGameId,
+      role,
+      extension: ROLE_DEFAULT_EXTENSIONS[role],
+    }).relativePath;
+  }
+
+  async getRolePreviewUrl(role: MediaRole): Promise<string | null> {
+    const relPath = this.getRolePath(role);
+    return resolveProviderMediaPreviewUrl(relPath);
+  }
+
+  async getRoleState(role: MediaRole): Promise<RoleMediaState> {
+    const relPath = this.getRolePath(role);
+    const previewUrl = await resolveProviderMediaPreviewUrl(relPath);
+    return {
+      hasFile: !!previewUrl,
+      relativePath: relPath,
+      previewUrl,
+      extension: ROLE_DEFAULT_EXTENSIONS[role],
+    };
+  }
+
+  async getAllRoleStates(): Promise<Record<MediaRole, RoleMediaState>> {
+    const roles: MediaRole[] = ["cover", "landscape", "background", "logo", "icon"];
+    const result = {} as Record<MediaRole, RoleMediaState>;
+    for (const role of roles) {
+      result[role] = await this.getRoleState(role);
+    }
+    return result;
+  }
+
+  async saveRoleFromFile(role: MediaRole, filePath: string): Promise<string | null> {
+    try {
+      const relativePath = await saveProviderMediaFromPath(
+        "emulator",
+        this.providerGameId,
+        role,
+        filePath,
+      );
+      invalidateMediaDirCache("emulator", this.providerGameId);
+      return relativePath;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][SAVE_FILE] provider=emulator game=${this.providerGameId} role=${role} error=`, err);
+      return null;
+    }
+  }
+
+  async saveRoleFromUrl(role: MediaRole, url: string): Promise<string | null> {
+    try {
+      const relativePath = await downloadProviderMediaFromUrl(
+        "emulator",
+        this.providerGameId,
+        role,
+        url,
+        true,
+      );
+      invalidateMediaDirCache("emulator", this.providerGameId);
+      return relativePath;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][SAVE_URL] provider=emulator game=${this.providerGameId} role=${role} error=`, err);
+      return null;
+    }
+  }
+
+  async saveRoleFromBase64(role: MediaRole, contentBase64: string, ext: string): Promise<string | null> {
+    try {
+      const relativePath = await saveProviderMediaFromBase64(
+        "emulator",
+        this.providerGameId,
+        role,
+        contentBase64,
+        ext,
+      );
+      invalidateMediaDirCache("emulator", this.providerGameId);
+      return relativePath;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][SAVE_BASE64] provider=emulator game=${this.providerGameId} role=${role} error=`, err);
+      return null;
+    }
+  }
+
+  async removeRole(role: MediaRole): Promise<boolean> {
+    try {
+      await deleteProviderMediaFile("emulator", this.providerGameId, role);
+      invalidateMediaDirCache("emulator", this.providerGameId);
+      return true;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][REMOVE] provider=emulator game=${this.providerGameId} role=${role} error=`, err);
+      return false;
+    }
+  }
+
+  getAvailableSources(_role: MediaRole): MediaSourceDescriptor[] {
+    return [
+      { id: "local-file", label: "Local File", enabled: true },
+      { id: "url", label: "URL", enabled: true },
+      { id: "web-search", label: "Web Search", enabled: true },
+      { id: "igdb", label: "IGDB", enabled: true },
+      { id: "steam-original", label: "Steam Original Assets", enabled: false, disabledReason: "Not a Steam game" },
+      { id: "steamgriddb", label: "SteamGridDB", enabled: false, disabledReason: "Not yet wired" },
+      { id: "rawg", label: "RAWG", enabled: false, disabledReason: "Not applicable" },
+    ];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Future adapter skeletons (type placeholders)
 // ---------------------------------------------------------------------------
 
@@ -604,6 +733,8 @@ export function createMediaAdapter(
       return new SteamMediaAdapter(providerGameId);
     case "manual":
       return new ManualMediaAdapter(providerGameId);
+    case "emulator":
+      return new EmulatorMediaAdapter(providerGameId);
     default:
       return new GenericMediaAdapter(providerId, providerGameId);
   }

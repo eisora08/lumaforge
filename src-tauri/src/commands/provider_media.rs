@@ -14,7 +14,7 @@ use crate::utils::image_utils;
 
 const VALID_ROLES: &[&str] = &["cover", "landscape", "background", "logo", "icon"];
 const VALID_PROVIDERS: &[&str] = &[
-    "steam", "manual", "epic", "gog", "battle_net", "ubisoft", "ea", "amazon",
+    "steam", "manual", "epic", "emulator", "gog", "battle_net", "ubisoft", "ea", "amazon",
 ];
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
 const DOWNLOAD_TIMEOUT_SECS: u64 = 30;

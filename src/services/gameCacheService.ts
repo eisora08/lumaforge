@@ -49,6 +49,7 @@ import type {
   GameMediaSources,
 } from "./tauri";
 import type { LibraryGame } from "../types/libraryGame";
+import { getPlatformShortName } from "../utils/platformUtils";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SgdbArtworkData } from "./storeArtworkResolver";
 import type { RawgArtworkData, IgdbArtworkData } from "./storeArtworkResolver";
@@ -561,7 +562,10 @@ export function getSidebarLabel(game: LibraryGame): string {
   }
   if (localInstalled) {
     if (game.source === "manual") return "Manual";
-    if (game.source === "emulator") return "Emulator";
+    if (game.source === "emulator") {
+      const platformLabel = getPlatformShortName(game.emulatorPlatform);
+      return platformLabel ? `${platformLabel} • Emulator` : "Emulator";
+    }
     return "Local";
   }
   if (explicitInstalledStatus) return "Installed";

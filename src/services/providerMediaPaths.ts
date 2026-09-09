@@ -28,6 +28,7 @@ export type MediaProviderId =
   | "steam"
   | "manual"
   | "epic"
+  | "emulator"
   | "gog"
   | "battle_net"
   | "ubisoft"
@@ -100,7 +101,7 @@ export function isValidMediaRole(role: string): role is MediaRole {
  */
 export function isValidProviderId(id: string): id is MediaProviderId {
   return (
-    id === "steam" || id === "manual" || id === "epic" || id === "gog" ||
+    id === "steam" || id === "manual" || id === "epic" || id === "emulator" || id === "gog" ||
     id === "battle_net" || id === "ubisoft" || id === "ea" || id === "amazon" ||
     id === "local" || id === "lua" || id === "unknown"
   );

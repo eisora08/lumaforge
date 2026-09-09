@@ -1,6 +1,7 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { countRender } from "../../services/perfCounters";
+import { getPlatformShortName } from "../../utils/platformUtils";
 import {
   Download,
   ExternalLink,
@@ -620,6 +621,7 @@ function GameLauncherTileInner({
                 )}
                 <div className="mt-1 flex items-center gap-1.5">
                   {(() => {
+                    const emulatorPlatformLabel = game.source === "emulator" ? getPlatformShortName(game.emulatorPlatform) : null;
                     const srcBadge = game.hasLua
                       ? { label: "LUA", cls: "bg-emerald-500/30 text-emerald-300" }
                       : game.source === "epic"
@@ -629,7 +631,7 @@ function GameLauncherTileInner({
                           : game.source === "manual"
                             ? { label: "MANUAL", cls: "bg-amber-500/30 text-amber-300" }
                             : game.source === "emulator"
-                              ? { label: "EMULATOR", cls: "bg-rose-500/30 text-rose-300" }
+                              ? { label: emulatorPlatformLabel ? `${emulatorPlatformLabel} • EMULATOR` : "EMULATOR", cls: "bg-rose-500/30 text-rose-300" }
                               : game.source === "steam"
                                 ? { label: "STEAM", cls: "bg-blue-500/30 text-blue-300" }
                                 : null;

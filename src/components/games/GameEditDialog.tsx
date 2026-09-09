@@ -316,11 +316,14 @@ export default function GameEditDialog({
     if (isEpicMode && epicProviderGameId) {
       return createMediaAdapter("epic", epicProviderGameId);
     }
+    if (isEmulatorMode && emulatorProviderGameId) {
+      return createMediaAdapter("emulator", emulatorProviderGameId);
+    }
     if (appId) {
       return createMediaAdapter("steam", appId);
     }
     return null;
-  }, [appId, appIdDraft, manualGameId, epicProviderGameId, isManualMode, isEpicMode, isDebridMode]);
+  }, [appId, appIdDraft, manualGameId, epicProviderGameId, emulatorProviderGameId, isManualMode, isEpicMode, isDebridMode, isEmulatorMode]);
 
   // ── Load drafts from userData ──
   function loadDraftsFromUserData(info: GameAppInfo | null) {
@@ -606,13 +609,8 @@ export default function GameEditDialog({
 
       try {
         if (source === "igdb") {
-          if (!settings?.igdbClientId || !settings?.igdbClientSecret) {
-            showError(t("game_edit.configure_igdb_first", "Configure IGDB credentials in Settings first"));
-            setMetadataDownloading(false);
-            return;
-          }
           if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] calling fetchIgdbMetadataByName...");
-          const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+          const result = await fetchIgdbMetadataByName(settings?.igdbClientId ?? "", settings?.igdbClientSecret ?? "", searchName);
           if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] IGDB result:", result);
           if (result) {
             if (result.igdbId) setLinkedIgdbIdDraft(String(result.igdbId));
@@ -710,13 +708,8 @@ export default function GameEditDialog({
             showSuccess(`Found "${best.name}" on Steam — name filled. Metadata not available for this app.`);
           }
         } else if (source === "igdb") {
-          if (!settings?.igdbClientId || !settings?.igdbClientSecret) {
-            showError(t("game_edit.configure_igdb_first", "Configure IGDB credentials in Settings first"));
-            setMetadataDownloading(false);
-            return;
-          }
           if (DEBUG_MANUAL_METADATA) console.log(`[EPIC][META] source=igdb searchName="${searchName}"`);
-          const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+          const result = await fetchIgdbMetadataByName(settings?.igdbClientId ?? "", settings?.igdbClientSecret ?? "", searchName);
           if (DEBUG_MANUAL_METADATA) console.log("[EPIC][META] IGDB result:", result);
           if (result) {
             if (result.name) setNameDraft(result.name);
@@ -768,14 +761,9 @@ export default function GameEditDialog({
             showError(t("game_edit.toast_no_steam_metadata", "No Steam metadata available for this app"));
           }
         } else if (source === "igdb") {
-          if (!settings?.igdbClientId || !settings?.igdbClientSecret) {
-            showError(t("game_edit.configure_igdb_first", "Configure IGDB credentials in Settings first"));
-            setMetadataDownloading(false);
-            return;
-          }
           const igdbData = await fetchIgdbArtworkDeduped({
-            clientId: settings.igdbClientId,
-            clientSecret: settings.igdbClientSecret,
+            clientId: settings?.igdbClientId ?? "",
+            clientSecret: settings?.igdbClientSecret ?? "",
             appId: steamAppId,
           });
           if (igdbData) {
@@ -826,13 +814,9 @@ export default function GameEditDialog({
           }
         }
       } else if (source === "igdb") {
-        if (!settings?.igdbClientId || !settings?.igdbClientSecret) {
-          showError(t("game_edit.configure_igdb_first", "Configure IGDB credentials in Settings first"));
-          return;
-        }
         const igdbData = await fetchIgdbArtworkDeduped({
-          clientId: settings.igdbClientId,
-          clientSecret: settings.igdbClientSecret,
+          clientId: settings?.igdbClientId ?? "",
+          clientSecret: settings?.igdbClientSecret ?? "",
           appId,
         });
         if (igdbData) {
@@ -1460,6 +1444,29 @@ export default function GameEditDialog({
         return;
       }
 
+      // ── Emulator game — update EmulatorGameEntry ──
+      if (isEmulatorMode && emulatorProviderGameId) {
+        const { getEmulatorGame, saveEmulatorGame } = await import("../../services/emulatorGameStore");
+        const existing = getEmulatorGame(emulatorProviderGameId);
+        if (existing) {
+          saveEmulatorGame({
+            ...existing,
+            coverPath: updatedMedia.coverPath ?? undefined,
+            landscapePath: updatedMedia.landscapePath ?? undefined,
+            backgroundPath: updatedMedia.backgroundPath ?? undefined,
+            logoPath: updatedMedia.logoPath ?? undefined,
+            iconPath: updatedMedia.iconPath ?? undefined,
+          });
+        }
+        if (effectiveAppId) {
+          invalidateResolvedMediaCache(effectiveAppId);
+          notifyMediaUpdated(effectiveAppId);
+        }
+        setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
+        onMediaChanged?.();
+        return;
+      }
+
       // ── Epic game — update overrides store ──
       if (isEpicMode && epicProviderGameId) {
         const { writeEpicOverrides } = await import("../../services/epicOverrideStore");
@@ -1526,7 +1533,7 @@ export default function GameEditDialog({
       });
       onMediaChanged?.();
     },
-    [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId, onMediaChanged],
+    [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, isEmulatorMode, emulatorProviderGameId, manualGameId, createdManualId, onMediaChanged],
   );
 
   // ── Re-read media after web image search download ──
@@ -1584,7 +1591,7 @@ export default function GameEditDialog({
       try {
         const { base64, ext } = await readFileAsBase64(file);
 
-        if ((isManualMode || isCreateMode || isEpicMode) && mediaAdapter?.saveRoleFromBase64) {
+        if ((isManualMode || isCreateMode || isEpicMode || isEmulatorMode) && mediaAdapter?.saveRoleFromBase64) {
           // Manual game — use adapter's base64 save
           const relPath = await mediaAdapter.saveRoleFromBase64(role, base64, ext);
           if (relPath) {
@@ -1679,7 +1686,7 @@ export default function GameEditDialog({
           return;
         }
         // IGDB: search by name, return only assets IGDB actually provides for this role
-        if (sourceId === "igdb" && settings?.igdbClientId && settings?.igdbClientSecret) {
+        if (sourceId === "igdb") {
           const searchName = nameDraft.trim();
           if (!searchName) {
             showError(t("game_edit.enter_name_igdb", "Enter a game name first to search IGDB"));
@@ -1688,7 +1695,7 @@ export default function GameEditDialog({
           setSaving(true);
           setBrowsingRole(role);
           try {
-            const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+            const result = await fetchIgdbMetadataByName(settings?.igdbClientId ?? "", settings?.igdbClientSecret ?? "", searchName);
             if (!result) {
               showError(`No IGDB results found for "${searchName}"`);
             } else if (role === "cover" && result.coverUrl) {
@@ -1856,7 +1863,7 @@ export default function GameEditDialog({
           setBrowsingRole(null);
           return;
         }
-        if (sourceId === "igdb" && settings?.igdbClientId && settings?.igdbClientSecret) {
+        if (sourceId === "igdb") {
           const searchName = nameDraft.trim();
           if (!searchName) {
             showError(t("game_edit.enter_name_igdb", "Enter a game name first to search IGDB"));
@@ -1866,7 +1873,7 @@ export default function GameEditDialog({
           setBrowsingRole(role);
           try {
             const { fetchIgdbMetadataByName } = await import("../../services/storeArtworkResolver");
-            const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+            const result = await fetchIgdbMetadataByName(settings?.igdbClientId ?? "", settings?.igdbClientSecret ?? "", searchName);
             if (!result) {
               showError(`No IGDB results found for "${searchName}"`);
             } else if (role === "cover" && result.coverUrl) {
@@ -1925,11 +1932,11 @@ export default function GameEditDialog({
               else if (role === "icon") downloadUrl = artwork.iconUrl ?? null;
             }
           } catch { /* SGDB failed */ }
-        } else if (sourceId === "igdb" && settings?.igdbClientId && settings?.igdbClientSecret) {
+        } else if (sourceId === "igdb") {
           try {
             const igdbData = await fetchIgdbArtworkDeduped({
-              clientId: settings.igdbClientId,
-              clientSecret: settings.igdbClientSecret,
+              clientId: settings?.igdbClientId ?? "",
+              clientSecret: settings?.igdbClientSecret ?? "",
               appId: effectiveSteamAppId,
             });
             if (igdbData?.igdbCoverUrl && (role === "cover" || role === "landscape")) {
@@ -2145,10 +2152,10 @@ export default function GameEditDialog({
       return {
         canUseMetadataProviders: true,
         canUseSteamMetadata: true,
-        canUseIgdbMetadata: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+        canUseIgdbMetadata: true, // Embedded fallback credentials available
         canUseRawgMetadata: false,
         canUseSteamAssets: hasLinkedSteam,
-        canUseIgdbAssets: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+        canUseIgdbAssets: true, // Embedded fallback credentials available
         canUseSgdbAssets: hasSgdbKey,
         canUseRawgAssets: false,
       };
@@ -2157,10 +2164,10 @@ export default function GameEditDialog({
     return {
       canUseMetadataProviders: true,
       canUseSteamMetadata: true,
-      canUseIgdbMetadata: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+      canUseIgdbMetadata: true, // Embedded fallback credentials available
       canUseRawgMetadata: !!(settings?.rawgApiKey),
       canUseSteamAssets: hasSteamAppId || !!(metadata?.capsule_image || metadata?.header_image || metadata?.library_hero_image || metadata?.library_logo_image),
-      canUseIgdbAssets: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+      canUseIgdbAssets: true, // Embedded fallback credentials available
       canUseSgdbAssets: !!(settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled),
       canUseRawgAssets: !!(settings?.rawgApiKey),
     };
