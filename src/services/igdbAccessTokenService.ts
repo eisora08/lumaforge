@@ -15,11 +15,11 @@
 
 import { igdbGetAccessToken } from "./tauri";
 
-// ── Embedded credentials (zero-config fallback) ──
+// ── Embedded credentials (zero-config fallback via .env) ──
 // IGDB is free for non-commercial use. These credentials are for LumaForge's
 // built-in IGDB integration. Users can override with their own in Settings.
-const EMBEDDED_IGDB_CLIENT_ID = "7oygcgiu69nap8qi4dqjue8habh7xz";
-const EMBEDDED_IGDB_CLIENT_SECRET = "REPLACE_WITH_YOUR_SECRET"; // <-- paste your Twitch Client Secret here
+const EMBEDDED_IGDB_CLIENT_ID = import.meta.env.VITE_IGDB_CLIENT_ID ?? "";
+const EMBEDDED_IGDB_CLIENT_SECRET = import.meta.env.VITE_IGDB_CLIENT_SECRET ?? "";
 
 // ── Token cache ──
 
@@ -48,8 +48,8 @@ export async function getIgdbAccessToken(
   const effectiveClientId = clientId || EMBEDDED_IGDB_CLIENT_ID;
   const effectiveClientSecret = clientSecret || EMBEDDED_IGDB_CLIENT_SECRET;
 
-  if (!effectiveClientId || !effectiveClientSecret || effectiveClientSecret === "REPLACE_WITH_YOUR_SECRET") {
-    throw "IGDB credentials are not configured. Set your Twitch Client ID and Client Secret in Settings, or paste the embedded Client Secret in igdbAccessTokenService.ts.";
+  if (!effectiveClientId || !effectiveClientSecret) {
+    throw "IGDB credentials are not configured. Add VITE_IGDB_CLIENT_ID and VITE_IGDB_CLIENT_SECRET to your .env file, or set them in Settings.";
   }
 
   // Return cached token if still valid (with 60 s buffer)
