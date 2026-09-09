@@ -737,7 +737,9 @@
     "import_success": "Successfully imported {{count}} ROMs",
     "importing": "Importing...",
     "import_btn": "Import {{count}} ROMs",
-    "none": "None"
+    "none": "None",
+    "hide_imported": "Hide imported",
+    "hidden": "Hidden"
   },
   "import_export": {
     "export": "Export settings",

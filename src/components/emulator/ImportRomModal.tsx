@@ -2,25 +2,25 @@
  * ImportRomModal
  *
  * Modal for importing ROM files into the emulator library.
- * Matches Playnite's Import Wizard:
  *   - Scan folder / Browse files
  *   - Emulator + Profile dropdowns
  *   - Override platform
  *   - Checkboxes: scan subfolders, scan archives, merge files, relative paths
- *   - DataGrid of detected ROMs with per-ROM platform override
+ *   - List of detected ROMs with per-ROM platform override
  *   - Import button
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
-  Gamepad2, FolderOpen, FileCode, Check, X, Trash2, Search, ChevronDown,
+  Gamepad2, FolderOpen, FileCode, Check, X, Trash2, EyeOff,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { pickFolder } from "../../services/tauri";
 import {
   saveEmulatorGames,
+  getAllEmulatorGames,
   isRomFile,
   guessPlatformFromFilename,
   guessRegionFromFilename,
@@ -29,6 +29,7 @@ import { emulatorPlatforms } from "../../data/emulatorDefinitions/platforms";
 import { getAllEmulatorConfigs } from "../../services/emulatorConfigStore";
 import { scanForRoms, createEmulatorGameEntries } from "../../services/emulatorScanner";
 import { showError, showSuccess } from "../toast/GameToast";
+import SourceDropdown from "../common/SourceDropdown";
 
 type ImportRomModalProps = {
   open: boolean;
@@ -56,9 +57,46 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
   const [importWithRelativePaths, setImportWithRelativePaths] = useState(true);
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(0);
+  const [hideImported, setHideImported] = useState(false);
 
   const configs = getAllEmulatorConfigs();
   const selectedConfig = configs.find((c) => c.id === selectedConfigId);
+
+  // Build set of already-imported ROM paths
+  const importedRomPaths = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of getAllEmulatorGames()) {
+      set.add(g.romPath.toLowerCase());
+    }
+    return set;
+  }, [open]);
+
+  // Filter displayed ROMs
+  const displayedRoms = useMemo(() => {
+    if (!hideImported || importedRomPaths.size === 0) return romFiles;
+    return romFiles.filter((r) => !importedRomPaths.has(r.path.toLowerCase()));
+  }, [romFiles, hideImported, importedRomPaths]);
+
+  // SourceDropdown options
+  const configOptions = useMemo(() => [
+    { value: "", label: t("rom.none", "None") },
+    ...configs.map((c) => ({ value: c.id, label: c.name })),
+  ], [configs, t]);
+
+  const profileOptions = useMemo(() => [
+    { value: "", label: t("rom.none", "None") },
+    ...(selectedConfig?.profiles.map((p) => ({ value: p.id, label: p.name })) ?? []),
+  ], [selectedConfig, t]);
+
+  const platformOptions = useMemo(() => [
+    { value: "", label: t("rom.auto_detect", "Auto-detect") },
+    ...emulatorPlatforms.map((p) => ({ value: p.id, label: `${p.name} (${p.shortName})` })),
+  ], [t]);
+
+  const romPlatformOptions = useMemo(() => [
+    { value: "", label: t("rom.auto", "Auto") },
+    ...emulatorPlatforms.map((p) => ({ value: p.id, label: p.shortName })),
+  ], [t]);
 
   // Reset on open
   useEffect(() => {
@@ -72,6 +110,7 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
     setScanInsideArchives(true);
     setMergeRelatedFiles(true);
     setImportWithRelativePaths(true);
+    setHideImported(false);
   }, [open, defaultEmulatorConfigId]);
 
   // Reset profile when config changes
@@ -241,15 +280,12 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       {/* Panel */}
-      <div className="relative mx-4 max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
+      <div className="mx-4 max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
           <div className="flex items-center gap-3">
@@ -275,38 +311,40 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
 
         {/* Content */}
         <div className="space-y-4 px-6 py-4">
-          {/* Scan Folder */}
-          <div>
-            <label className="mb-1 block text-xs text-(--color-muted)">
-              {t("rom.scan_folder", "Scan Folder")}
-            </label>
-            <div className="flex gap-2">
+          {/* Source Buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleScanFolder}
+              disabled={importing}
+              className="flex items-center gap-2 rounded-lg border border-(--color-accent)/30 bg-(--color-accent)/5 px-4 py-2.5 text-sm text-(--color-accent) transition-colors hover:bg-(--color-accent)/10 disabled:opacity-50"
+            >
+              <FolderOpen className="h-4 w-4" />
+              {importing
+                ? t("rom.scanning", "Scanning...")
+                : t("rom.browse_folder", "Browse...")}
+            </button>
+            <button
+              onClick={handleBrowseFiles}
+              className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm text-(--color-text) transition-colors hover:bg-white/10"
+            >
+              <FileCode className="h-4 w-4" />
+              {t("rom.browse_files", "Browse Files")}
+            </button>
+            {importedRomPaths.size > 0 && (
               <button
-                onClick={handleScanFolder}
-                disabled={importing}
-                className="flex items-center gap-2 rounded-lg border border-(--color-accent)/30 bg-(--color-accent)/5 px-4 py-2.5 text-sm text-(--color-accent) transition-colors hover:bg-(--color-accent)/10 disabled:opacity-50"
+                onClick={() => setHideImported((v) => !v)}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-sm transition ${
+                  hideImported
+                    ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent)"
+                    : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                }`}
               >
-                <FolderOpen className="h-4 w-4" />
-                {t("rom.browse_folder", "Browse...")}
+                <EyeOff className="h-4 w-4" />
+                {hideImported
+                  ? t("rom.hidden", "Hidden")
+                  : t("rom.hide_imported", "Hide imported")}
               </button>
-              <button
-                onClick={handleBrowseFiles}
-                className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm text-(--color-text) transition-colors hover:bg-white/10"
-              >
-                <FileCode className="h-4 w-4" />
-                {t("rom.browse_files", "Browse Files")}
-              </button>
-              <button
-                onClick={handleScanFolder}
-                disabled={importing}
-                className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm text-(--color-text) transition-colors hover:bg-white/10 disabled:opacity-50"
-              >
-                <Search className="h-4 w-4" />
-                {importing
-                  ? t("rom.scanning", "Scanning...")
-                  : t("rom.scan_btn", "Scan")}
-              </button>
-            </div>
+            )}
           </div>
 
           {/* Drop Zone */}
@@ -323,45 +361,27 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
 
           {/* Emulator + Profile Dropdowns */}
           <div className="grid grid-cols-2 gap-3">
-            {/* Emulator */}
             <div>
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("rom.emulator", "Emulator")}
               </label>
-              <div className="relative">
-                <select
-                  value={selectedConfigId}
-                  onChange={(e) => setSelectedConfigId(e.target.value)}
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                >
-                  <option value="">{t("rom.none", "None")}</option>
-                  {configs.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                value={selectedConfigId}
+                onChange={setSelectedConfigId}
+                options={configOptions}
+                className="w-full"
+              />
             </div>
-
-            {/* Profile */}
             <div>
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("rom.profile", "Profile")}
               </label>
-              <div className="relative">
-                <select
-                  value={selectedProfileId}
-                  onChange={(e) => setSelectedProfileId(e.target.value)}
-                  disabled={!selectedConfig}
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none disabled:opacity-50"
-                >
-                  <option value="">{t("rom.none", "None")}</option>
-                  {selectedConfig?.profiles.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                value={selectedProfileId}
+                onChange={setSelectedProfileId}
+                options={profileOptions}
+                className="w-full"
+              />
             </div>
           </div>
 
@@ -371,19 +391,12 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("rom.override_platform", "Override Platform")}
               </label>
-              <div className="relative">
-                <select
-                  value={overridePlatformId}
-                  onChange={(e) => setOverridePlatformId(e.target.value)}
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                >
-                  <option value="">{t("rom.auto_detect", "Auto-detect")}</option>
-                  {emulatorPlatforms.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.shortName})</option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                value={overridePlatformId}
+                onChange={setOverridePlatformId}
+                options={platformOptions}
+                className="w-full"
+              />
             </div>
           )}
 
@@ -414,13 +427,13 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
           )}
 
           {/* File List */}
-          {romFiles.length > 0 && (
+          {displayedRoms.length > 0 && (
             <div>
               <h3 className="mb-2 text-sm font-medium text-(--color-text)">
-                {romFiles.length} ROM{romFiles.length !== 1 ? "s" : ""} found
+                {displayedRoms.length} ROM{displayedRoms.length !== 1 ? "s" : ""}
               </h3>
               <div className="max-h-64 space-y-1 overflow-y-auto">
-                {romFiles.map((rom, i) => (
+                {displayedRoms.map((rom, i) => (
                   <div
                     key={i}
                     className="flex items-center gap-2 rounded bg-white/[0.04] px-3 py-2"
@@ -433,19 +446,12 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
                       )}
                     </div>
 
-                    {/* Per-ROM platform dropdown */}
-                    <div className="relative shrink-0">
-                      <select
+                    <div className="shrink-0">
+                      <SourceDropdown
                         value={rom.platform ?? ""}
-                        onChange={(e) => handleRomPlatformChange(i, e.target.value)}
-                        className="appearance-none rounded border border-(--surface-active-border) bg-(--surface-active) px-2 py-1 pr-6 text-xs text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                      >
-                        <option value="">{t("rom.auto", "Auto")}</option>
-                        {emulatorPlatforms.map((p) => (
-                          <option key={p.id} value={p.id}>{p.shortName}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
+                        onChange={(v) => handleRomPlatformChange(i, v)}
+                        options={romPlatformOptions}
+                      />
                     </div>
 
                     <button
@@ -482,7 +488,7 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
           <button
             onClick={handleImport}
             disabled={romFiles.length === 0 || importing}
-            className="rounded-lg bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white hover:bg-(--color-accent) disabled:opacity-50"
+            className="rounded-lg bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             {importing
               ? t("rom.importing", "Importing...")
