@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CircleX, ExternalLink, MoreVertical, Pause, Play } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import type { DownloadStatus } from "../../types/download";
 import type { ActiveDownload } from "../../hooks/useActiveDownload";
@@ -35,18 +36,18 @@ const CANCELLABLE = new Set<DownloadStatus>([
   "verifying",
 ]);
 
-const STATUS_LABEL: Record<DownloadStatus, string> = {
-  queued: "En cola",
-  waiting: "Esperando",
-  checking: "Verificando",
-  downloading: "Descargando",
-  extracting: "Extrayendo",
-  installing: "Instalando",
-  paused: "Pausado",
-  verifying: "Verificando",
-  done: "Completado",
-  failed: "Fallido",
-  cancelled: "Cancelado",
+const STATUS_I18N: Record<DownloadStatus, string> = {
+  queued: "downloads.status_queued",
+  waiting: "downloads.status_waiting",
+  checking: "downloads.status_checking",
+  downloading: "downloads.status_downloading",
+  extracting: "downloads.status_extracting",
+  installing: "downloads.status_installing",
+  paused: "downloads.status_paused",
+  verifying: "downloads.status_checking",
+  done: "downloads.status_done",
+  failed: "downloads.status_failed",
+  cancelled: "downloads.status_cancelled",
 };
 
 /** Control button — label visible, min 36×36 hit target. */
@@ -68,6 +69,7 @@ export default function ActiveDownloadCard({
   onResume,
   onCancel,
 }: ActiveDownloadCardProps) {
+  const { t } = useTranslation();
   const [imgFailed, setImgFailed] = useState(false);
   const hasArtwork = Boolean(download.coverImageUrl) && !imgFailed;
   const artSrc = hasArtwork ? download.coverImageUrl : null;
@@ -119,10 +121,10 @@ export default function ActiveDownloadCard({
 
   const sizeLine =
     download.totalBytes > 0
-      ? `${formatBytesLocal(download.downloadedBytes)} de ${formatBytesLocal(download.totalBytes)}`
+      ? `${formatBytesLocal(download.downloadedBytes)}${t("downloads.size_separator")}${formatBytesLocal(download.totalBytes)}`
       : null;
 
-  const statusLabel = STATUS_LABEL[download.status] ?? download.status;
+  const statusLabel = t(STATUS_I18N[download.status]);
   const metadataParts = [
     download.repacker && download.isDebrid ? download.repacker : null,
     download.isTorrent ? "Torrent" : null,
@@ -200,7 +202,7 @@ export default function ActiveDownloadCard({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-300 opacity-60" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-300" />
             </span>
-            Descarga activa
+            {t("downloads.active")}
           </p>
           <h2 className="line-clamp-2 text-2xl font-semibold leading-tight text-white sm:text-3xl">
             {download.gameName}
@@ -239,13 +241,13 @@ export default function ActiveDownloadCard({
         {/* Zone A — current speed + peak */}
         <div className="flex w-[104px] shrink-0 flex-col">
           <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/40">
-            Velocidad
+            {t("downloads.speed")}
           </span>
           <span className="text-xl font-bold leading-tight tabular-nums text-white">
             {formatSpeed(download.currentSpeedBytes) || "—"}
           </span>
           <span className="mt-0.5 text-[10px] uppercase tracking-[0.16em] tabular-nums text-white/40">
-            Pico {formatSpeed(download.peakSpeedBytes) || "—"}
+            {t("downloads.peak")} {formatSpeed(download.peakSpeedBytes) || "—"}
           </span>
         </div>
 
@@ -290,10 +292,10 @@ export default function ActiveDownloadCard({
               type="button"
               onClick={() => onPause?.(download.id)}
               className={CTRL_BTN}
-              title="Pausar descarga"
+              title={t("downloads.pause_title")}
             >
               <Pause className="h-3.5 w-3.5" />
-              Pausar
+              {t("downloads.pause")}
             </button>
           )}
 
@@ -302,17 +304,17 @@ export default function ActiveDownloadCard({
               type="button"
               onClick={() => onResume?.(download.id)}
               className={CTRL_BTN}
-              title="Reanudar descarga"
+              title={t("downloads.resume_title")}
             >
               <Play className="h-3.5 w-3.5" />
-              Reanudar
+              {t("downloads.resume")}
             </button>
           )}
 
           {isOpenSteam && (
             <a
               href={`steam://install/${download.appId}`}
-              title="Abrir Steam"
+              title={t("downloads.open_steam")}
               className={ICON_BTN}
             >
               <ExternalLink className="h-4 w-4" />
@@ -324,7 +326,7 @@ export default function ActiveDownloadCard({
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
             className={ICON_BTN}
-            title="Más opciones"
+            title={t("downloads.more_options")}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
           >
@@ -335,7 +337,7 @@ export default function ActiveDownloadCard({
         <CardActionMenu open={menuOpen} anchorRef={menuAnchorRef} onClose={closeMenu}>
           {canCancel && (
             <MenuItem
-              label="Cancelar descarga"
+              label={t("downloads.cancel")}
               icon={<CircleX className="h-3.5 w-3.5" />}
               destructive
               onClick={handleCancel}

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { installTrackerService } from "../services/installTrackingService";
 import type { DownloadJob } from "../types/download";
 
@@ -21,6 +22,7 @@ type SyncApi = {
 };
 
 export function useSteamInstallSync(sync: SyncApi): void {
+  const { t } = useTranslation();
   const startedRef = useRef<Set<string>>(new Set());
   const syncRef = useRef(sync);
   syncRef.current = sync;
@@ -73,7 +75,7 @@ export function useSteamInstallSync(sync: SyncApi): void {
             // total known, but Steam has not started reporting downloaded bytes yet
             syncRef.current.updateJob(jobId, {
               status: "waiting",
-              message: "Waiting for Steam download progress\u2026",
+              message: t("downloads.steam_waiting"),
               progressMode: "indeterminate",
               bytesRead: 0,
               totalBytes: dp.bytesToDownload,

@@ -6,6 +6,7 @@ import {
   ShieldAlert,
   X,
 } from "lucide-react";
+import i18next from "i18next";
 import toast, { Toaster, Toast } from "react-hot-toast";
 
 const TOAST_Z_INDEX = 2147483647;
@@ -26,31 +27,34 @@ type GameToastProps = {
   duration: number;
 };
 
+const VARIANT_I18N_KEY: Record<ToastVariant, string> = {
+  success: "toast.success",
+  error: "toast.error",
+  warning: "toast.warning",
+  info: "toast.info",
+};
+
 const variantConfig = {
   success: {
     icon: CheckCircle2,
-    title: "Operación completada",
     accent: "from-emerald-400 via-green-400 to-emerald-500",
     glow: "bg-emerald-400/25",
     iconClass: "text-emerald-300",
   },
   error: {
     icon: ShieldAlert,
-    title: "Ocurrió un problema",
     accent: "from-rose-400 via-red-400 to-pink-500",
     glow: "bg-rose-400/25",
     iconClass: "text-rose-300",
   },
   warning: {
     icon: AlertTriangle,
-    title: "Atención",
     accent: "from-amber-300 via-orange-400 to-yellow-500",
     glow: "bg-orange-400/25",
     iconClass: "text-amber-300",
   },
   info: {
     icon: Info,
-    title: "Información",
     accent: "from-sky-300 via-cyan-400 to-blue-500",
     glow: "bg-cyan-400/25",
     iconClass: "text-cyan-300",
@@ -152,8 +156,7 @@ async function showGameToast(
   options: GameToastOptions = {}
 ) {
   const duration = options.duration ?? 2800;
-  const config = variantConfig[variant];
-  const title = options.title ?? config.title;
+  const title = options.title ?? i18next.t(VARIANT_I18N_KEY[variant]);
 
   if (isTauri()) {
     const theme = getThemeVars();

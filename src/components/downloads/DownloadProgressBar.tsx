@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 type DownloadProgressBarProps = {
   progress: number;
   mode?: "determinate" | "indeterminate";
@@ -7,13 +9,14 @@ export default function DownloadProgressBar({
   progress,
   mode = "determinate",
 }: DownloadProgressBarProps) {
+  const { t } = useTranslation();
   const safeProgress = Math.min(100, Math.max(0, progress));
 
   return (
     <div>
       {mode === "determinate" && (
         <div className="mb-2 flex items-center justify-between text-xs text-(--color-muted)">
-          <span>Progreso</span>
+          <span>{t("downloads.progress")}</span>
           <span>{safeProgress}%</span>
         </div>
       )}

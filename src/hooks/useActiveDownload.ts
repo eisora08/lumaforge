@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { DownloadJob, DownloadStatus } from "../types/download";
 import { getBootSnapshot } from "../services/appBootCoordinator";
@@ -131,6 +132,7 @@ function resolveCoverUrl(job: DownloadJob): string | undefined {
  * (no backend source) — the card hides them.
  */
 export function useActiveDownload(job: DownloadJob): ActiveDownload {
+  const { t } = useTranslation();
   return useMemo(() => {
     const terminal = TERMINAL_STATUSES.has(job.status);
 
@@ -191,7 +193,7 @@ export function useActiveDownload(job: DownloadJob): ActiveDownload {
     if (totalBytes > 0 && currentSpeed && currentSpeed > 0) {
       const secs = (totalBytes - downloadedBytes) / currentSpeed;
       if (secs > 0 && secs < 10 * 86400) {
-        timeRemaining = `en ${formatEtaLong(secs)}`;
+        timeRemaining = `${t("downloads.eta_in")} ${formatEtaLong(secs)}`;
       }
     }
 

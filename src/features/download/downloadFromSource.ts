@@ -1,3 +1,4 @@
+import i18next from "i18next";
 import { downloadAndInstallPackage } from "../../services/tauri";
 import { saveProviderStatusAfterInstall, saveProviderStatusAuthError, type ProviderStatusOptions } from "../../services/providerStatusService";
 import { getEffectiveProviderAuthHeaders } from "../../services/providerSearch";
@@ -46,22 +47,22 @@ export async function downloadFromSource(
   if (!mountedRef.current) return { success: false, error: "unmounted" };
 
   if (!source.available) {
-    showWarning("Selecciona una fuente disponible antes de descargar.", {
-      title: "Fuente requerida",
+    showWarning(i18next.t("download_from_source.source_required"), {
+      title: i18next.t("download_from_source.source_required_title"),
     });
     return { success: false, error: "source-not-available" };
   }
 
   if (!source.downloadUrl) {
-    showError("Esta fuente no tiene una URL de descarga válida.", {
-      title: "URL inválida",
+    showError(i18next.t("download_from_source.invalid_url"), {
+      title: i18next.t("download_from_source.invalid_url_title"),
     });
     return { success: false, error: "no-download-url" };
   }
 
   if (!settings.luaPath || !settings.depotcachePath) {
-    showWarning("Configura o detecta las rutas de Steam antes de instalar.", {
-      title: "Rutas requeridas",
+    showWarning(i18next.t("download_from_source.paths_required"), {
+      title: i18next.t("download_from_source.paths_required_title"),
     });
     return { success: false, error: "missing-settings" };
   }
@@ -178,15 +179,15 @@ export async function downloadFromSource(
       showError(
         source.providerName === "HubcapDB"
           ? "HubcapDB rejected the request. Check your API key."
-          : `${source.providerName} rechazó la descarga. Verifica la API key o permisos. (HTTP 401)`,
-        { title: "Descarga fallida" },
+          : i18next.t("download_from_source.auth_rejected", { provider: source.providerName }),
+        { title: i18next.t("download_from_source.auth_rejected_title") },
       );
     } else if (statusCode === 403) {
       console.log(`[PACKAGE][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=403 reason=forbidden`);
       await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "forbidden");
       showError(
         "Your HubcapDB account does not have access to this package.",
-        { title: "Acceso denegado" },
+        { title: i18next.t("download_from_source.access_denied_title") },
       );
     } else if (statusCode === 429) {
       console.log(`[PACKAGE][DOWNLOAD_RATE_LIMITED] appid=${game.appId} provider=${source.providerName} status=429`);
@@ -219,7 +220,7 @@ export async function downloadFromSource(
     // Show error toast for all non-auth errors (auth errors already show above)
     if (statusCode !== 401 && statusCode !== 403 && statusCode !== 429) {
       showError(message, {
-        title: "Instalación fallida",
+        title: i18next.t("download_from_source.install_failed_title"),
       });
     }
 

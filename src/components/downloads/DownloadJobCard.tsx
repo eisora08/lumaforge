@@ -16,6 +16,7 @@ import {
   Play,
   Trash2,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 import { DownloadJob } from "../../types/download";
@@ -61,6 +62,21 @@ function formatEta(seconds?: number): string {
   return `${h}h ${m}m`;
 }
 
+/**
+ * Map known Rust/technical strings to i18n translations.
+ * Used for both error messages and status messages emitted by the Rust backend.
+ */
+function mapServerString(str: string, t: (key: string) => string): string {
+  if (str === "Cancelled by user") return t("downloads.cancelled_by_user");
+  if (str.includes("buzzheavier") && (str.includes("Cloudflare") || str.includes("403"))) {
+    return t("downloads.buzzheavier_failed");
+  }
+  if (str.startsWith("Instalación completada") || str.startsWith("Installation completed")) {
+    return t("downloads.install_completed");
+  }
+  return str;
+}
+
 function getTypeIcon(job: DownloadJob) {
   if (job.type === "steam-install") return DownloadCloud;
   if (job.type === "steam-depot-download") return HardDrive;
@@ -70,7 +86,7 @@ function getTypeIcon(job: DownloadJob) {
   return FileText;
 }
 
-function getProviderBadge(job: DownloadJob): { label: string; className: string } {
+function getProviderBadge(job: DownloadJob, t: (key: string) => string): { label: string; className: string } {
   if (job.type === "steam-install") {
     return { label: "Steam", className: "bg-blue-500/15 text-blue-300 border-blue-500/20" };
   }
@@ -89,7 +105,7 @@ function getProviderBadge(job: DownloadJob): { label: string; className: string 
   if (job.fileType === "manifest") {
     return { label: "Manifest", className: "bg-cyan-500/15 text-cyan-300 border-cyan-500/20" };
   }
-  return { label: job.providerName || "Paquete", className: "bg-white/5 text-(--color-muted) border-(--surface-active-border)" };
+  return { label: job.providerName || t("downloads.package"), className: "bg-white/5 text-(--color-muted) border-(--surface-active-border)" };
 }
 
 function canCancel(status: DownloadJob["status"]) {
@@ -122,8 +138,9 @@ export default function DownloadJobCard({
   onOpenDetails,
   onCleanTemp,
 }: DownloadJobCardProps) {
+  const { t } = useTranslation();
   const TypeIcon = getTypeIcon(job);
-  const providerBadge = getProviderBadge(job);
+  const providerBadge = getProviderBadge(job, t);
   const progressMode = job.progressMode ?? "determinate";
   const isSteamInstall = job.type === "steam-install";
   const isDebridInstall = job.type === "debrid-install";
@@ -226,7 +243,7 @@ export default function DownloadJobCard({
             </div>
 
             <p className="mt-0.5 truncate text-sm text-(--color-muted)">
-              {["Debrid", job.repacker?.toUpperCase(), job.message || "Instalado · Listo para jugar"]
+              {["Debrid", job.repacker?.toUpperCase(), job.message ? mapServerString(job.message, t) : t("downloads.installed_ready")]
                 .filter(Boolean)
                 .join(" · ")}
             </p>
@@ -236,7 +253,7 @@ export default function DownloadJobCard({
             type="button"
             onClick={() => onRemove(job.id)}
             className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-            title="Quitar"
+            title={t("downloads.remove")}
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -259,7 +276,7 @@ export default function DownloadJobCard({
             className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <Eye className="h-4 w-4" />
-            Ver detalles
+            {t("downloads.view_details")}
           </button>
 
           {job.installDir && (
@@ -269,7 +286,7 @@ export default function DownloadJobCard({
               className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
             >
               <FolderOpen className="h-3.5 w-3.5" />
-              Abrir carpeta
+              {t("downloads.open_folder")}
             </button>
           )}
         </div>
@@ -304,7 +321,7 @@ export default function DownloadJobCard({
             </div>
 
             <p className="mt-0.5 truncate text-sm text-(--color-muted)">
-              Steam · Instalado · Listo para jugar
+              {t("downloads.steam_installed_ready")}
             </p>
           </div>
 
@@ -312,7 +329,7 @@ export default function DownloadJobCard({
             type="button"
             onClick={() => onRemove(job.id)}
             className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-            title="Quitar"
+            title={t("downloads.remove")}
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -320,7 +337,7 @@ export default function DownloadJobCard({
 
         <div className="mt-3 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-          <span className="text-xs font-medium text-emerald-300">Completada</span>
+          <span className="text-xs font-medium text-emerald-300">{t("downloads.status_done")}</span>
           {job.installedSize != null && job.installedSize > 0 && (
             <span className="text-xs text-(--color-muted)">
               · {formatBytes(job.installedSize)}
@@ -335,7 +352,7 @@ export default function DownloadJobCard({
             className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <Eye className="h-4 w-4" />
-            Ver detalles
+            {t("downloads.view_details")}
           </button>
 
           {installPath && (
@@ -345,7 +362,7 @@ export default function DownloadJobCard({
               className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
             >
               <FolderOpen className="h-3.5 w-3.5" />
-              Abrir carpeta
+              {t("downloads.open_folder")}
             </button>
           )}
 
@@ -354,7 +371,7 @@ export default function DownloadJobCard({
             className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            Open Steam
+            {t("downloads.open_steam")}
           </a>
         </div>
       </article>
@@ -388,7 +405,7 @@ export default function DownloadJobCard({
             </div>
 
             <p className="mt-0.5 truncate text-sm text-(--color-muted)">
-              Depot · Standalone · Listo para usar
+              {t("downloads.depot_standalone_ready")}
             </p>
           </div>
 
@@ -396,7 +413,7 @@ export default function DownloadJobCard({
             type="button"
             onClick={() => onRemove(job.id)}
             className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-            title="Quitar"
+            title={t("downloads.remove")}
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -409,7 +426,7 @@ export default function DownloadJobCard({
             className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <Eye className="h-4 w-4" />
-            Ver en Library
+            {t("downloads.view_in_library")}
           </button>
 
           {job.destDir && (
@@ -419,7 +436,7 @@ export default function DownloadJobCard({
               className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
             >
               <FolderOpen className="h-3.5 w-3.5" />
-              Abrir carpeta
+              {t("downloads.open_folder")}
             </button>
           )}
         </div>
@@ -459,11 +476,11 @@ export default function DownloadJobCard({
 
             {job.message ? (
               <p className="mt-0.5 truncate text-sm text-(--color-muted)">
-                {job.message}
+                {mapServerString(job.message, t)}
               </p>
             ) : job.type === "steam-install" ? (
               <p className="mt-0.5 truncate text-sm text-(--color-muted)">
-                Instalación en progreso
+                {t("downloads.install_in_progress")}
               </p>
             ) : job.type === "debrid-install" && job.repacker ? (
               <p className="mt-0.5 truncate text-sm text-(--color-muted)">
@@ -487,7 +504,7 @@ export default function DownloadJobCard({
               className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90"
             >
               <Play className="h-3.5 w-3.5" />
-              Reanudar
+              {t("downloads.resume")}
             </button>
           )}
 
@@ -498,7 +515,7 @@ export default function DownloadJobCard({
               className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
             >
               <Pause className="h-3.5 w-3.5" />
-              Pausar
+              {t("downloads.pause")}
             </button>
           )}
 
@@ -509,7 +526,7 @@ export default function DownloadJobCard({
               className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
             >
               <Ban className="h-3.5 w-3.5" />
-              Cancelar
+              {t("downloads.cancel")}
             </button>
           )}
 
@@ -520,7 +537,7 @@ export default function DownloadJobCard({
               className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Quitar
+              {t("downloads.remove")}
             </button>
           )}
 
@@ -541,7 +558,7 @@ export default function DownloadJobCard({
               ) : (
                 <Trash2 className="h-3.5 w-3.5" />
               )}
-              {cleaning ? "Limpiando..." : "Limpiar temp"}
+              {cleaning ? t("downloads.cleaning") : t("downloads.clean_temp")}
             </button>
           )}
         </div>
@@ -564,7 +581,7 @@ export default function DownloadJobCard({
             /* Completed: show installed size only */
             job.installedSize != null && job.installedSize > 0 ? (
               <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-                <span className="text-(--color-muted)">Tamaño instalado: </span>
+                <span className="text-(--color-muted)">{t("downloads.installed_size")}</span>
                 <span className="font-medium text-(--color-text)">{formatBytes(job.installedSize)}</span>
               </div>
             ) : null
@@ -575,14 +592,14 @@ export default function DownloadJobCard({
                 <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
                   {job.bytesRead > 0 ? (
                     <>
-                      <span className="text-(--color-muted)">Descargado </span>
+                      <span className="text-(--color-muted)">{t("downloads.downloaded")} </span>
                       <span className="font-medium text-(--color-text)">
                         {formatBytes(job.bytesRead)} / {formatBytes(job.totalBytes)}
                       </span>
                     </>
                   ) : (
                     <>
-                      <span className="text-(--color-muted)">Total </span>
+                      <span className="text-(--color-muted)">{t("downloads.total")} </span>
                       <span className="font-medium text-(--color-text)">
                         {formatBytes(job.totalBytes)}
                       </span>
@@ -593,7 +610,7 @@ export default function DownloadJobCard({
 
               {job.speedBytesPerSec != null && job.speedBytesPerSec > 0 && (
                 <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-                  <span className="text-(--color-muted)">Velocidad </span>
+                  <span className="text-(--color-muted)">{t("downloads.speed")} </span>
                   <span className="font-medium text-(--color-text)">
                     {formatSpeed(job.speedBytesPerSec)}
                   </span>
@@ -611,7 +628,7 @@ export default function DownloadJobCard({
 
               {job.status === "waiting" && job.totalBytes > 0 && (
                 <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-                  <span className="text-(--color-muted)">Esperando </span>
+                  <span className="text-(--color-muted)">{t("downloads.waiting")} </span>
                   <span className="font-medium text-(--color-text)">
                     {(() => {
                       const elapsed = Math.floor((Date.now() - new Date(job.updatedAt).getTime()) / 1000);
@@ -629,7 +646,7 @@ export default function DownloadJobCard({
         <div className="mt-4 grid grid-cols-1 gap-3 text-xs text-(--color-muted) md:grid-cols-4">
           {progressMode === "determinate" && job.totalBytes > 0 && (
             <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-              <p>Descargado</p>
+              <p>{t("downloads.downloaded")}</p>
               <p className="mt-1 font-medium text-(--color-text)">
                 {formatBytes(job.bytesRead)} / {formatBytes(job.totalBytes)}
               </p>
@@ -638,7 +655,7 @@ export default function DownloadJobCard({
 
           {job.speedBytesPerSec != null && job.speedBytesPerSec > 0 && (
             <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-              <p>Velocidad</p>
+              <p>{t("downloads.speed")}</p>
               <p className="mt-1 font-medium text-(--color-text)">
                 {formatSpeed(job.speedBytesPerSec)}
               </p>
@@ -655,7 +672,7 @@ export default function DownloadJobCard({
           )}
 
           <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-            <p>Actualizado</p>
+            <p>{t("downloads.updated")}</p>
             <p className="mt-1 font-medium text-(--color-text)">
               {new Date(job.updatedAt).toLocaleTimeString()}
             </p>
@@ -671,7 +688,7 @@ export default function DownloadJobCard({
             className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            Open Steam
+            {t("downloads.open_steam")}
           </a>
         </div>
       )}
@@ -679,7 +696,7 @@ export default function DownloadJobCard({
       {/* Error */}
       {job.error && (
         <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">
-          {job.error}
+          {mapServerString(job.error, t)}
         </div>
       )}
     </article>

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { epicInstallTrackerService } from "../services/epicInstallTrackerService";
 import type { DownloadJob } from "../types/download";
 
@@ -14,6 +15,7 @@ type SyncApi = {
 };
 
 export function useEpicInstallSync(sync: SyncApi): void {
+  const { t } = useTranslation();
   const startedRef = useRef<Set<string>>(new Set());
   const syncRef = useRef(sync);
   syncRef.current = sync;
@@ -57,7 +59,7 @@ export function useEpicInstallSync(sync: SyncApi): void {
       if (state.status === "timeout") {
         syncRef.current.updateJob(jobId, {
           status: "failed",
-          message: "Timeout waiting for Epic Games Launcher to complete installation.",
+          message: t("downloads.epic_timeout"),
           progressMode: "indeterminate",
         });
         startedRef.current.delete(appName);

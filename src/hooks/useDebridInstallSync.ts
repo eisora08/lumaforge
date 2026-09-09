@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
 import { markDebridGameInstalling, setPendingCompletionNeedsPath, updateDebridGame, markDebridGameExtracted, markDebridGameStatus, setPendingSetup, updateDebridGameAppId, updateDebridGameTitle } from "../services/debridGameStore";
@@ -202,6 +203,7 @@ function persistDebridIdentity(providerGameId: string, title: string, appId?: st
 }
 
 export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstallHandle {
+  const { t } = useTranslation();
   const updateJobRef = useRef(updateJob);
   updateJobRef.current = updateJob;
 
@@ -351,7 +353,7 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
         updateJobRef.current(jobId, {
           status: "done",
           progress: 100,
-          message: "Descarga completada \u00b7 Extrae el archivo manualmente",
+          message: t("downloads.download_completed_extract"),
           progressMode: "determinate",
           installedSize: 0,
           installDir: result.installDir,
@@ -446,7 +448,7 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
       markDebridGameStatus(providerGameId, "not-downloaded");
       updateJobRef.current(jobId, {
         status: "failed",
-        message: result.message || "Download failed",
+        message: t("downloads.download_failed"),
         error: result.message,
         progressMode: "indeterminate",
       });
@@ -593,7 +595,7 @@ let effectiveUri: string | undefined;
         markDebridGameStatus(providerGameId, "not-downloaded");
         updateJobRef.current(jobId, {
           status: "failed",
-          message: "Download failed",
+          message: t("downloads.download_failed"),
           error: msg,
           progressMode: "indeterminate",
         });

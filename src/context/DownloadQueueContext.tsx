@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import i18next from "i18next";
 
 import { DownloadJob, DownloadStatus, DepotSelection } from "../types/download";
 import { useSteamInstallSync } from "../hooks/useSteamInstallSync";
@@ -140,7 +141,7 @@ function loadJobs(): DownloadJob[] {
           status: "failed",
           error:
             job.error ||
-            "La app fue recargada mientras esta descarga estaba activa.",
+            i18next.t("downloads.app_reloaded_error"),
           updatedAt: new Date().toISOString(),
         };
       }
@@ -405,7 +406,7 @@ export function DownloadQueueProvider({
   async function cancelJob(jobId: string) {
     updateJob(jobId, {
       status: "cancelled",
-      error: "Cancelled by user",
+      error: i18next.t("downloads.cancelled_by_user"),
     });
     // Also abort the in-flight Rust download
     const job = jobs.find((j) => j.id === jobId);
