@@ -138,18 +138,26 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
   // ─── File Selection ────────────────────────────────────────────
 
   const handleBrowseFiles = useCallback(async () => {
+    // Build extension filter from selected profile, fallback to full list
+    const profile = selectedConfig?.profiles.find((p) => p.id === selectedProfileId);
+    const profileExts = profile?.supportedFileTypes ?? [];
+    const extensions = profileExts.length > 0
+      ? profileExts.map((e) => e.replace(/^\./, "").toLowerCase())
+      : [
+          "nes", "sfc", "smc", "n64", "z64", "v64", "gcm", "iso", "wbfs", "rvz",
+          "gba", "gb", "gbc", "nds", "3ds", "cia", "3dsx",
+          "gen", "md", "smd", "sms", "gg", "bin", "cue", "cdi", "gdi",
+          "pbp", "chd", "cso", "vpk", "zip", "7z", "pce", "ngp", "wsc",
+          "nsp", "xci",
+        ];
+
     const selected = await openDialog({
       title: t("rom.select_files", "Select ROM Files"),
       multiple: true,
       filters: [
         {
-          name: "ROM Files",
-          extensions: [
-            "nes", "sfc", "smc", "n64", "z64", "v64", "gcm", "iso", "wbfs", "rvz",
-            "gba", "gb", "gbc", "nds", "3ds", "cia", "3dsx",
-            "gen", "md", "smd", "sms", "gg", "bin", "cue", "cdi", "gdi",
-            "pbp", "chd", "cso", "vpk", "zip", "7z", "pce", "ngp", "wsc",
-          ],
+          name: profileExts.length > 0 ? profile!.name : "ROM Files",
+          extensions,
         },
       ],
     });
@@ -171,7 +179,7 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
       });
 
     setRomFiles((prev) => [...prev, ...roms]);
-  }, [t]);
+  }, [selectedConfig, selectedProfileId, t]);
 
   const handleScanFolder = useCallback(async () => {
     const folder = await pickFolder(
@@ -285,9 +293,9 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* Panel */}
-      <div className="mx-4 max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
+      <div className="lf-modal-panel lf-surface mx-4 flex h-[min(640px,85vh)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-(--color-accent)/10">
               <Gamepad2 className="h-5 w-5 text-(--color-accent)" />
@@ -310,12 +318,40 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
         </div>
 
         {/* Content */}
-        <div className="space-y-4 px-6 py-4">
+        <div className="flex flex-1 flex-col space-y-4 min-h-0 px-6 py-4">
+          {/* Emulator + Profile */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-(--color-muted)">
+                {t("rom.emulator", "Emulator")}
+              </label>
+              <SourceDropdown
+                value={selectedConfigId}
+                onChange={setSelectedConfigId}
+                options={configOptions}
+                className="w-full"
+                portal
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-(--color-muted)">
+                {t("rom.profile", "Profile")}
+              </label>
+              <SourceDropdown
+                value={selectedProfileId}
+                onChange={setSelectedProfileId}
+                options={profileOptions}
+                className="w-full"
+                portal
+              />
+            </div>
+          </div>
+
           {/* Source Buttons */}
           <div className="flex items-center gap-2">
             <button
               onClick={handleScanFolder}
-              disabled={importing}
+              disabled={importing || !selectedConfigId}
               className="flex items-center gap-2 rounded-lg border border-(--color-accent)/30 bg-(--color-accent)/5 px-4 py-2.5 text-sm text-(--color-accent) transition-colors hover:bg-(--color-accent)/10 disabled:opacity-50"
             >
               <FolderOpen className="h-4 w-4" />
@@ -325,7 +361,8 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
             </button>
             <button
               onClick={handleBrowseFiles}
-              className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm text-(--color-text) transition-colors hover:bg-white/10"
+              disabled={!selectedConfigId}
+              className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm text-(--color-text) transition-colors hover:bg-white/10 disabled:opacity-50"
             >
               <FileCode className="h-4 w-4" />
               {t("rom.browse_files", "Browse Files")}
@@ -333,7 +370,8 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
             {importedRomPaths.size > 0 && (
               <button
                 onClick={() => setHideImported((v) => !v)}
-                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-sm transition ${
+                disabled={!selectedConfigId}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-sm transition disabled:opacity-50 ${
                   hideImported
                     ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent)"
                     : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
@@ -347,43 +385,19 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
             )}
           </div>
 
-          {/* Drop Zone */}
-          <div
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-(--surface-active-border) bg-(--surface-active)/50 p-4 transition-colors hover:border-(--color-accent)/50"
-          >
-            <FolderOpen className="mb-2 h-6 w-6 text-(--color-muted)" />
-            <p className="text-sm text-(--color-muted)">
-              {t("rom.drag_drop", "Drag & drop ROM files here")}
-            </p>
-          </div>
-
-          {/* Emulator + Profile Dropdowns */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-(--color-muted)">
-                {t("rom.emulator", "Emulator")}
-              </label>
-              <SourceDropdown
-                value={selectedConfigId}
-                onChange={setSelectedConfigId}
-                options={configOptions}
-                className="w-full"
-              />
+          {/* Drop Zone — only when no ROMs */}
+          {romFiles.length === 0 && (
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-(--surface-active-border) bg-(--surface-active)/50 p-10 transition-colors hover:border-(--color-accent)/50"
+            >
+              <FolderOpen className="mb-3 h-10 w-10 text-(--color-muted)" />
+              <p className="text-sm text-(--color-muted)">
+                {t("rom.drag_drop", "Drag & drop ROM files here")}
+              </p>
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-(--color-muted)">
-                {t("rom.profile", "Profile")}
-              </label>
-              <SourceDropdown
-                value={selectedProfileId}
-                onChange={setSelectedProfileId}
-                options={profileOptions}
-                className="w-full"
-              />
-            </div>
-          </div>
+          )}
 
           {/* Override Platform */}
           {romFiles.length > 0 && (
@@ -396,13 +410,14 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
                 onChange={setOverridePlatformId}
                 options={platformOptions}
                 className="w-full"
+                portal
               />
             </div>
           )}
 
-          {/* Scan Options */}
+          {/* Scan Options — 2 columns */}
           {romFiles.length > 0 && (
-            <div className="space-y-2 rounded border border-(--surface-active-border) bg-white/[0.04] p-3">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded border border-(--surface-active-border) bg-white/[0.04] p-3">
               <CheckboxField
                 checked={scanSubfolders}
                 onChange={setScanSubfolders}
@@ -428,11 +443,11 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
 
           {/* File List */}
           {displayedRoms.length > 0 && (
-            <div>
+            <div className="flex flex-1 min-h-0 flex-col">
               <h3 className="mb-2 text-sm font-medium text-(--color-text)">
                 {displayedRoms.length} ROM{displayedRoms.length !== 1 ? "s" : ""}
               </h3>
-              <div className="max-h-64 space-y-1 overflow-y-auto">
+              <div className="flex-1 min-h-0 space-y-1 overflow-y-auto">
                 {displayedRoms.map((rom, i) => (
                   <div
                     key={i}
@@ -451,6 +466,7 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
                         value={rom.platform ?? ""}
                         onChange={(v) => handleRomPlatformChange(i, v)}
                         options={romPlatformOptions}
+                        portal
                       />
                     </div>
 
@@ -478,7 +494,7 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 border-t border-(--surface-active-border) px-6 py-4">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-(--surface-active-border) px-6 py-4">
           <button
             onClick={onClose}
             className="rounded-lg px-3 py-1.5 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"

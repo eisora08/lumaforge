@@ -206,15 +206,12 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       {/* Panel */}
-      <div className="relative mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
+      <div className="lf-modal-panel relative mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
           <div className="flex items-center gap-3">
