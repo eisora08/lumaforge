@@ -2247,6 +2247,7 @@ export default function LibraryGameDetails({
                     {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && game?.source !== "epic" && (
                       <div className="ml-auto">
                         <SourceDropdown
+                          size="sm"
                           value={achSource}
                           onChange={(v) => {
                             const val = v as "steam-official" | "steam" | "epic-official";

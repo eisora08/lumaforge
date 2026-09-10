@@ -190,6 +190,7 @@ export default function WebImageGrid({ query, role = "cover", onSelect }: Props)
       {/* Search bar */}
       <div className="flex gap-2">
         <SourceDropdown
+          size="sm"
           value={source}
           onChange={(v) => setSource(v as "google" | "duckduckgo")}
           options={[
@@ -222,6 +223,7 @@ export default function WebImageGrid({ query, role = "cover", onSelect }: Props)
       {/* Size presets + filters */}
       <div className="flex items-center gap-2 flex-wrap">
         <SourceDropdown
+          size="sm"
           value={String(selectedPresetIdx)}
           onChange={(v) => handlePresetChange(Number(v))}
           options={presets.map((p, i) => ({ value: String(i), label: p.label }))}

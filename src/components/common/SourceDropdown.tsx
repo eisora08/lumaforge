@@ -15,7 +15,22 @@ type SourceDropdownProps = {
   className?: string;
   /** Render dropdown menu via portal to escape overflow containers */
   portal?: boolean;
+  /** Button size: "sm" for inline/compact, "md" for forms (default) */
+  size?: "sm" | "md";
 };
+
+const sizeStyles = {
+  sm: {
+    btn: "px-2 py-1 text-xs gap-1",
+    icon: "h-3 w-3",
+    menu: "px-2 py-1 text-xs",
+  },
+  md: {
+    btn: "px-3 py-2 text-sm gap-1.5",
+    icon: "h-3 w-3",
+    menu: "px-3 py-1.5 text-sm",
+  },
+} as const;
 
 export default function SourceDropdown({
   value,
@@ -24,12 +39,14 @@ export default function SourceDropdown({
   label,
   className = "",
   portal = false,
+  size = "md",
 }: SourceDropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0, width: 0 });
+  const styles = sizeStyles[size];
 
   const updateMenuPos = useCallback(() => {
     if (!btnRef.current) return;
@@ -62,12 +79,20 @@ export default function SourceDropdown({
     };
   }, [open, portal, updateMenuPos]);
 
+  // Prevent body scroll when portal dropdown is open
+  useEffect(() => {
+    if (!open || !portal) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [open, portal]);
+
   const selected = options.find((o) => o.value === value);
 
   const menuContent = open && (
     <div
       ref={menuRef}
-      className={`lf-dropdown-menu z-50 mt-1 min-w-full max-h-60 overflow-y-auto rounded-lg border border-(--surface-active-border) bg-(--surface-active) shadow-lg backdrop-blur-md ${
+      className={`lf-dropdown-menu z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-(--surface-active-border) bg-(--surface-active) shadow-lg backdrop-blur-md ${
         portal ? "fixed" : "absolute"
       }`}
       style={portal ? {
@@ -84,7 +109,7 @@ export default function SourceDropdown({
             onChange(opt.value);
             setOpen(false);
           }}
-          className={`flex w-full items-center whitespace-nowrap px-3 py-1.5 text-sm transition-colors duration-100 cursor-pointer ${
+          className={`flex w-full items-center whitespace-nowrap truncate ${styles.menu} transition-colors duration-100 cursor-pointer ${
             opt.value === value
               ? "text-(--color-accent) bg-(--color-accent)/10"
               : "text-(--color-text) hover:bg-white/[0.06]"
@@ -112,11 +137,11 @@ export default function SourceDropdown({
           if (!open) updateMenuPos();
           setOpen(!open);
         }}
-        className={`flex items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-3 py-2 text-sm text-(--color-text) backdrop-blur-sm transition hover:bg-white/[0.06] focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50 cursor-pointer ${isFullWidth ? "w-full justify-between" : ""}`}
+        className={`flex items-center rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 text-(--color-text) backdrop-blur-sm transition hover:bg-white/[0.06] focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50 cursor-pointer ${styles.btn} ${isFullWidth ? "w-full justify-between" : ""}`}
       >
         <span>{selected?.label}</span>
         <ChevronDown
-          className={`h-3 w-3 text-(--color-muted) transition-transform duration-200 ${
+          className={`${styles.icon} text-(--color-muted) transition-transform duration-200 ${
             open ? "rotate-180" : ""
           }`}
         />

@@ -640,6 +640,7 @@ export default function AchievementsModal({
             <div className="flex items-center gap-1.5 text-[11px] text-(--color-muted)">
               <span>Sort:</span>
               <SourceDropdown
+                size="sm"
                 value={sort}
                 onChange={(v) => setSort(v as SortMode)}
                 options={[

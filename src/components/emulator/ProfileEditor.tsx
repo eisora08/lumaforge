@@ -119,7 +119,17 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               <div className="relative">
                 <select
                   value={profile.builtinProfileName ?? ""}
-                  onChange={(e) => update({ builtinProfileName: e.target.value || undefined })}
+                  onChange={(e) => {
+                    const selectedName = e.target.value;
+                    const defProfile = emulatorDefinitions
+                      .flatMap((d) => d.profiles)
+                      .find((p) => p.name === selectedName);
+                    update({
+                      builtinProfileName: selectedName || undefined,
+                      supportedPlatforms: defProfile?.platforms ?? profile.supportedPlatforms,
+                      supportedFileTypes: defProfile?.imageExtensions ?? profile.supportedFileTypes,
+                    });
+                  }}
                   className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                 >
                   <option value="">—</option>

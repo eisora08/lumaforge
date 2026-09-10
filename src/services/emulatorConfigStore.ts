@@ -6,6 +6,7 @@
  */
 
 import type { EmulatorConfig, EmulatorProfileConfig } from "../data/emulatorDefinitions/types";
+import { getEmulatorById } from "../data/emulatorDefinitions";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -83,7 +84,9 @@ export function createCustomProfile(name: string): EmulatorProfileConfig {
  */
 export function createBuiltinProfile(
   profileName: string,
-  builtinProfileName: string
+  builtinProfileName: string,
+  platforms: string[] = [],
+  fileTypes: string[] = [],
 ): EmulatorProfileConfig {
   return {
     id: `#builtin_${crypto.randomUUID()}`,
@@ -91,8 +94,8 @@ export function createBuiltinProfile(
     type: "builtin",
     builtinProfileName,
     overrideDefaultArgs: false,
-    supportedPlatforms: [],
-    supportedFileTypes: [],
+    supportedPlatforms: platforms,
+    supportedFileTypes: fileTypes,
     trackingMode: "default",
   };
 }
@@ -137,13 +140,17 @@ export function createEmulatorConfig(
   name: string,
   installDir: string
 ): EmulatorConfig {
+  const def = getEmulatorById(definitionId);
+  const profiles = def?.profiles.map((p) =>
+    createBuiltinProfile(p.name, p.name, p.platforms, p.imageExtensions)
+  ) ?? [];
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
     definitionId,
     name,
     installDir,
-    profiles: [],
+    profiles,
     createdAt: now,
     updatedAt: now,
   };

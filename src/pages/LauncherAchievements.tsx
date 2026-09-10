@@ -326,6 +326,7 @@ export default function LauncherAchievements() {
         </div>
 
         <SourceDropdown
+          size="sm"
           value={rarityFilter}
           onChange={(v) => setRarityFilter(v as AchievementRarity | "all")}
           options={RARITIES.map((r) => ({ value: r.value, label: t(r.labelKey) }))}

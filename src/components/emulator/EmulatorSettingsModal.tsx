@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Gamepad2, Trash2, Check, X, Monitor, Cpu, FolderOpen,
-  Search, ChevronDown, Pencil,
+  Search, Pencil,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { pickFolder } from "../../services/tauri";
@@ -30,6 +30,7 @@ import {
 import type { EmulatorDefinition } from "../../data/emulatorDefinitions/types";
 import { scanForEmulators, type DetectedEmulator } from "../../services/emulatorScanner";
 import { showError, showSuccess } from "../toast/GameToast";
+import SourceDropdown from "../common/SourceDropdown";
 
 type EmulatorSettingsModalProps = {
   open: boolean;
@@ -211,9 +212,9 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* Panel */}
-      <div className="lf-modal-panel relative mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl">
+      <div className="lf-modal-panel lf-surface mx-4 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-(--surface-active-border) px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-(--color-accent)/10">
               <Gamepad2 className="h-5 w-5 text-(--color-accent)" />
@@ -242,7 +243,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
         </div>
 
         {/* Content */}
-        <div className="space-y-4 px-6 py-4">
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
           {/* ── LIST VIEW ── */}
           {view === "list" && (
             <>
@@ -316,7 +317,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                 <h3 className="mb-2 text-sm font-medium text-(--color-text)">
                   {t("emulator.available", "Available Emulators")}
                 </h3>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid max-h-[280px] grid-cols-2 gap-2 overflow-y-auto rounded-lg border border-(--surface-active-border)/50 p-1">
                   {emulatorDefinitions.map((def) => {
                     const isConfigured = configuredIds.has(def.id);
                     return (
@@ -364,11 +365,11 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                     value={importDir}
                     onChange={(e) => setImportDir(e.target.value)}
                     placeholder="C:\Emulators"
-                    className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                    className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                   />
                   <button
                     onClick={handleImportSelectFolder}
-                    className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
+                    className="rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
                   >
                     <FolderOpen className="h-4 w-4" />
                   </button>
@@ -461,14 +462,14 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                   <label className="mb-1 block text-xs text-(--color-muted)">
                     {t("emulator.select_emulator", "Select Emulator")}
                   </label>
-                  <div className="max-h-48 space-y-1 overflow-y-auto rounded border border-(--surface-active-border) bg-white/5 p-2">
+                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-(--surface-active-border) bg-white/5 p-2">
                     {emulatorDefinitions
                       .filter((def) => !configuredIds.has(def.id))
                       .map((def) => (
                         <button
                           key={def.id}
                           onClick={() => handleAddManual(def)}
-                          className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-(--color-text) hover:bg-white/10"
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-(--color-text) hover:bg-white/10"
                         >
                           <Cpu className="h-4 w-4 text-(--color-muted)" />
                           <span>{def.name}</span>
@@ -493,7 +494,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                       type="text"
                       value={formName}
                       onChange={(e) => setFormName(e.target.value)}
-                      className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
+                      className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
                     />
                   </div>
 
@@ -508,11 +509,11 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                         value={formInstallDir}
                         onChange={(e) => setFormInstallDir(e.target.value)}
                         placeholder="C:\Emulators\RetroArch"
-                        className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                        className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                       />
                       <button
                         onClick={handleBrowseInstallDir}
-                        className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
+                        className="rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
                       >
                         <FolderOpen className="h-4 w-4" />
                       </button>
@@ -530,11 +531,11 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                         value={formExePath}
                         onChange={(e) => setFormExePath(e.target.value)}
                         placeholder="C:\Emulators\RetroArch\retroarch.exe"
-                        className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                        className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                       />
                       <button
                         onClick={handleBrowseExe}
-                        className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
+                        className="rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
                       >
                         <FolderOpen className="h-4 w-4" />
                       </button>
@@ -547,20 +548,16 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
                       <label className="mb-1 block text-xs text-(--color-muted)">
                         {t("emulator.default_profile", "Default Profile")}
                       </label>
-                      <div className="relative">
-                        <select
-                          value={formProfile}
-                          onChange={(e) => setFormProfile(e.target.value)}
-                          className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                        >
-                          {selectedDef.profiles.map((p) => (
-                            <option key={p.name} value={p.name}>
-                              {p.name} ({p.platforms.join(", ")})
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-                      </div>
+                      <SourceDropdown
+                        className="w-full"
+                        portal
+                        value={formProfile}
+                        onChange={(v) => setFormProfile(v)}
+                        options={selectedDef.profiles.map((p) => ({
+                          value: p.name,
+                          label: `${p.name} (${p.platforms.join(", ")})`,
+                        }))}
+                      />
                     </div>
                   )}
 
@@ -594,7 +591,7 @@ export function EmulatorSettingsModal({ open, onClose }: EmulatorSettingsModalPr
 
         {/* Footer */}
         {view === "list" && (
-          <div className="flex justify-end border-t border-(--surface-active-border) px-6 py-4">
+          <div className="flex shrink-0 justify-end border-t border-(--surface-active-border) px-6 py-4">
             <button
               onClick={onClose}
               className="rounded-lg px-3 py-1.5 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
