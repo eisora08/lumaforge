@@ -20,6 +20,8 @@ import {
   Wrench,
   ChevronDown,
   Scan,
+  Check,
+  Circle,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -54,7 +56,7 @@ import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToas
 import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
-import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts, deleteDirectory, deleteGameV2 } from "../../services/tauri";
+import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts, deleteDirectory, deleteGameV2, updateCompletionStatusV2 } from "../../services/tauri";
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey, detectAndQueueMissingMedia } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
@@ -155,7 +157,7 @@ function getSnapshotMedia(appId: string, game?: { id?: string; libraryId?: strin
 export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange }: Props) {
   countRender("SidebarLibraryList");
   const { t } = useTranslation();
-  const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap, refresh } = useLibraryGames();
+  const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap, refresh, updateGame } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
   const [localQuery, setLocalQuery] = useState("");
   const searchQuery = externalSearchQuery ?? localQuery;
@@ -947,6 +949,43 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                     showError(t("context_menu.shortcut_error", { error: err }));
                   }
                 }}
+              />
+
+              <MenuItem
+                label={t("context_menu.set_status", "Set Status")}
+                icon={<Circle className="h-3.5 w-3.5" />}
+                children={[
+                  {
+                    label: t("context_menu.status_auto", "Auto"),
+                    icon: menuGame.completionStatus ? <Circle className="h-3.5 w-3.5 opacity-30" /> : <Check className="h-3.5 w-3.5" />,
+                    onClick: () => { setMenuOpen(false); if (menuGame.id) { updateCompletionStatusV2(menuGame.id, undefined).catch(() => {}); updateGame(menuGame.id, { completionStatus: undefined }); } },
+                  },
+                  {
+                    label: t("context_menu.status_completed", "Completed"),
+                    icon: menuGame.completionStatus === "completed" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (menuGame.id) { updateCompletionStatusV2(menuGame.id, "completed").catch(() => {}); updateGame(menuGame.id, { completionStatus: "completed" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_in_progress", "In Progress"),
+                    icon: menuGame.completionStatus === "in-progress" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (menuGame.id) { updateCompletionStatusV2(menuGame.id, "in-progress").catch(() => {}); updateGame(menuGame.id, { completionStatus: "in-progress" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_not_played", "Not Played"),
+                    icon: menuGame.completionStatus === "not-played" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (menuGame.id) { updateCompletionStatusV2(menuGame.id, "not-played").catch(() => {}); updateGame(menuGame.id, { completionStatus: "not-played" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_played", "Played"),
+                    icon: menuGame.completionStatus === "played" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (menuGame.id) { updateCompletionStatusV2(menuGame.id, "played").catch(() => {}); updateGame(menuGame.id, { completionStatus: "played" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_abandoned", "Abandoned"),
+                    icon: menuGame.completionStatus === "abandoned" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (menuGame.id) { updateCompletionStatusV2(menuGame.id, "abandoned").catch(() => {}); updateGame(menuGame.id, { completionStatus: "abandoned" }); } },
+                  },
+                ]}
               />
 
               <MenuItem

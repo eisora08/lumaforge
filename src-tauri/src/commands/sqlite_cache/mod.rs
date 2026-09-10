@@ -55,7 +55,7 @@ pub use games_v2::{
     GameV2, add_playtime_v2, batch_upsert_games_v2, delete_game_v2, get_all_games_v2, get_game_v2,
     get_game_v2_by_app_id, get_game_v2_count, get_games_v2_by_app_id, get_games_v2_by_source,
     increment_play_count_v2, search_games_v2,
-    update_playtime_v2, upsert_game_v2,
+    update_completion_status_v2, update_playtime_v2, upsert_game_v2,
 };
 pub use game_sessions::{
     GameSession, delete_game_sessions_for_game, delete_game_sessions_for_game_inner,
@@ -157,9 +157,11 @@ pub use games_v2::__tauri_command_name_search_games_v2;
 pub use games_v2::__tauri_command_name_delete_game_v2;
 pub use games_v2::__tauri_command_name_get_game_v2_count;
 pub use games_v2::__cmd__update_playtime_v2;
+pub use games_v2::__cmd__update_completion_status_v2;
 pub use games_v2::__cmd__increment_play_count_v2;
 pub use games_v2::__cmd__add_playtime_v2;
 pub use games_v2::__tauri_command_name_update_playtime_v2;
+pub use games_v2::__tauri_command_name_update_completion_status_v2;
 pub use games_v2::__tauri_command_name_increment_play_count_v2;
 pub use games_v2::__tauri_command_name_add_playtime_v2;
 pub use achievements::__tauri_command_name_upsert_achievement_summary;

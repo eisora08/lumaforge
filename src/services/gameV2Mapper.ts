@@ -15,12 +15,12 @@ import type { SteamAppMetadata, SteamMovie } from "../types/gameMetadata";
 
 /**
  * Normalize a timestamp to milliseconds.
- * DB may hold: seconds (<10^10), milliseconds (10^10–10^14), or nanoseconds (>10^14).
+ * DB should always store ms (post-fix). This function handles legacy data
+ * that may still hold seconds from before the standardization.
  */
 function normalizeToMs(value: number): number {
-  if (value > 1e14) return Math.floor(value / 1_000_000); // nanoseconds → ms
-  if (value > 1e10) return value; // already ms
-  return value * 1000; // seconds → ms
+  if (value > 1e10) return value; // already ms (correct)
+  return value * 1000; // legacy seconds → ms
 }
 
 /** Parse a JSON array string safely, returning [] on failure. */
@@ -185,8 +185,7 @@ export function gameV2ToLibraryGame(game: GameV2): LibraryGame {
     createdAt: game.createdAt ?? undefined,
 
     // Playtime — restore to both steam and local fields so every consumer finds data regardless of source
-    // DB may hold ns (epic launcher timestamps), ms (manual/epic via local session), or legacy seconds (steam via old importExternalPlaytime)
-    // Normalize lastPlayedAt to ms for LibraryGame (consumers expect ms)
+    // DB stores lastPlayedAt in ms. normalizeToMs handles any legacy seconds data.
     steamPlaytimeMinutes: game.playtimeSeconds ? Math.floor(game.playtimeSeconds / 60) : undefined,
     localPlaytimeMinutes: game.playtimeSeconds ? Math.floor(game.playtimeSeconds / 60) : undefined,
     steamLastPlayedAt: game.lastPlayedAt != null ? normalizeToMs(game.lastPlayedAt) : undefined,
@@ -235,6 +234,7 @@ export function manualGameEntryToGameV2(entry: {
   releaseDate?: string;
   isFavorite?: boolean;
   sizeOnDisk?: number;
+  completionStatus?: string;
   createdAt?: number;
 }): GameV2 {
   const now = Date.now();
@@ -286,6 +286,8 @@ export function manualGameEntryToGameV2(entry: {
     isFavorite: entry.isFavorite ?? false,
     isHidden: false,
     standalone: false,
+
+    completionStatus: entry.completionStatus || undefined,
 
     hasLua: false,
 
@@ -406,7 +408,7 @@ export function epicGameToGameV2(entry: {
   movies?: unknown[];
   // Playtime
   playtimeMinutes?: number;
-  lastPlayedSeconds?: number;
+  lastPlayedMs?: number;
   // State
   isInstalled?: boolean;
   isFavorite?: boolean;
@@ -468,7 +470,7 @@ export function epicGameToGameV2(entry: {
     // Playtime
     playtimeSeconds: entry.playtimeMinutes ? entry.playtimeMinutes * 60 : 0,
     playCount: 0,
-    lastPlayedAt: entry.lastPlayedSeconds ? entry.lastPlayedSeconds * 1000 : undefined,
+    lastPlayedAt: entry.lastPlayedMs || undefined,
 
     // State
     isFavorite: entry.isFavorite ?? false,
@@ -605,6 +607,8 @@ export function libraryGameToGameV2(game: LibraryGame): GameV2 {
     isFavorite: game.isFavorite ?? false,
     isHidden: false,
     standalone: game.isStandalone ?? false,
+
+    completionStatus: game.completionStatus || undefined,
 
     hasLua: game.hasLua ?? false,
     luaScriptsJson: JSON.stringify(game.luaScripts ?? []),

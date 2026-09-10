@@ -99,7 +99,7 @@ export type LibraryGame = {
   achievementUnlocked?: number;
   /** Real achievement total (only if parsed) */
   achievementTotal?: number;
-  /** User-set completion status: "completed" | "in-progress" | "not-played" */
+  /** User-set completion status: "completed" | "in-progress" | "not-played" | "played" | "abandoned" */
   completionStatus?: string;
   /** Whether metadata says Steam Achievements is supported */
   achievementsSupported?: boolean;

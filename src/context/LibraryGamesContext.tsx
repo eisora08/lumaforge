@@ -312,15 +312,16 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         if (!pt) continue;
         const mins = Math.round(pt.totalPlaytimeSeconds / 60);
         if (mins > 0 && (g.localPlaytimeMinutes ?? 0) !== mins) {
-          g.localPlaytimeMinutes = mins;
-          g.steamPlaytimeMinutes = mins;
+          // Never overwrite with a lower value (protects against stub cache corruption)
+          g.localPlaytimeMinutes = Math.max(g.localPlaytimeMinutes ?? 0, mins);
+          g.steamPlaytimeMinutes = Math.max(g.steamPlaytimeMinutes ?? 0, mins);
           changed = true;
         }
         if (pt.lastPlayedAt) {
           const ms = pt.lastPlayedAt * 1000;
           if ((g.localLastPlayedAt ?? 0) !== ms) {
-            g.localLastPlayedAt = ms;
-            g.steamLastPlayedAt = ms;
+            g.localLastPlayedAt = Math.max(g.localLastPlayedAt ?? 0, ms);
+            g.steamLastPlayedAt = Math.max(g.steamLastPlayedAt ?? 0, ms);
             changed = true;
           }
         }
@@ -717,22 +718,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
     } catch {
       // stats are non-critical
-    }
-
-    // Persist playtime/lastPlayed data from mergeSteamStatsIntoGames to games_v2
-    try {
-      const statsEnriched = games.filter((g) =>
-        g.appId && ((g.steamPlaytimeMinutes ?? 0) > 0 || (g.steamLastPlayedAt ?? 0) > 0)
-      );
-      if (statsEnriched.length > 0) {
-        const { batchUpsertGamesV2 } = await import("../services/tauri");
-        const { libraryGameToGameV2 } = await import("../services/gameV2Mapper");
-        const entries = statsEnriched.map((g) => libraryGameToGameV2(g));
-        await batchUpsertGamesV2(entries);
-        console.log(`[LIBRARY_CONTEXT] persisted playtime data for ${entries.length} games to games_v2`);
-      }
-    } catch (err) {
-      console.warn("[LIBRARY_CONTEXT] failed to persist playtime data:", err);
     }
 
     mergeLocalStatsIntoGames(games);
@@ -1396,13 +1381,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 libGame.backgroundPath = existing.backgroundPath ?? libGame.backgroundPath;
                 libGame.logoPath = existing.logoPath ?? libGame.logoPath;
                 libGame.iconPath = existing.iconPath ?? libGame.iconPath;
-                // Preserve user-set completion status
-                libGame.completionStatus = existing.completionStatus;
-                // Preserve playtime fields
-                libGame.steamLastPlayedAt = existing.steamLastPlayedAt;
-                libGame.steamPlaytimeMinutes = existing.steamPlaytimeMinutes;
-                libGame.localLastPlayedAt = existing.localLastPlayedAt;
-                libGame.localPlaytimeMinutes = existing.localPlaytimeMinutes;
               }
               return libGame;
             });

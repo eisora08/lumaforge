@@ -826,6 +826,25 @@ pub fn update_playtime_v2_inner(
     Ok(())
 }
 
+/// Update completion_status for a game.
+pub fn update_completion_status_v2_inner(
+    db: &Mutex<Connection>,
+    game_id: &str,
+    completion_status: Option<&str>,
+) -> Result<(), String> {
+    let conn = db.lock().unwrap();
+    let now = chrono_now_ms();
+    conn.execute(
+        "UPDATE games_v2
+         SET completion_status = ?1,
+             updated_at = ?2
+         WHERE id = ?3",
+        rusqlite::params![completion_status, now, game_id],
+    )
+    .map_err(|e| format!("Failed to update completion_status_v2: {}", e))?;
+    Ok(())
+}
+
 /// Increment play_count by 1 for a game.
 pub fn increment_play_count_v2_inner(
     db: &Mutex<Connection>,
@@ -857,14 +876,15 @@ pub fn add_playtime_v2_inner(
     delta_seconds: i64,
 ) -> Result<i64, String> {
     let conn = db.lock().unwrap();
-    let now = chrono_now_secs();
+    let now_ms = chrono_now_ms();
+    let now_secs = chrono_now_secs();
     conn.execute(
         "UPDATE games_v2
          SET playtime_seconds = playtime_seconds + ?1,
              last_played_at = ?2,
              updated_at = ?3
          WHERE id = ?4",
-        rusqlite::params![delta_seconds, now, now, game_id],
+        rusqlite::params![delta_seconds, now_ms, now_secs, game_id],
     )
     .map_err(|e| format!("Failed to add playtime_v2: {}", e))?;
     let total: i64 = conn
@@ -884,12 +904,20 @@ fn chrono_now_secs() -> i64 {
         .as_secs() as i64
 }
 
+fn chrono_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands — playtime
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
 pub fn update_playtime_v2(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SqliteCoreDb>,
     game_id: String,
     seconds: i64,
@@ -899,11 +927,14 @@ pub fn update_playtime_v2(
     let Some(db) = db else {
         return Ok(());
     };
-    update_playtime_v2_inner(db, &game_id, seconds, last_played)
+    update_playtime_v2_inner(db, &game_id, seconds, last_played)?;
+    crate::utils::progress_utils::emit_data_changed(&app, "games-upserted", "1");
+    Ok(())
 }
 
 #[tauri::command]
 pub fn increment_play_count_v2(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SqliteCoreDb>,
     game_id: String,
 ) -> Result<i64, String> {
@@ -911,11 +942,14 @@ pub fn increment_play_count_v2(
     let Some(db) = db else {
         return Ok(0);
     };
-    increment_play_count_v2_inner(db, &game_id)
+    let result = increment_play_count_v2_inner(db, &game_id)?;
+    crate::utils::progress_utils::emit_data_changed(&app, "games-upserted", "1");
+    Ok(result)
 }
 
 #[tauri::command]
 pub fn add_playtime_v2(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SqliteCoreDb>,
     game_id: String,
     delta_seconds: i64,
@@ -924,5 +958,23 @@ pub fn add_playtime_v2(
     let Some(db) = db else {
         return Ok(0);
     };
-    add_playtime_v2_inner(db, &game_id, delta_seconds)
+    let result = add_playtime_v2_inner(db, &game_id, delta_seconds)?;
+    crate::utils::progress_utils::emit_data_changed(&app, "games-upserted", "1");
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn update_completion_status_v2(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SqliteCoreDb>,
+    game_id: String,
+    completion_status: Option<String>,
+) -> Result<(), String> {
+    let db = state.0.as_ref();
+    let Some(db) = db else {
+        return Ok(());
+    };
+    update_completion_status_v2_inner(db, &game_id, completion_status.as_deref())?;
+    crate::utils::progress_utils::emit_data_changed(&app, "games-upserted", "1");
+    Ok(())
 }

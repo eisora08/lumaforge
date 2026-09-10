@@ -2921,6 +2921,17 @@ export async function updatePlaytimeV2(
   }
 }
 
+export async function updateCompletionStatusV2(
+  gameId: string,
+  completionStatus: string | undefined
+): Promise<void> {
+  try {
+    await invoke("update_completion_status_v2", { gameId, completionStatus: completionStatus || null });
+  } catch {
+    // silent
+  }
+}
+
 export async function incrementPlayCountV2(gameId: string): Promise<number> {
   try {
     return await invoke<number>("increment_play_count_v2", { gameId });

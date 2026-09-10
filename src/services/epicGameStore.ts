@@ -662,12 +662,10 @@ export async function refreshOwnedGames(): Promise<{
         providerGameId,
         isInstalled: false,
         localPlaytimeMinutes: Math.floor(playtime / 60),
-        localLastPlayedAt: 0,
         // Steam-specific fields (not applicable)
         steamInstalled: false,
         steamPlaytimeMinutes: 0,
         steamPlaytime2Weeks: 0,
-        steamLastPlayedAt: 0,
         steamCloudStatus: "",
         isPlayable: false,
         isInstallable: true,
@@ -765,7 +763,7 @@ export async function refreshOwnedGames(): Promise<{
             screenshots: Array.isArray(meta.screenshots) ? meta.screenshots as string[] : undefined,
             movies: Array.isArray(meta.movies) ? meta.movies : undefined,
             playtimeMinutes: g.steamPlaytimeMinutes,
-            lastPlayedSeconds: g.steamLastPlayedAt,
+            lastPlayedMs: g.steamLastPlayedAt,
             isInstalled: g.isInstalled,
             isFavorite: g.isFavorite,
           });
@@ -948,7 +946,7 @@ async function persistEpicGamesToSqlite(games: LibraryGame[]): Promise<void> {
           movies: Array.isArray(meta.movies) ? meta.movies : undefined,
           // Playtime
           playtimeMinutes: g.steamPlaytimeMinutes,
-          lastPlayedSeconds: g.steamLastPlayedAt,
+          lastPlayedMs: g.steamLastPlayedAt,
           // State
           isInstalled: g.isInstalled,
           isFavorite: g.isFavorite,

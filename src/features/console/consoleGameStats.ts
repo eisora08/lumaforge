@@ -147,7 +147,7 @@ export function getGameCompletionStatus(game: LibraryGame, playtimeSeconds: numb
   return "Played";
 }
 
-export type EffectiveCompletionStatus = "completed" | "in-progress" | "not-played" | "played";
+export type EffectiveCompletionStatus = "completed" | "in-progress" | "not-played" | "played" | "abandoned";
 
 /**
  * Get the effective completion status for a game.
@@ -162,6 +162,8 @@ export function getEffectiveCompletionStatus(
   if (userOverride === "completed") return "completed";
   if (userOverride === "in-progress") return "in-progress";
   if (userOverride === "not-played") return "not-played";
+  if (userOverride === "played") return "played";
+  if (userOverride === "abandoned") return "abandoned";
 
   // Auto-compute from playtime + achievements
   // Dual-tier: try appId first, then fall back to source-specific gameKey

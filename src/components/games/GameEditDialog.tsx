@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import type { GameMediaPaths, GameAppInfo } from "../../services/tauri";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getGameAppInfo, resolveSteamGridDbArtwork, searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId, openGameMetadataFolder, openGameMediaFolder, openFolder, resolveSteamStoreSearch, openProviderMediaFolder, pickFile, pickFolder, calculateDirectorySize } from "../../services/tauri";
+import { getGameAppInfo, resolveSteamGridDbArtwork, searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId, openGameMetadataFolder, openGameMediaFolder, openFolder, resolveSteamStoreSearch, openProviderMediaFolder, pickFile, pickFolder, calculateDirectorySize, updateCompletionStatusV2, updatePlaytimeV2 } from "../../services/tauri";
 import { updateGameAppinfoMediaIfChanged, saveGameMediaFile, persistGameAppInfo, clearSessionAppInfoCache, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
 import { createMediaAdapter } from "../../services/mediaAdapter";
 import { invalidateResolvedMediaCache, refreshGameDetailsArtwork } from "../../services/gameCacheService";
@@ -243,6 +243,11 @@ export default function GameEditDialog({
   const [regionDraft, setRegionDraft] = useState("");
   const [completionStatusDraft, setCompletionStatusDraft] = useState("");
 
+  // Playtime / Last Played drafts
+  const [lastPlayedDraft, setLastPlayedDraft] = useState(""); // YYYY-MM-DD
+  const [playtimeHoursDraft, setPlaytimeHoursDraft] = useState(0);
+  const [playtimeMinutesDraft, setPlaytimeMinutesDraft] = useState(0);
+
   // Linked IDs for manual games
   const [linkedIgdbIdDraft, setLinkedIgdbIdDraft] = useState<string | undefined>(undefined);
 
@@ -348,7 +353,7 @@ export default function GameEditDialog({
     setSeriesDraft(typeof ud.series === "string" ? ud.series : "");
     setAgeRatingDraft(typeof ud.ageRating === "string" ? ud.ageRating : "");
     setRegionDraft(typeof ud.region === "string" ? ud.region : "");
-    setCompletionStatusDraft(typeof ud.completionStatus === "string" ? ud.completionStatus : "");
+    setCompletionStatusDraft(typeof ud.completionStatus === "string" && ud.completionStatus ? ud.completionStatus : (game?.completionStatus ?? ""));
   }
 
   // ── Load drafts from ManualGameEntry ──
@@ -565,6 +570,19 @@ export default function GameEditDialog({
     // Steam edit mode (also handles Manual+appId and Debrid+appId that fell through)
     if (!resolvedAppId) resolvedAppId = appId ?? "";
     setAppIdDraft(resolvedAppId);
+    // Load playtime/lastPlayed from game prop
+    if (game) {
+      const totalMinutes = game.steamPlaytimeMinutes ?? game.localPlaytimeMinutes ?? 0;
+      setPlaytimeHoursDraft(Math.floor(totalMinutes / 60));
+      setPlaytimeMinutesDraft(totalMinutes % 60);
+      const lastPlayedMs = game.localLastPlayedAt ?? game.steamLastPlayedAt;
+      if (lastPlayedMs && lastPlayedMs > 0) {
+        const d = new Date(lastPlayedMs);
+        setLastPlayedDraft(d.toISOString().split("T")[0]);
+      } else {
+        setLastPlayedDraft("");
+      }
+    }
     if (resolvedAppId) {
       getGameAppInfo(resolvedAppId).then((info) => {
         setAppInfo(info);
@@ -1124,41 +1142,62 @@ export default function GameEditDialog({
 
         if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][BEFORE_SAVE] manualId=${createdManualId ?? manualGameId} storeEntry=${JSON.stringify(freshMediaEntry ? { coverPath: freshMediaEntry.coverPath, landscapePath: freshMediaEntry.landscapePath, backgroundPath: freshMediaEntry.backgroundPath, logoPath: freshMediaEntry.logoPath, iconPath: freshMediaEntry.iconPath } : null)} manualEntry=${JSON.stringify(manualEntry ? { coverPath: manualEntry.coverPath } : null)}`);
 
-        const patch: Partial<ManualGameEntry> = {
-          name: nameDraft || t("game_edit.untitled", "Untitled Game"),
-          genres: parseList(genresDraft),
-          developers: parseList(developersDraft),
-          publishers: parseList(publishersDraft),
-          categories: parseList(categoriesDraft),
-          features: parseList(featuresDraft),
-          tags: parseList(tagsDraft),
-          releaseDate: releaseDateDraft || undefined,
-          description: descriptionDraft || undefined,
-          sortingName: sortingNameDraft || undefined,
-          userScore: userScoreDraft || undefined,
-          criticScore: criticScoreDraft || undefined,
-          communityScore: communityScoreDraft || undefined,
-          reviewSummary: reviewSummaryDraft || undefined,
-          reviewCount: reviewCountDraft || undefined,
-          reviewSource: reviewSourceDraft || undefined,
-          series: seriesDraft || undefined,
-          ageRating: ageRatingDraft || undefined,
-          region: regionDraft || undefined,
-          completionStatus: completionStatusDraft || undefined,
-          executablePath: executablePathDraft.trim().replace(/^["']|["']$/g, "") || undefined,
-          workingDirectory: workingDirectoryDraft.trim().replace(/^["']|["']$/g, "") || undefined,
-          launchArguments: launchArgsDraft.trim() || undefined,
-          installDir: installDirDraft.trim().replace(/^["']|["']$/g, "") || undefined,
-          linkedIgdbId: linkedIgdbIdDraft || undefined,
-          appId: appIdDraft || undefined,
-          coverPath: freshMediaEntry?.coverPath,
-          landscapePath: freshMediaEntry?.landscapePath,
-          backgroundPath: freshMediaEntry?.backgroundPath,
-          logoPath: freshMediaEntry?.logoPath,
-          iconPath: freshMediaEntry?.iconPath,
-          screenshots: metadata?.screenshots,
-          movies: metadata?.movies,
-        };
+        const patch: Partial<ManualGameEntry> = {};
+
+        // Details tab fields
+        if (activeTab === "details" || isCreateMode) {
+          patch.name = nameDraft || t("game_edit.untitled", "Untitled Game");
+          patch.genres = parseList(genresDraft);
+          patch.developers = parseList(developersDraft);
+          patch.publishers = parseList(publishersDraft);
+          patch.categories = parseList(categoriesDraft);
+          patch.features = parseList(featuresDraft);
+          patch.tags = parseList(tagsDraft);
+          patch.releaseDate = releaseDateDraft || undefined;
+          patch.description = descriptionDraft || undefined;
+          patch.sortingName = sortingNameDraft || undefined;
+          patch.userScore = userScoreDraft || undefined;
+          patch.criticScore = criticScoreDraft || undefined;
+          patch.communityScore = communityScoreDraft || undefined;
+          patch.reviewSummary = reviewSummaryDraft || undefined;
+          patch.reviewCount = reviewCountDraft || undefined;
+          patch.reviewSource = reviewSourceDraft || undefined;
+          patch.series = seriesDraft || undefined;
+          patch.ageRating = ageRatingDraft || undefined;
+          patch.region = regionDraft || undefined;
+          patch.linkedIgdbId = linkedIgdbIdDraft || undefined;
+          patch.appId = appIdDraft || undefined;
+          patch.coverPath = freshMediaEntry?.coverPath;
+          patch.landscapePath = freshMediaEntry?.landscapePath;
+          patch.backgroundPath = freshMediaEntry?.backgroundPath;
+          patch.logoPath = freshMediaEntry?.logoPath;
+          patch.iconPath = freshMediaEntry?.iconPath;
+          patch.screenshots = metadata?.screenshots;
+          patch.movies = metadata?.movies;
+        }
+
+        // Installation tab fields
+        if (activeTab === "installation") {
+          patch.executablePath = executablePathDraft.trim().replace(/^["']|["']$/g, "") || undefined;
+          patch.workingDirectory = workingDirectoryDraft.trim().replace(/^["']|["']$/g, "") || undefined;
+          patch.launchArguments = launchArgsDraft.trim() || undefined;
+          patch.installDir = installDirDraft.trim().replace(/^["']|["']$/g, "") || undefined;
+        }
+
+        // Info tab fields
+        if (activeTab === "info") {
+          patch.completionStatus = completionStatusDraft || undefined;
+          // Persist playtime/completionStatus to games_v2
+          const targetId = createdManualId ?? manualGameId ?? "";
+          if (targetId) {
+            updateCompletionStatusV2(targetId, completionStatusDraft || undefined).catch(() => {});
+            const lastPlayedMs = lastPlayedDraft ? new Date(lastPlayedDraft + "T00:00:00").getTime() : 0;
+            const playtimeSeconds = (playtimeHoursDraft * 3600) + (playtimeMinutesDraft * 60);
+            if (lastPlayedMs > 0 || playtimeSeconds > 0) {
+              updatePlaytimeV2(targetId, playtimeSeconds, lastPlayedMs).catch(() => {});
+            }
+          }
+        }
 
         if (createdManualId || (manualGameId && !isCreateMode)) {
           // Update existing manual game (either first-create-then-save-again, or edit)
@@ -1170,7 +1209,7 @@ export default function GameEditDialog({
           showSuccess(t("game_edit.save_success", "Game details saved"));
 
           // Calculate sizeOnDisk if installDir exists
-          const installDirForSize = installDirDraft.trim().replace(/^["']|["']$/g, "");
+          const installDirForSize = (patch.installDir ?? installDirDraft.trim().replace(/^["']|["']$/g, ""));
           if (installDirForSize) {
             calculateDirectorySize(installDirForSize).then((bytes) => {
               if (bytes > 0) {
@@ -1181,7 +1220,7 @@ export default function GameEditDialog({
           }
 
           // If manual game has appId, also persist full userData to Steam appinfo (same as Steam save path)
-          if (appIdDraft) {
+          if (appIdDraft && (activeTab === "details" || activeTab === "installation")) {
             const media: import("../../services/tauri").GameMediaPaths = {
               coverPath: freshMediaEntry?.coverPath ?? null,
               landscapePath: freshMediaEntry?.landscapePath ?? null,
@@ -1279,29 +1318,50 @@ export default function GameEditDialog({
         const parseList = (s: string): string[] =>
           s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
 
-        writeEpicOverrides(epicProviderGameId, {
-          name: nameDraft || undefined,
-          sortingName: sortingNameDraft || undefined,
-          description: descriptionDraft || undefined,
-          genres: parseList(genresDraft),
-          developers: parseList(developersDraft),
-          publishers: parseList(publishersDraft),
-          categories: parseList(categoriesDraft),
-          features: parseList(featuresDraft),
-          tags: parseList(tagsDraft),
-          releaseDate: releaseDateDraft || undefined,
-          series: seriesDraft || undefined,
-          ageRating: ageRatingDraft || undefined,
-          region: regionDraft || undefined,
-          screenshots: metadata?.screenshots,
-          movies: metadata?.movies,
-        });
+        // Details tab fields
+        if (activeTab === "details") {
+          writeEpicOverrides(epicProviderGameId, {
+            name: nameDraft || undefined,
+            sortingName: sortingNameDraft || undefined,
+            description: descriptionDraft || undefined,
+            genres: parseList(genresDraft),
+            developers: parseList(developersDraft),
+            publishers: parseList(publishersDraft),
+            categories: parseList(categoriesDraft),
+            features: parseList(featuresDraft),
+            tags: parseList(tagsDraft),
+            releaseDate: releaseDateDraft || undefined,
+            series: seriesDraft || undefined,
+            ageRating: ageRatingDraft || undefined,
+            region: regionDraft || undefined,
+            screenshots: metadata?.screenshots,
+            movies: metadata?.movies,
+          });
+          showSuccess(t("game_edit.epic_saved", "Epic game details saved"));
+        }
+
+        // Info tab fields
+        if (activeTab === "info" && game?.id) {
+          updateCompletionStatusV2(game.id, completionStatusDraft || undefined).catch(() => {});
+          const lastPlayedMs = lastPlayedDraft ? new Date(lastPlayedDraft + "T00:00:00").getTime() : 0;
+          const playtimeSeconds = (playtimeHoursDraft * 3600) + (playtimeMinutesDraft * 60);
+          if (lastPlayedMs > 0 || playtimeSeconds > 0) {
+            updatePlaytimeV2(game.id, playtimeSeconds, lastPlayedMs).catch(() => {});
+          }
+          updateGame(game.id, {
+            completionStatus: completionStatusDraft || undefined,
+            steamPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            localPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            steamLastPlayedAt: lastPlayedMs || undefined,
+            localLastPlayedAt: lastPlayedMs || undefined,
+          } as Partial<LibraryGame>);
+          showSuccess(t("game_edit.save_success", "Game details saved"));
+        }
 
         // Title update is handled by the epicOverrideStore → epicGameStore subscription chain.
         // No need to call updateGame here — it only matches by appId (undefined for Epic).
 
         setHasEdits(false);
-        showSuccess(t("game_edit.epic_saved", "Epic game details saved"));
         onMediaChanged?.();
         setSaving(false);
         return;
@@ -1309,62 +1369,84 @@ export default function GameEditDialog({
 
       // ── Debrid game save (install path + appId + launch config) ──
       if (isDebridMode && debridProviderGameId) {
-        const dir = installDirDraft.trim().replace(/^["']|["']$/g, "");
-        const exe = executablePathDraft.trim() || undefined;
-        const wd = workingDirectoryDraft.trim() || undefined;
-        const args = launchArgsDraft.trim() || undefined;
-        const ok = updateDebridGamePath(debridProviderGameId, dir, exe, wd, args);
-        if (appIdDraft) {
-          updateDebridGameAppId(debridProviderGameId, appIdDraft);
-        }
-        let titleOk = true;
-        if (nameDraft.trim()) {
-          titleOk = updateDebridGameTitle(debridProviderGameId, nameDraft);
-        }
-
-        // Persist full userData to Steam appinfo when Debrid has appId (same as Steam save path)
-        if (appIdDraft) {
-          const debridMedia: GameMediaPaths = {
-            coverPath: appInfo?.media?.coverPath ?? null,
-            landscapePath: appInfo?.media?.landscapePath ?? null,
-            backgroundPath: appInfo?.media?.backgroundPath ?? null,
-            logoPath: appInfo?.media?.logoPath ?? null,
-            iconPath: appInfo?.media?.iconPath ?? null,
-          };
-          const userData = buildUserData();
-          const updatedEntry: GameAppInfo = {
-            appId: appIdDraft,
-            provider: appInfo?.provider ?? "steam",
-            name: nameDraft || null,
-            updatedAt: Math.floor(Date.now() / 1000),
-            media: debridMedia,
-            mediaSources: appInfo?.mediaSources ?? null,
-            remote: appInfo?.remote ?? null,
-            userData: Object.keys(userData).length > 0 ? userData : null,
-          };
-          await persistGameAppInfo(appIdDraft, updatedEntry);
-          clearSessionAppInfoCache(appIdDraft);
-          notifyMediaUpdated(appIdDraft);
-          updateGame(appIdDraft, { title: nameDraft || undefined } as Partial<LibraryGame>);
-          onMediaChanged?.();
-          setAppInfo(updatedEntry);
-        }
-
-        if (ok && titleOk) {
-          showSuccess(t("game_edit.save_success", "Game details saved"));
-          // Calculate sizeOnDisk if installDir exists
-          if (dir) {
-            calculateDirectorySize(dir).then((bytes) => {
-              if (bytes > 0) {
-                updateGame(game?.appId ?? debridProviderGameId, { sizeOnDisk: bytes } as Partial<LibraryGame>);
-              }
-            }).catch(() => { });
+        // Installation tab fields
+        if (activeTab === "installation") {
+          const dir = installDirDraft.trim().replace(/^["']|["']$/g, "");
+          const exe = executablePathDraft.trim() || undefined;
+          const wd = workingDirectoryDraft.trim() || undefined;
+          const args = launchArgsDraft.trim() || undefined;
+          const ok = updateDebridGamePath(debridProviderGameId, dir, exe, wd, args);
+          if (appIdDraft) {
+            updateDebridGameAppId(debridProviderGameId, appIdDraft);
           }
-        } else if (ok) {
-          showError(t("game_edit.title_save_failed", "Could not save title"));
-        } else {
-          showError(t("game_edit.debrid_save_failed", "Could not save debrid path"));
+          let titleOk = true;
+          if (nameDraft.trim()) {
+            titleOk = updateDebridGameTitle(debridProviderGameId, nameDraft);
+          }
+
+          // Persist full userData to Steam appinfo when Debrid has appId (same as Steam save path)
+          if (appIdDraft) {
+            const debridMedia: GameMediaPaths = {
+              coverPath: appInfo?.media?.coverPath ?? null,
+              landscapePath: appInfo?.media?.landscapePath ?? null,
+              backgroundPath: appInfo?.media?.backgroundPath ?? null,
+              logoPath: appInfo?.media?.logoPath ?? null,
+              iconPath: appInfo?.media?.iconPath ?? null,
+            };
+            const userData = buildUserData();
+            const updatedEntry: GameAppInfo = {
+              appId: appIdDraft,
+              provider: appInfo?.provider ?? "steam",
+              name: nameDraft || null,
+              updatedAt: Math.floor(Date.now() / 1000),
+              media: debridMedia,
+              mediaSources: appInfo?.mediaSources ?? null,
+              remote: appInfo?.remote ?? null,
+              userData: Object.keys(userData).length > 0 ? userData : null,
+            };
+            await persistGameAppInfo(appIdDraft, updatedEntry);
+            clearSessionAppInfoCache(appIdDraft);
+            notifyMediaUpdated(appIdDraft);
+            updateGame(appIdDraft, { title: nameDraft || undefined } as Partial<LibraryGame>);
+            onMediaChanged?.();
+            setAppInfo(updatedEntry);
+          }
+
+          if (ok && titleOk) {
+            showSuccess(t("game_edit.save_success", "Game details saved"));
+            // Calculate sizeOnDisk if installDir exists
+            if (dir) {
+              calculateDirectorySize(dir).then((bytes) => {
+                if (bytes > 0) {
+                  updateGame(game?.appId ?? debridProviderGameId, { sizeOnDisk: bytes } as Partial<LibraryGame>);
+                }
+              }).catch(() => { });
+            }
+          } else if (ok) {
+            showError(t("game_edit.title_save_failed", "Could not save title"));
+          } else {
+            showError(t("game_edit.debrid_save_failed", "Could not save debrid path"));
+          }
         }
+
+        // Info tab fields
+        if (activeTab === "info" && game?.id) {
+          updateCompletionStatusV2(game.id, completionStatusDraft || undefined).catch(() => {});
+          const lastPlayedMs = lastPlayedDraft ? new Date(lastPlayedDraft + "T00:00:00").getTime() : 0;
+          const playtimeSeconds = (playtimeHoursDraft * 3600) + (playtimeMinutesDraft * 60);
+          if (lastPlayedMs > 0 || playtimeSeconds > 0) {
+            updatePlaytimeV2(game.id, playtimeSeconds, lastPlayedMs).catch(() => {});
+          }
+          updateGame(game.id, {
+            completionStatus: completionStatusDraft || undefined,
+            steamPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            localPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            steamLastPlayedAt: lastPlayedMs || undefined,
+            localLastPlayedAt: lastPlayedMs || undefined,
+          } as Partial<LibraryGame>);
+          showSuccess(t("game_edit.save_success", "Game details saved"));
+        }
+
         setHasEdits(false);
         setSaving(false);
         return;
@@ -1374,7 +1456,9 @@ export default function GameEditDialog({
       if (isEmulatorMode && emulatorProviderGameId) {
         const { getEmulatorGame, saveEmulatorGame } = await import("../../services/emulatorGameStore");
         const existing = getEmulatorGame(emulatorProviderGameId);
-        if (existing) {
+
+        // Details tab fields
+        if (activeTab === "details" && existing) {
           saveEmulatorGame({
             ...existing,
             title: nameDraft || existing.title,
@@ -1400,64 +1484,131 @@ export default function GameEditDialog({
             metadata: { ...(game?.metadata ?? {}), ...metaPatch } as any,
           });
           showSuccess(t("game_edit.save_success", "Game details saved"));
-        } else {
-          showError(t("game_edit.emulator_not_found", "Emulator game not found"));
         }
+
+        // Info tab fields
+        if (activeTab === "info" && game?.id) {
+          updateCompletionStatusV2(game.id, completionStatusDraft || undefined).catch(() => {});
+          const lastPlayedMs = lastPlayedDraft ? new Date(lastPlayedDraft + "T00:00:00").getTime() : 0;
+          const playtimeSeconds = (playtimeHoursDraft * 3600) + (playtimeMinutesDraft * 60);
+          if (lastPlayedMs > 0 || playtimeSeconds > 0) {
+            updatePlaytimeV2(game.id, playtimeSeconds, lastPlayedMs).catch(() => {});
+          }
+          updateGame(game.id, {
+            completionStatus: completionStatusDraft || undefined,
+            steamPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            localPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            steamLastPlayedAt: lastPlayedMs || undefined,
+            localLastPlayedAt: lastPlayedMs || undefined,
+          } as Partial<LibraryGame>);
+          showSuccess(t("game_edit.save_success", "Game details saved"));
+        }
+
         setHasEdits(false);
         setSaving(false);
         return;
       }
 
       // ── Steam game save (existing) ──
-      const media: GameMediaPaths = {
-        coverPath: appInfo?.media?.coverPath ?? null,
-        landscapePath: appInfo?.media?.landscapePath ?? null,
-        backgroundPath: appInfo?.media?.backgroundPath ?? null,
-        logoPath: appInfo?.media?.logoPath ?? null,
-        iconPath: appInfo?.media?.iconPath ?? null,
-      };
-      const userData = buildUserData();
-      const updatedEntry: GameAppInfo = {
-        appId: appId!,
-        provider: appInfo?.provider ?? "steam",
-        name: nameDraft || null,
-        updatedAt: Math.floor(Date.now() / 1000),
-        media,
-        mediaSources: appInfo?.mediaSources ?? null,
-        remote: appInfo?.remote ?? null,
-        userData: Object.keys(userData).length > 0 ? userData : null,
-      };
-      await persistGameAppInfo(appId!, updatedEntry);
-      clearSessionAppInfoCache(appId!);
-      // Merge custom metadata edits into game.metadata so the detail page shows them instantly
-      const metaPatch: Record<string, unknown> = {};
-      if (nameDraft) metaPatch.name = nameDraft;
-      if (descriptionDraft) { metaPatch.short_description = descriptionDraft; metaPatch.about_the_game = descriptionDraft; }
-      if (genresDraft) metaPatch.genres = genresDraft.split(",").map((s) => s.trim()).filter(Boolean);
-      if (releaseDateDraft) metaPatch.release_date = releaseDateDraft;
-      if (developersDraft) metaPatch.developer = developersDraft;
-      if (publishersDraft) metaPatch.publishers = publishersDraft.split(",").map((s) => s.trim()).filter(Boolean);
-      if (categoriesDraft) metaPatch.categories = categoriesDraft.split(",").map((s) => s.trim()).filter(Boolean);
-      if (featuresDraft) metaPatch.categories = featuresDraft.split(",").map((s) => s.trim()).filter(Boolean);
-      if (seriesDraft) metaPatch.series = seriesDraft;
-      if (ageRatingDraft) metaPatch.age_rating = ageRatingDraft;
-      if (regionDraft) metaPatch.region = regionDraft;
-      if (sortingNameDraft) metaPatch.sort_name = sortingNameDraft;
-      updateGame(appId!, {
-        title: nameDraft || undefined,
-        completionStatus: completionStatusDraft || undefined,
-        ...(Object.keys(metaPatch).length > 0 ? { metadata: { ...(game?.metadata ?? {}), ...metaPatch, resolved: true } } : {}),
-      } as Partial<LibraryGame>);
-      notifyMediaUpdated(appId!);
-      onMediaChanged?.();
-      setAppInfo(updatedEntry);
+      // Details tab fields
+      if (activeTab === "details") {
+        const media: GameMediaPaths = {
+          coverPath: appInfo?.media?.coverPath ?? null,
+          landscapePath: appInfo?.media?.landscapePath ?? null,
+          backgroundPath: appInfo?.media?.backgroundPath ?? null,
+          logoPath: appInfo?.media?.logoPath ?? null,
+          iconPath: appInfo?.media?.iconPath ?? null,
+        };
+        const userData = buildUserData();
+        const updatedEntry: GameAppInfo = {
+          appId: appId!,
+          provider: appInfo?.provider ?? "steam",
+          name: nameDraft || null,
+          updatedAt: Math.floor(Date.now() / 1000),
+          media,
+          mediaSources: appInfo?.mediaSources ?? null,
+          remote: appInfo?.remote ?? null,
+          userData: Object.keys(userData).length > 0 ? userData : null,
+        };
+        await persistGameAppInfo(appId!, updatedEntry);
+        clearSessionAppInfoCache(appId!);
+        // Merge custom metadata edits into game.metadata so the detail page shows them instantly
+        const metaPatch: Record<string, unknown> = {};
+        if (nameDraft) metaPatch.name = nameDraft;
+        if (descriptionDraft) { metaPatch.short_description = descriptionDraft; metaPatch.about_the_game = descriptionDraft; }
+        if (genresDraft) metaPatch.genres = genresDraft.split(",").map((s) => s.trim()).filter(Boolean);
+        if (releaseDateDraft) metaPatch.release_date = releaseDateDraft;
+        if (developersDraft) metaPatch.developer = developersDraft;
+        if (publishersDraft) metaPatch.publishers = publishersDraft.split(",").map((s) => s.trim()).filter(Boolean);
+        if (categoriesDraft) metaPatch.categories = categoriesDraft.split(",").map((s) => s.trim()).filter(Boolean);
+        if (featuresDraft) metaPatch.categories = featuresDraft.split(",").map((s) => s.trim()).filter(Boolean);
+        if (seriesDraft) metaPatch.series = seriesDraft;
+        if (ageRatingDraft) metaPatch.age_rating = ageRatingDraft;
+        if (regionDraft) metaPatch.region = regionDraft;
+        if (sortingNameDraft) metaPatch.sort_name = sortingNameDraft;
+        updateGame(appId!, {
+          title: nameDraft || undefined,
+          ...(Object.keys(metaPatch).length > 0 ? { metadata: { ...(game?.metadata ?? {}), ...metaPatch, resolved: true } } : {}),
+        } as Partial<LibraryGame>);
+        notifyMediaUpdated(appId!);
+        onMediaChanged?.();
+        setAppInfo(updatedEntry);
+        showSuccess(t("game_edit.save_success", "Game details saved"));
+      }
+
+      // Installation tab fields
+      if (activeTab === "installation") {
+        const media: GameMediaPaths = {
+          coverPath: appInfo?.media?.coverPath ?? null,
+          landscapePath: appInfo?.media?.landscapePath ?? null,
+          backgroundPath: appInfo?.media?.backgroundPath ?? null,
+          logoPath: appInfo?.media?.logoPath ?? null,
+          iconPath: appInfo?.media?.iconPath ?? null,
+        };
+        const userData = buildUserData();
+        const updatedEntry: GameAppInfo = {
+          appId: appId!,
+          provider: appInfo?.provider ?? "steam",
+          name: nameDraft || null,
+          updatedAt: Math.floor(Date.now() / 1000),
+          media,
+          mediaSources: appInfo?.mediaSources ?? null,
+          remote: appInfo?.remote ?? null,
+          userData: Object.keys(userData).length > 0 ? userData : null,
+        };
+        await persistGameAppInfo(appId!, updatedEntry);
+        clearSessionAppInfoCache(appId!);
+        notifyMediaUpdated(appId!);
+        setAppInfo(updatedEntry);
+        showSuccess(t("game_edit.save_success", "Game details saved"));
+      }
+
+      // Info tab fields
+      if (activeTab === "info") {
+        if (game?.id) {
+          updateCompletionStatusV2(game.id, completionStatusDraft || undefined).catch(() => {});
+          const lastPlayedMs = lastPlayedDraft ? new Date(lastPlayedDraft + "T00:00:00").getTime() : 0;
+          const playtimeSeconds = (playtimeHoursDraft * 3600) + (playtimeMinutesDraft * 60);
+          if (lastPlayedMs > 0 || playtimeSeconds > 0) {
+            updatePlaytimeV2(game.id, playtimeSeconds, lastPlayedMs).catch(() => {});
+          }
+          updateGame(appId!, {
+            completionStatus: completionStatusDraft || undefined,
+            steamPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            localPlaytimeMinutes: Math.floor(playtimeSeconds / 60),
+            steamLastPlayedAt: lastPlayedMs || undefined,
+            localLastPlayedAt: lastPlayedMs || undefined,
+          } as Partial<LibraryGame>);
+        }
+        showSuccess(t("game_edit.save_success", "Game details saved"));
+      }
+
       setHasEdits(false);
-      showSuccess(t("game_edit.save_success", "Game details saved"));
     } catch {
       showError(t("game_edit.save_failed", "Failed to save game details"));
     }
     setSaving(false);
-  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, game, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged, metadata]);
+  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, emulatorProviderGameId, isManualMode, isEpicMode, isDebridMode, isEmulatorMode, isCreateMode, createdManualId, appInfo, game, activeTab, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, lastPlayedDraft, playtimeHoursDraft, playtimeMinutesDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged, metadata]);
 
   // ── Track edits ──
   useEffect(() => {
@@ -2633,12 +2784,14 @@ export default function GameEditDialog({
             <div className="space-y-3">
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-(--color-muted)">{t("game_edit.completion_status", "Completion Status")}</label>
-                <div className="flex gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-1">
+                <div className="flex flex-wrap gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-1">
                   {[
                     { value: "", label: t("game_edit.status_auto", "Auto") },
                     { value: "completed", label: t("game_edit.status_completed", "Completed") },
                     { value: "in-progress", label: t("game_edit.status_in_progress", "In Progress") },
                     { value: "not-played", label: t("game_edit.status_not_played", "Not Played") },
+                    { value: "played", label: t("game_edit.status_played", "Played") },
+                    { value: "abandoned", label: t("game_edit.status_abandoned", "Abandoned") },
                   ].map((opt) => (
                     <button
                       key={opt.value}
@@ -2657,6 +2810,41 @@ export default function GameEditDialog({
                 <p className="mt-1 text-[11px] text-(--color-muted)/60">
                   {t("game_edit.auto_derives", "Auto derives from playtime & achievements.")}
                 </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-(--color-muted)">{t("game_edit.last_played", "Last Played")}</label>
+                  <input
+                    type="date"
+                    value={lastPlayedDraft}
+                    onChange={(e) => { setLastPlayedDraft(e.target.value); setHasEdits(true); }}
+                    className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs text-(--color-text) focus:border-(--color-accent) focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-(--color-muted)">{t("game_edit.playtime", "Playtime")}</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      value={playtimeHoursDraft}
+                      onChange={(e) => { setPlaytimeHoursDraft(Math.max(0, parseInt(e.target.value) || 0)); setHasEdits(true); }}
+                      className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs text-(--color-text) focus:border-(--color-accent) focus:outline-none"
+                      placeholder="h"
+                    />
+                    <span className="self-center text-[11px] text-(--color-muted)">h</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={playtimeMinutesDraft}
+                      onChange={(e) => { setPlaytimeMinutesDraft(Math.max(0, Math.min(59, parseInt(e.target.value) || 0))); setHasEdits(true); }}
+                      className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs text-(--color-text) focus:border-(--color-accent) focus:outline-none"
+                      placeholder="m"
+                    />
+                    <span className="self-center text-[11px] text-(--color-muted)">m</span>
+                  </div>
+                </div>
               </div>
               {metadata?.platforms?.length ? (
                 <FieldRow label={t("game_edit.field_platforms", "Platforms")} value={metadata.platforms.join(", ")} />

@@ -21,6 +21,8 @@ import {
   Image,
   Trash2,
   Wrench,
+  Check,
+  Circle,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -29,6 +31,7 @@ import type { GameAppInfo } from "../../services/gameCacheService";
 import { subscribeMediaCacheVersion, getMediaCacheVersion } from "../../services/gameCacheService";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
+import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useInViewport } from "../../hooks/useInViewport";
 import { useHoverPrefetch } from "../../hooks/useHoverPrefetch";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
@@ -57,7 +60,7 @@ import { useGameSession, computeGameKey } from "../../context/GameSessionContext
 import { useFavorites } from "../../context/FavoritesContext";
 import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
 import { openExternalUrl } from "../../services/externalLinks";
-import { uninstallSteamApp, openSteamStoreApp, downloadAndInstallPackage, computeFileHash, markSyncIndexItem, deleteDirectory, deleteGameV2 } from "../../services/tauri";
+import { uninstallSteamApp, openSteamStoreApp, downloadAndInstallPackage, computeFileHash, markSyncIndexItem, deleteDirectory, deleteGameV2, updateCompletionStatusV2 } from "../../services/tauri";
 import { useConfirm } from "../../services/confirmService";
 import { getEffectiveProviderAuthHeaders, buildProviderDownloadUrl } from "../../services/providerSearch";
 import { findCachedSourceForApp } from "../../services/sourceAvailabilityCacheService";
@@ -159,6 +162,7 @@ function GameLauncherTileInner({
   const { t } = useTranslation();
   const { confirm } = useConfirm();
   const { settings } = useSettings();
+  const { updateGame } = useLibraryGames();
   const { ref, isVisible } = useInViewport();
   const { onMouseEnter: prefetchEnter, onMouseLeave: prefetchLeave } = useHoverPrefetch(game.appId);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -884,6 +888,43 @@ function GameLauncherTileInner({
                 }
               }}
             />
+
+              <MenuItem
+                label={t("context_menu.set_status", "Set Status")}
+                icon={<Circle className="h-3.5 w-3.5" />}
+                children={[
+                  {
+                    label: t("context_menu.status_auto", "Auto"),
+                    icon: game.completionStatus ? <Circle className="h-3.5 w-3.5 opacity-30" /> : <Check className="h-3.5 w-3.5" />,
+                    onClick: () => { setMenuOpen(false); if (game.id) { updateCompletionStatusV2(game.id, undefined).catch(() => {}); updateGame(game.id, { completionStatus: undefined }); } },
+                  },
+                  {
+                    label: t("context_menu.status_completed", "Completed"),
+                    icon: game.completionStatus === "completed" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (game.id) { updateCompletionStatusV2(game.id, "completed").catch(() => {}); updateGame(game.id, { completionStatus: "completed" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_in_progress", "In Progress"),
+                    icon: game.completionStatus === "in-progress" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (game.id) { updateCompletionStatusV2(game.id, "in-progress").catch(() => {}); updateGame(game.id, { completionStatus: "in-progress" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_not_played", "Not Played"),
+                    icon: game.completionStatus === "not-played" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (game.id) { updateCompletionStatusV2(game.id, "not-played").catch(() => {}); updateGame(game.id, { completionStatus: "not-played" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_played", "Played"),
+                    icon: game.completionStatus === "played" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (game.id) { updateCompletionStatusV2(game.id, "played").catch(() => {}); updateGame(game.id, { completionStatus: "played" }); } },
+                  },
+                  {
+                    label: t("context_menu.status_abandoned", "Abandoned"),
+                    icon: game.completionStatus === "abandoned" ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5 opacity-30" />,
+                    onClick: () => { setMenuOpen(false); if (game.id) { updateCompletionStatusV2(game.id, "abandoned").catch(() => {}); updateGame(game.id, { completionStatus: "abandoned" }); } },
+                  },
+                ]}
+              />
 
             <MenuItem
               label={t("context_menu.manage", "Manage")}

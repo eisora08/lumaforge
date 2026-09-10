@@ -88,12 +88,9 @@ function gameV2ToPlaytimeEntry(game: GameV2): PlaytimeEntry {
   // DB stores lastPlayedAt as milliseconds (see libraryGameToGameV2), store expects seconds
   let lastPlayedSeconds: number | null = null;
   if (game.lastPlayedAt) {
-    // Normalize: ns (>1e14) → /1e6, ms (>1e10) → /1, else seconds
-    lastPlayedSeconds = game.lastPlayedAt > 1e14
-      ? Math.floor(game.lastPlayedAt / 1_000_000_000)
-      : game.lastPlayedAt > 1e10
-        ? Math.floor(game.lastPlayedAt / 1000)
-        : game.lastPlayedAt;
+    // DB should always store ms now. Handle legacy seconds (<1e10) for safety.
+    const ms = game.lastPlayedAt > 1e10 ? game.lastPlayedAt : game.lastPlayedAt * 1000;
+    lastPlayedSeconds = Math.floor(ms / 1000);
   }
   return {
     gameKey: game.id,
@@ -191,7 +188,8 @@ export async function importExternalPlaytime(input: ExternalPlaytimeImport): Pro
   const totalSeconds = input.externalPlaytimeSeconds;
   // Do NOT stamp NOW when lastPlayed is missing — that contaminates every steam game with "Just now"
   const resolvedLastPlayed = input.lastPlayedAtSeconds ?? cachedStore?.games[gameV2Id]?.lastPlayedAt ?? null;
-  const lastPlayedForDb = resolvedLastPlayed ?? 0;
+  // Convert seconds to ms for games_v2 (which stores ms)
+  const lastPlayedForDb = resolvedLastPlayed ? resolvedLastPlayed * 1000 : 0;
   await updatePlaytimeV2(gameV2Id, totalSeconds, lastPlayedForDb);
 
   // Build entry from the input
@@ -227,7 +225,8 @@ export async function batchImportExternalPlaytime(inputs: ExternalPlaytimeImport
     const gameV2Id = input.gameKey;
     const totalSeconds = input.externalPlaytimeSeconds;
     const lastPlayed = input.lastPlayedAtSeconds ?? cachedStore?.games[gameV2Id]?.lastPlayedAt ?? 0;
-    await updatePlaytimeV2(gameV2Id, totalSeconds, lastPlayed);
+    // Convert seconds to ms for games_v2 (which stores ms)
+    await updatePlaytimeV2(gameV2Id, totalSeconds, lastPlayed * 1000);
   }
   // Refresh cache after batch write
   await loadPlaytimeStore(true);
@@ -242,7 +241,7 @@ export async function startPlaySession(input: PlaySessionStart): Promise<ActiveP
   // Update games_v2: increment play count, set last played (preserve existing playtime)
   await incrementPlayCountV2(input.gameKey);
   const existingSeconds = cachedStore?.games[input.gameKey]?.totalPlaytimeSeconds ?? 0;
-  await updatePlaytimeV2(input.gameKey, existingSeconds, now); // preserve playtime, update last_played_at
+  await updatePlaytimeV2(input.gameKey, existingSeconds, now * 1000); // preserve playtime, update last_played_at (ms)
 
   // Record session start — capture Rust-returned session ID so endPlaySession can find it
   let sessionId = fallbackSessionId;
@@ -297,6 +296,11 @@ export async function endPlaySession(input: PlaySessionEnd): Promise<PlaytimeEnt
     };
   }
 
+  // Preserve accumulated playtime before stub overwrites the cache
+  const existingEntry = cachedStore?.games[input.gameKey];
+  const preservedTotal = existingEntry?.totalPlaytimeSeconds ?? 0;
+  const preservedLocal = existingEntry?.localPlaytimeSeconds ?? 0;
+
   if (cachedStore) {
     cachedStore.games[input.gameKey] = entry;
     cachedStore.updatedAt = Date.now();
@@ -308,13 +312,19 @@ export async function endPlaySession(input: PlaySessionEnd): Promise<PlaytimeEnt
   if (sessionSeconds >= MIN_SESSION_SECONDS && entry.provider !== "steam") {
     try {
       await addPlaytimeV2(input.gameKey, sessionSeconds);
-      // Update cached total to reflect DB increment
+      // Restore accumulated playtime + new session duration
       if (cachedStore?.games[input.gameKey]) {
-        cachedStore.games[input.gameKey].totalPlaytimeSeconds += sessionSeconds;
-        cachedStore.games[input.gameKey].localPlaytimeSeconds += sessionSeconds;
+        cachedStore.games[input.gameKey].totalPlaytimeSeconds = preservedTotal + sessionSeconds;
+        cachedStore.games[input.gameKey].localPlaytimeSeconds = preservedLocal + sessionSeconds;
       }
     } catch {
       // non-critical
+    }
+  } else {
+    // Even if not persisted to games_v2 (Steam), restore the preserved total
+    if (cachedStore?.games[input.gameKey]) {
+      cachedStore.games[input.gameKey].totalPlaytimeSeconds = preservedTotal;
+      cachedStore.games[input.gameKey].localPlaytimeSeconds = preservedLocal;
     }
   }
 
