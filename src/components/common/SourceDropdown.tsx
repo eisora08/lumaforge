@@ -92,7 +92,7 @@ export default function SourceDropdown({
   const menuContent = open && (
     <div
       ref={menuRef}
-      className={`lf-dropdown-menu z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-(--surface-active-border) bg-(--surface-active) shadow-lg backdrop-blur-md ${
+      className={`lf-dropdown-menu ${portal ? "z-[999999]" : "z-50"} mt-1 max-h-60 overflow-y-auto rounded-lg border border-(--surface-active-border) bg-(--surface-active) shadow-lg backdrop-blur-md ${
         portal ? "fixed" : "absolute"
       }`}
       style={portal ? {

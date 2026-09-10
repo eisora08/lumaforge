@@ -11,10 +11,11 @@
 import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  FolderOpen, ChevronDown, Plus, Copy, Trash2, Settings,
+  FolderOpen, Plus, Copy, Trash2, Settings,
 } from "lucide-react";
 import type { EmulatorConfig, EmulatorPlatform, ScanConfiguration } from "../../data/emulatorDefinitions/types";
 import { pickFolder } from "../../services/tauri";
+import SourceDropdown from "../common/SourceDropdown";
 
 type AutoScanSectionProps = {
   scanConfigs: ScanConfiguration[];
@@ -100,7 +101,7 @@ export function AutoScanSection({
   })();
 
   return (
-    <div className="flex gap-4 min-h-[400px]">
+    <div className="flex gap-4 h-[400px]">
       {/* Left Panel — Scan Config List */}
       <div className="w-[250px] shrink-0 flex flex-col border border-(--surface-active-border) rounded-lg bg-(--surface-active)/50">
         <div className="flex-1 overflow-y-auto min-h-0">
@@ -162,7 +163,7 @@ export function AutoScanSection({
       </div>
 
       {/* Right Panel — Scan Config Detail */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 overflow-y-auto">
         {selectedScan ? (
           <div className="space-y-3">
             {/* Name */}
@@ -174,7 +175,7 @@ export function AutoScanSection({
                 type="text"
                 value={selectedScan.name}
                 onChange={(e) => update({ name: e.target.value })}
-                className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
+                className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
               />
             </div>
 
@@ -189,7 +190,7 @@ export function AutoScanSection({
                   value={selectedScan.directory}
                   onChange={(e) => update({ directory: e.target.value })}
                   placeholder="C:\ROMs\SNES"
-                  className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                  className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                 />
                 <button
                   onClick={async () => {
@@ -199,7 +200,7 @@ export function AutoScanSection({
                     );
                     if (folder) update({ directory: folder });
                   }}
-                  className="rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
+                  className="rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) hover:bg-white/10"
                 >
                   <FolderOpen className="h-4 w-4" />
                 </button>
@@ -211,21 +212,19 @@ export function AutoScanSection({
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.scan_with", "Scan With Emulator")}
               </label>
-              <div className="relative">
-                <select
-                  value={selectedScan.emulatorId}
-                  onChange={(e) => update({ emulatorId: e.target.value, profileId: "" })}
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                >
-                  <option value="">{t("emulator.none", "(none)")}</option>
-                  {emulatorConfigs.map((em) => (
-                    <option key={em.id} value={em.id}>
-                      {em.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                className="w-full"
+                portal
+                value={selectedScan.emulatorId}
+                onChange={(val) => update({ emulatorId: val, profileId: "" })}
+                options={[
+                  { value: "", label: t("emulator.none", "(none)") },
+                  ...emulatorConfigs.map((em) => ({
+                    value: em.id,
+                    label: em.name,
+                  })),
+                ]}
+              />
             </div>
 
             {/* Profile */}
@@ -233,22 +232,19 @@ export function AutoScanSection({
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.scan_profile", "Profile")}
               </label>
-              <div className="relative">
-                <select
-                  value={selectedScan.profileId}
-                  onChange={(e) => update({ profileId: e.target.value })}
-                  disabled={!selectedEmulator}
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none disabled:opacity-50"
-                >
-                  <option value="">{t("emulator.none", "(none)")}</option>
-                  {selectedEmulator?.profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                className="w-full"
+                portal
+                value={selectedScan.profileId}
+                onChange={(val) => update({ profileId: val })}
+                options={[
+                  { value: "", label: t("emulator.none", "(none)") },
+                  ...(selectedEmulator?.profiles.map((p) => ({
+                    value: p.id,
+                    label: p.name,
+                  })) ?? []),
+                ]}
+              />
             </div>
 
             {/* Override Platform */}
@@ -256,21 +252,19 @@ export function AutoScanSection({
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.override_platform", "Override Platform")}
               </label>
-              <div className="relative">
-                <select
-                  value={selectedScan.overridePlatformId ?? ""}
-                  onChange={(e) => update({ overridePlatformId: e.target.value || undefined })}
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                >
-                  <option value="">{t("emulator.auto_detect", "Auto-detect")}</option>
-                  {allPlatforms.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.shortName}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                className="w-full"
+                portal
+                value={selectedScan.overridePlatformId ?? ""}
+                onChange={(val) => update({ overridePlatformId: val || undefined })}
+                options={[
+                  { value: "", label: t("emulator.auto_detect", "Auto-detect") },
+                  ...allPlatforms.map((p) => ({
+                    value: p.id,
+                    label: p.shortName,
+                  })),
+                ]}
+              />
             </div>
 
             {/* Play Action Settings */}
@@ -278,24 +272,22 @@ export function AutoScanSection({
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.play_action", "Play Action Settings")}
               </label>
-              <div className="relative">
-                <select
-                  value={selectedScan.playActionSettings}
-                  onChange={(e) =>
-                    update({ playActionSettings: e.target.value as ScanConfiguration["playActionSettings"] })
-                  }
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-2 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                >
-                  <option value="scanner">{t("emulator.play_scanner", "Use Scanner")}</option>
-                  <option value="select_profile">{t("emulator.play_select_profile", "Select Profile")}</option>
-                  <option value="select_emulator">{t("emulator.play_select_emulator", "Select Emulator")}</option>
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                className="w-full"
+                value={selectedScan.playActionSettings}
+                onChange={(val) =>
+                  update({ playActionSettings: val as ScanConfiguration["playActionSettings"] })
+                }
+                options={[
+                  { value: "scanner", label: t("emulator.play_scanner", "Use Scanner") },
+                  { value: "select_profile", label: t("emulator.play_select_profile", "Select Profile") },
+                  { value: "select_emulator", label: t("emulator.play_select_emulator", "Select Emulator") },
+                ]}
+              />
             </div>
 
             {/* Checkboxes */}
-            <div className="space-y-2 rounded border border-(--surface-active-border) bg-white/5 p-3">
+            <div className="space-y-2 rounded-lg border border-(--surface-active-border) bg-white/5 p-3">
               <CheckboxField
                 checked={selectedScan.excludeOnlineFiles}
                 onChange={(v) => update({ excludeOnlineFiles: v })}
@@ -364,7 +356,7 @@ export function AutoScanSection({
                         })
                       }
                       placeholder="*.chd, *.bin"
-                      className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                      className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                     />
                   </div>
 
@@ -380,11 +372,11 @@ export function AutoScanSection({
                         onChange={(e) => setNewExcludedFile(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && addExcludedFile()}
                         placeholder="file.txt"
-                        className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-2 py-1 text-xs text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                        className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-xs text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                       />
                       <button
                         onClick={addExcludedFile}
-                        className="rounded bg-white/10 px-2 py-1 text-xs text-(--color-text) hover:bg-white/15"
+                        className="rounded-lg bg-white/10 px-2 py-1 text-xs text-(--color-text) hover:bg-white/15"
                       >
                         <Plus className="h-3 w-3" />
                       </button>
@@ -393,7 +385,7 @@ export function AutoScanSection({
                       {selectedScan.excludedFiles.map((f, i) => (
                         <span
                           key={i}
-                          className="inline-flex items-center gap-1 rounded bg-white/5 px-2 py-0.5 text-xs text-(--color-text)"
+                          className="inline-flex items-center gap-1 rounded-lg bg-white/5 px-2 py-0.5 text-xs text-(--color-text)"
                         >
                           {f}
                           <button onClick={() => removeExcludedFile(i)} className="text-(--color-muted) hover:text-red-400">×</button>
@@ -414,11 +406,11 @@ export function AutoScanSection({
                         onChange={(e) => setNewExcludedDir(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && addExcludedDir()}
                         placeholder="subfolder"
-                        className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-2 py-1 text-xs text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                        className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-xs text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                       />
                       <button
                         onClick={addExcludedDir}
-                        className="rounded bg-white/10 px-2 py-1 text-xs text-(--color-text) hover:bg-white/15"
+                        className="rounded-lg bg-white/10 px-2 py-1 text-xs text-(--color-text) hover:bg-white/15"
                       >
                         <Plus className="h-3 w-3" />
                       </button>
@@ -427,7 +419,7 @@ export function AutoScanSection({
                       {selectedScan.excludedDirectories.map((d, i) => (
                         <span
                           key={i}
-                          className="inline-flex items-center gap-1 rounded bg-white/5 px-2 py-0.5 text-xs text-(--color-text)"
+                          className="inline-flex items-center gap-1 rounded-lg bg-white/5 px-2 py-0.5 text-xs text-(--color-text)"
                         >
                           {d}
                           <button onClick={() => removeExcludedDir(i)} className="text-(--color-muted) hover:text-red-400">×</button>
@@ -466,7 +458,7 @@ function CheckboxField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="rounded border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
+        className="rounded-lg border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
       />
       <span className="text-xs text-(--color-text)">{label}</span>
     </label>

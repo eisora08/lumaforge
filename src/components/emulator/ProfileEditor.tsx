@@ -11,12 +11,13 @@
 
 import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, Code, Terminal, FolderOpen, ChevronDown } from "lucide-react";
+import { Settings, Code, Terminal, FolderOpen } from "lucide-react";
 import type { EmulatorProfileConfig, TrackingMode } from "../../data/emulatorDefinitions/types";
 import { emulatorDefinitions } from "../../data/emulatorDefinitions";
 import { emulatorPlatforms } from "../../data/emulatorDefinitions/platforms";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { showError } from "../toast/GameToast";
+import SourceDropdown from "../common/SourceDropdown";
 
 type ProfileEditorProps = {
   profile: EmulatorProfileConfig;
@@ -43,11 +44,11 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
   );
 
   return (
-    <div className="rounded border border-(--surface-active-border) bg-white/5 p-3 space-y-3">
+    <div className="rounded-lg border border-(--surface-active-border) bg-white/5 p-3 space-y-3">
       {/* Profile Type Badge */}
       <div className="flex items-center gap-2">
         <span
-          className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${
+          className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-medium ${
             profile.type === "builtin"
               ? "bg-blue-500/10 text-blue-400"
               : "bg-green-500/10 text-green-400"
@@ -106,7 +107,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               type="text"
               value={profile.name}
               onChange={(e) => update({ name: e.target.value })}
-              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
+              className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
             />
           </div>
 
@@ -116,33 +117,30 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               <label className="mb-1 block text-xs text-(--color-muted)">
                 {t("emulator.builtin_profile", "Built-in Profile")}
               </label>
-              <div className="relative">
-                <select
-                  value={profile.builtinProfileName ?? ""}
-                  onChange={(e) => {
-                    const selectedName = e.target.value;
-                    const defProfile = emulatorDefinitions
-                      .flatMap((d) => d.profiles)
-                      .find((p) => p.name === selectedName);
-                    update({
-                      builtinProfileName: selectedName || undefined,
-                      supportedPlatforms: defProfile?.platforms ?? profile.supportedPlatforms,
-                      supportedFileTypes: defProfile?.imageExtensions ?? profile.supportedFileTypes,
-                    });
-                  }}
-                  className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-                >
-                  <option value="">—</option>
-                  {emulatorDefinitions.map((def) =>
-                    def.profiles.map((p) => (
-                      <option key={`${def.id}:${p.name}`} value={p.name}>
-                        {def.name} — {p.name}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-              </div>
+              <SourceDropdown
+                className="w-full"
+                portal
+                value={profile.builtinProfileName ?? ""}
+                onChange={(selectedName) => {
+                  const defProfile = emulatorDefinitions
+                    .flatMap((d) => d.profiles)
+                    .find((p) => p.name === selectedName);
+                  update({
+                    builtinProfileName: selectedName || undefined,
+                    supportedPlatforms: defProfile?.platforms ?? profile.supportedPlatforms,
+                    supportedFileTypes: defProfile?.imageExtensions ?? profile.supportedFileTypes,
+                  });
+                }}
+                options={[
+                  { value: "", label: "—" },
+                  ...emulatorDefinitions.flatMap((def) =>
+                    def.profiles.map((p) => ({
+                      value: p.name,
+                      label: `${def.name} — ${p.name}`,
+                    }))
+                  ),
+                ]}
+              />
             </div>
           )}
 
@@ -154,7 +152,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 id="overrideArgs"
                 checked={profile.overrideDefaultArgs ?? false}
                 onChange={(e) => update({ overrideDefaultArgs: e.target.checked })}
-                className="rounded border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
+                className="rounded-lg border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
               />
               <label htmlFor="overrideArgs" className="text-xs text-(--color-muted)">
                 {t("emulator.override_args", "Override default arguments")}
@@ -179,7 +177,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                   )
                 }
                 placeholder='"{ImagePath}" -f'
-                className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
               />
               <p className="mt-0.5 text-[10px] text-(--color-muted)">
                 {t("emulator.placeholders", "Placeholders: {ImagePath}, {ImageName}, {ImageNameNoExt}, {EmulatorDir}, {GameName}, {InstallDir}")}
@@ -199,7 +197,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                   value={profile.executable ?? ""}
                   onChange={(e) => update({ executable: e.target.value })}
                   placeholder="C:\Emulators\my-emulator.exe"
-                  className="flex-1 rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                  className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
                 />
                 <button
                   onClick={async () => {
@@ -216,7 +214,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                       showError(t("emulator.file_picker_failed", "File picker failed: {{error}}", { error: msg }));
                     }
                   }}
-                  className="rounded border border-(--surface-active-border) bg-white/5 px-2 py-1.5 text-(--color-text) hover:bg-white/10"
+                  className="rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-(--color-text) hover:bg-white/10"
                 >
                   <FolderOpen className="h-4 w-4" />
                 </button>
@@ -235,7 +233,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 value={profile.workingDirectory ?? ""}
                 onChange={(e) => update({ workingDirectory: e.target.value })}
                 placeholder="{EmulatorDir}"
-                className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
               />
             </div>
           )}
@@ -245,7 +243,9 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
             <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.platforms", "Platforms")}
             </label>
-            <div className="max-h-32 overflow-y-auto rounded border border-(--surface-active-border) bg-white/5 p-2 space-y-1">
+            <div className={`max-h-32 overflow-y-auto rounded-lg border border-(--surface-active-border) bg-white/5 p-2 space-y-1 ${
+              profile.type === "builtin" && !profile.overrideDefaultArgs ? "opacity-60" : ""
+            }`}>
               {emulatorPlatforms.map((p) => {
                 const checked = profile.supportedPlatforms.includes(p.id);
                 return (
@@ -253,6 +253,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                     <input
                       type="checkbox"
                       checked={checked}
+                      disabled={profile.type === "builtin" && !profile.overrideDefaultArgs}
                       onChange={(e) => {
                         if (e.target.checked) {
                           update({ supportedPlatforms: [...profile.supportedPlatforms, p.id] });
@@ -260,7 +261,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                           update({ supportedPlatforms: profile.supportedPlatforms.filter((id) => id !== p.id) });
                         }
                       }}
-                      className="rounded border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
+                      className="rounded-lg border-(--surface-active-border) bg-white/5 text-(--color-accent) focus:ring-(--color-accent)"
                     />
                     <span className="text-xs text-(--color-text)">{p.shortName}</span>
                   </label>
@@ -277,6 +278,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
             <input
               type="text"
               value={profile.supportedFileTypes.join(", ")}
+              disabled={profile.type === "builtin" && !profile.overrideDefaultArgs}
               onChange={(e) =>
                 update({
                   supportedFileTypes: e.target.value
@@ -286,7 +288,9 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 })
               }
               placeholder="sfc, smc, zip, 7z"
-              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+              className={`w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none ${
+                profile.type === "builtin" && !profile.overrideDefaultArgs ? "opacity-60 cursor-default" : ""
+              }`}
             />
           </div>
 
@@ -295,20 +299,15 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
             <label className="mb-1 block text-xs text-(--color-muted)">
               {t("emulator.tracking_mode", "Tracking Mode")}
             </label>
-            <div className="relative">
-              <select
-                value={profile.trackingMode}
-                onChange={(e) => update({ trackingMode: e.target.value as TrackingMode })}
-                className="w-full appearance-none rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 pr-8 text-sm text-(--color-text) focus:border-(--color-accent) focus:outline-none"
-              >
-                {TRACKING_MODES.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted)" />
-            </div>
+            <SourceDropdown
+              className="w-full"
+              value={profile.trackingMode}
+              onChange={(val) => update({ trackingMode: val as TrackingMode })}
+              options={TRACKING_MODES.map((m) => ({
+                value: m.value,
+                label: m.label,
+              }))}
+            />
           </div>
 
           {/* Tracking Path (for process/folder modes) */}
@@ -324,7 +323,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
                 value={profile.trackingPath ?? ""}
                 onChange={(e) => update({ trackingPath: e.target.value })}
                 placeholder={profile.trackingMode === "process" ? "retroarch.exe" : "C:\\Games\\Saves"}
-                className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
+                className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none"
               />
             </div>
           )}
@@ -344,7 +343,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ preScript: e.target.value || undefined })}
               placeholder="# Script to run before launching the emulator"
               rows={3}
-              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
+              className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
 
@@ -358,7 +357,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ postScript: e.target.value || undefined })}
               placeholder="# Script to run after launching the emulator"
               rows={3}
-              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
+              className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
 
@@ -372,7 +371,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ exitScript: e.target.value || undefined })}
               placeholder="# Script to run after emulator exits"
               rows={3}
-              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
+              className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
         </div>
@@ -393,7 +392,7 @@ export function ProfileEditor({ profile, onChange }: ProfileEditorProps) {
               onChange={(e) => update({ startupScript: e.target.value || undefined })}
               placeholder="# Custom startup script (replaces normal launch)"
               rows={8}
-              className="w-full rounded border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
+              className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder-(--color-muted) focus:border-(--color-accent) focus:outline-none font-mono"
             />
           </div>
         </div>

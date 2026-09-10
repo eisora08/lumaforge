@@ -31,7 +31,7 @@ export function EmulatorListPanel({
   const { t } = useTranslation();
 
   return (
-    <div className="w-[250px] shrink-0 flex flex-col border border-(--surface-active-border) rounded-lg bg-(--surface-active)/50">
+    <div className="w-[250px] shrink-0 flex flex-col h-[400px] border border-(--surface-active-border) rounded-lg bg-(--surface-active)/50">
       {/* List */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {configs.length > 0 ? (
@@ -71,7 +71,6 @@ export function EmulatorListPanel({
           title={t("emulator.import_btn", "Import Emulators")}
         >
           <Search className="h-3.5 w-3.5" />
-          <span className="hidden lg:inline">{t("common.import", "Import")}</span>
         </button>
         <button
           onClick={onAdd}
@@ -79,7 +78,6 @@ export function EmulatorListPanel({
           title={t("emulator.add_btn", "Add Emulator")}
         >
           <Plus className="h-3.5 w-3.5" />
-          <span className="hidden lg:inline">{t("common.add", "Add")}</span>
         </button>
         <button
           onClick={onCopy}
@@ -88,7 +86,6 @@ export function EmulatorListPanel({
           title={t("emulator.copy_btn", "Copy Emulator")}
         >
           <Copy className="h-3.5 w-3.5" />
-          <span className="hidden lg:inline">{t("common.copy", "Copy")}</span>
         </button>
         <button
           onClick={onRemove}
@@ -97,7 +94,6 @@ export function EmulatorListPanel({
           title={t("emulator.remove_btn", "Remove Emulator")}
         >
           <Trash2 className="h-3.5 w-3.5" />
-          <span className="hidden lg:inline">{t("common.remove", "Remove")}</span>
         </button>
       </div>
     </div>

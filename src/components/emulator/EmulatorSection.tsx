@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Gamepad2, Plus, Copy, Trash2, Search, Settings,
+  Gamepad2, Plus, Copy, Trash2, Search, Settings, X,
 } from "lucide-react";
 import {
   getAllEmulatorConfigs,
@@ -19,6 +19,7 @@ import {
   createEmulatorConfig,
   copyEmulatorConfig,
   createCustomProfile,
+  createBuiltinProfile,
   cloneProfile,
   onEmulatorConfigChange,
 } from "../../services/emulatorConfigStore";
@@ -29,7 +30,8 @@ import {
   copyScanConfig,
   onScanConfigChange,
 } from "../../services/scanConfigStore";
-import type { EmulatorConfig, EmulatorProfileConfig, ScanConfiguration } from "../../data/emulatorDefinitions/types";
+import type { EmulatorConfig, EmulatorProfileConfig, EmulatorProfile, ScanConfiguration } from "../../data/emulatorDefinitions/types";
+import { getEmulatorById } from "../../data/emulatorDefinitions";
 import { pickFolder } from "../../services/tauri";
 import { showError, showSuccess } from "../toast/GameToast";
 import SettingsSection from "../settings/SettingsSection";
@@ -58,6 +60,9 @@ export default function EmulatorSection() {
   // ── Scan config state ──
   const [scanConfigs, setScanConfigs] = useState<ScanConfiguration[]>([]);
   const [selectedScanId, setSelectedScanId] = useState<string | null>(null);
+
+  // ── Profile picker state ──
+  const [showProfilePicker, setShowProfilePicker] = useState(false);
 
   // ── Load ──
   useEffect(() => {
@@ -153,10 +158,42 @@ export default function EmulatorSection() {
 
   const handleAddProfile = useCallback(() => {
     if (!selectedConfig) return;
+
+    // If emulator has a definition with profiles, show the picker
+    const def = selectedConfig.definitionId ? getEmulatorById(selectedConfig.definitionId) : null;
+    if (def && def.profiles.length > 0) {
+      setShowProfilePicker(true);
+      return;
+    }
+
+    // No definition → create a blank custom profile
     const profile = createCustomProfile("New Profile");
     selectedConfig.profiles.push(profile);
     saveEmulatorConfig(selectedConfig);
     setSelectedProfileId(profile.id);
+  }, [selectedConfig]);
+
+  const handlePickBuiltinProfile = useCallback((defProfile: EmulatorProfile) => {
+    if (!selectedConfig) return;
+    const profile = createBuiltinProfile(
+      defProfile.name,
+      defProfile.name,
+      defProfile.platforms,
+      defProfile.imageExtensions,
+    );
+    selectedConfig.profiles.push(profile);
+    saveEmulatorConfig(selectedConfig);
+    setSelectedProfileId(profile.id);
+    setShowProfilePicker(false);
+  }, [selectedConfig]);
+
+  const handlePickCustomProfile = useCallback(() => {
+    if (!selectedConfig) return;
+    const profile = createCustomProfile("New Profile");
+    selectedConfig.profiles.push(profile);
+    saveEmulatorConfig(selectedConfig);
+    setSelectedProfileId(profile.id);
+    setShowProfilePicker(false);
   }, [selectedConfig]);
 
   const handleCopyProfile = useCallback(() => {
@@ -318,7 +355,7 @@ export default function EmulatorSection() {
                   </div>
 
                   {/* Profile List */}
-                  <div className="max-h-40 overflow-y-auto rounded border border-(--surface-active-border) bg-white/5">
+                  <div className="max-h-[200px] overflow-y-auto rounded border border-(--surface-active-border) bg-white/5">
                     {selectedConfig.profiles.length > 0 ? (
                       selectedConfig.profiles.map((profile) => (
                         <button
@@ -381,6 +418,83 @@ export default function EmulatorSection() {
           }}
         />
       )}
+      {/* ── Profile Picker Modal ── */}
+      {showProfilePicker && selectedConfig && (() => {
+        const def = selectedConfig.definitionId ? getEmulatorById(selectedConfig.definitionId) : null;
+        const configuredNames = new Set(selectedConfig.profiles.map((p) => p.builtinProfileName).filter(Boolean));
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setShowProfilePicker(false); }}
+          >
+            <div className="lf-surface mx-4 flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-xl border shadow-2xl">
+              {/* Header */}
+              <div className="flex shrink-0 items-center justify-between border-b border-(--surface-active-border) px-5 py-3">
+                <div className="flex items-center gap-2">
+                  <Settings className="h-4 w-4 text-(--color-accent)" />
+                  <h3 className="text-sm font-semibold text-(--color-text)">
+                    {t("emulator.pick_profile", "Select Profile")}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowProfilePicker(false)}
+                  className="rounded p-1 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-y-auto p-2">
+                {def && def.profiles.map((dp) => {
+                  const alreadyAdded = configuredNames.has(dp.name);
+                  return (
+                    <button
+                      key={dp.name}
+                      onClick={() => !alreadyAdded && handlePickBuiltinProfile(dp)}
+                      disabled={alreadyAdded}
+                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                        alreadyAdded
+                          ? "opacity-40 cursor-default"
+                          : "hover:bg-white/10 cursor-pointer"
+                      }`}
+                    >
+                      <Settings className="h-4 w-4 shrink-0 text-(--color-accent)" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-(--color-text)">{dp.name}</p>
+                        <p className="truncate text-xs text-(--color-muted)">
+                          {dp.platforms.join(", ")} · {dp.imageExtensions.join(", ")}
+                        </p>
+                      </div>
+                      {alreadyAdded && (
+                        <span className="shrink-0 text-[10px] text-(--color-muted)">
+                          {t("emulator.added", "Added")}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+
+                {/* Custom profile option */}
+                <button
+                  onClick={handlePickCustomProfile}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-white/10 mt-1 border-t border-(--surface-active-border)"
+                >
+                  <Plus className="h-4 w-4 shrink-0 text-green-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-(--color-text)">
+                      {t("emulator.custom_profile", "Custom Profile")}
+                    </p>
+                    <p className="truncate text-xs text-(--color-muted)">
+                      {t("emulator.custom_profile_desc", "Create from scratch")}
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </SettingsSection>
   );
 }
