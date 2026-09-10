@@ -8,7 +8,7 @@
     "settings": "Settings",
     "section_main": "Main",
     "section_system": "System",
-    "games": "Games",
+    "games": "Installed",
     "games_count": "{{count}} games",
     "search_placeholder": "Search games...",
     "search_placeholder_compact": "Search...",

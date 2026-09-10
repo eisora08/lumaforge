@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Download,
@@ -72,8 +73,8 @@ import { useConfirm } from "../../services/confirmService";
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 const DEBUG_LUA_DELETE = false;
 
-type SidebarSourceFilter = "all" | "steam" | "epic" | "debrid" | "emulator" | "manual" | "favorites";
-type SidebarSortMode = "name-asc" | "name-desc" | "recent" | "most-played" | "newest";
+export type SidebarSourceFilter = "all" | "steam" | "epic" | "debrid" | "emulator" | "manual" | "favorites";
+export type SidebarSortMode = "name-asc" | "name-desc" | "recent" | "most-played" | "newest";
 const SIDEBAR_FILTER_SORT_KEY = "lumaforge-sidebar-filter-sort";
 
 function loadFilterSort(): { filterBy: SidebarSourceFilter; sortBy: SidebarSortMode } {
@@ -98,6 +99,10 @@ type Props = {
   variant?: "full" | "header" | "list" | "add-button";
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
+  filterBy?: SidebarSourceFilter;
+  onFilterChange?: (f: SidebarSourceFilter) => void;
+  sortBy?: SidebarSortMode;
+  onSortChange?: (s: SidebarSortMode) => void;
 };
 
 function logSidebarMedia(appId: string, msg: string): void {
@@ -175,7 +180,7 @@ function getSnapshotMedia(appId: string, game?: { id?: string; libraryId?: strin
   return null;
 }
 
-export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange }: Props) {
+export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange, filterBy: externalFilterBy, onFilterChange, sortBy: externalSortBy, onSortChange }: Props) {
   countRender("SidebarLibraryList");
   const { t } = useTranslation();
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap, refresh, updateGame } = useLibraryGames();
@@ -206,33 +211,45 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const { jobs } = useDownloadQueueContext();
   const { confirm } = useConfirm();
 
-  // Filter / Sort state with localStorage persistence
-  const [filterBy, setFilterBy] = useState<SidebarSourceFilter>(() => loadFilterSort().filterBy);
-  const [sortBy, setSortBy] = useState<SidebarSortMode>(() => loadFilterSort().sortBy);
+  // Filter / Sort state — use props when provided (lifted to Sidebar.tsx), fallback to local state
+  const [localFilterBy, setLocalFilterBy] = useState<SidebarSourceFilter>(() => loadFilterSort().filterBy);
+  const [localSortBy, setLocalSortBy] = useState<SidebarSortMode>(() => loadFilterSort().sortBy);
+  const filterBy = externalFilterBy ?? localFilterBy;
+  const sortBy = externalSortBy ?? localSortBy;
+  const setFilterBy = (f: SidebarSourceFilter) => {
+    if (onFilterChange) onFilterChange(f);
+    else setLocalFilterBy(f);
+  };
+  const setSortBy = (s: SidebarSortMode) => {
+    if (onSortChange) onSortChange(s);
+    else setLocalSortBy(s);
+  };
   const [filterOpen, setFilterOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
-  const filterDropdownRef = useRef<HTMLDivElement>(null);
-  const sortDropdownRef = useRef<HTMLDivElement>(null);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const sortButtonRef = useRef<HTMLButtonElement>(null);
+  const [filterButtonRect, setFilterButtonRect] = useState<DOMRect | null>(null);
+  const [sortButtonRect, setSortButtonRect] = useState<DOMRect | null>(null);
 
-  // Persist filter/sort to localStorage
+  // Capture button position when opening dropdowns
+  const openFilter = () => {
+    if (filterButtonRef.current) setFilterButtonRect(filterButtonRef.current.getBoundingClientRect());
+    setFilterOpen(true);
+    setSortOpen(false);
+  };
+  const openSort = () => {
+    if (sortButtonRef.current) setSortButtonRect(sortButtonRef.current.getBoundingClientRect());
+    setSortOpen(true);
+    setFilterOpen(false);
+  };
+
+  // Persist to localStorage (only when using local state, i.e., no lifted state)
   useEffect(() => {
+    if (onFilterChange || onSortChange) return; // Sidebar.tsx handles persistence
     localStorage.setItem(SIDEBAR_FILTER_SORT_KEY, JSON.stringify({ filterBy, sortBy }));
-  }, [filterBy, sortBy]);
+  }, [filterBy, sortBy, onFilterChange, onSortChange]);
 
-  // Close filter/sort dropdowns on click outside
-  useEffect(() => {
-    if (!filterOpen && !sortOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
-        setFilterOpen(false);
-      }
-      if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as Node)) {
-        setSortOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [filterOpen, sortOpen]);
+  // No click-outside handler needed — portaled overlay divs handle click-away
 
   // Auto-scroll to selected game when navigating from LibraryGameDetails
   const gameItemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -721,10 +738,11 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   }
 
   const renderFilterDropdown = () => (
-    <div ref={filterDropdownRef} className="relative">
+    <>
       <button
+        ref={filterButtonRef}
         type="button"
-        onClick={() => { setFilterOpen((v) => !v); setSortOpen(false); }}
+        onClick={() => { if (filterOpen) { setFilterOpen(false); } else { openFilter(); } }}
         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${
           filterBy !== "all"
             ? "bg-(--color-accent)/15 text-(--color-accent)"
@@ -737,18 +755,21 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-(--color-accent)" />
         )}
       </button>
-      {filterOpen && (
+      {filterOpen && createPortal(
         <>
-          <div className="fixed inset-0 z-[9998]" onClick={() => setFilterOpen(false)} />
-          <div className="absolute left-0 top-full z-[9999] mt-1 w-44 overflow-hidden rounded-lg border border-(--color-border) bg-(--color-surface) shadow-xl shadow-black/40">
+          <div className="fixed inset-0 z-[99997]" onClick={() => setFilterOpen(false)} />
+          <div
+            className="fixed z-[99998] w-44 rounded-2xl border border-(--surface-active-border) lf-surface p-1.5 shadow-2xl shadow-black/40 lf-popover-enter"
+            style={{ top: filterButtonRect ? filterButtonRect.bottom + 4 : 0, left: filterButtonRect ? filterButtonRect.left : 0 }}
+          >
             <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-(--color-muted)">{t("sidebar.filter_source")}</div>
             {(["all", "steam", "epic", "debrid", "emulator", "manual", "favorites"] as SidebarSourceFilter[]).map((f) => (
               <button
                 key={f}
                 type="button"
                 onClick={() => { setFilterBy(f); setFilterOpen(false); }}
-                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] transition hover:bg-white/5 ${
-                  filterBy === f ? "text-(--color-accent)" : "text-(--color-text)"
+                className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] transition ${
+                  filterBy === f ? "bg-(--color-accent)/8 text-(--color-accent) font-medium" : "text-(--color-muted) hover:bg-white/[0.03] hover:text-(--color-text)"
                 }`}
               >
                 {f === "favorites" ? <Star className={`h-3 w-3 ${filterBy === f ? "fill-current" : ""}`} /> : <span className="h-3 w-3" />}
@@ -757,16 +778,18 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
               </button>
             ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
-    </div>
+    </>
   );
 
   const renderSortDropdown = () => (
-    <div ref={sortDropdownRef} className="relative">
+    <>
       <button
+        ref={sortButtonRef}
         type="button"
-        onClick={() => { setSortOpen((v) => !v); setFilterOpen(false); }}
+        onClick={() => { if (sortOpen) { setSortOpen(false); } else { openSort(); } }}
         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${
           sortBy !== "name-asc"
             ? "bg-(--color-accent)/15 text-(--color-accent)"
@@ -776,10 +799,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       >
         <ArrowUpDown className="h-3 w-3" />
       </button>
-      {sortOpen && (
+      {sortOpen && createPortal(
         <>
-          <div className="fixed inset-0 z-[9998]" onClick={() => setSortOpen(false)} />
-          <div className="absolute right-0 top-full z-[9999] mt-1 w-40 overflow-hidden rounded-lg border border-(--color-border) bg-(--color-surface) shadow-xl shadow-black/40">
+          <div className="fixed inset-0 z-[99997]" onClick={() => setSortOpen(false)} />
+          <div
+            className="fixed z-[99998] w-40 rounded-2xl border border-(--surface-active-border) lf-surface p-1.5 shadow-2xl shadow-black/40 lf-popover-enter"
+            style={{ top: sortButtonRect ? sortButtonRect.bottom + 4 : 0, right: sortButtonRect ? window.innerWidth - sortButtonRect.right : 0 }}
+          >
             <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-(--color-muted)">{t("sidebar.sort_by")}</div>
             {([
               { value: "name-asc" as SidebarSortMode, labelKey: "sidebar.sort_name_asc" },
@@ -792,8 +818,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 key={s.value}
                 type="button"
                 onClick={() => { setSortBy(s.value); setSortOpen(false); }}
-                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] transition hover:bg-white/5 ${
-                  sortBy === s.value ? "text-(--color-accent)" : "text-(--color-text)"
+                className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] transition ${
+                  sortBy === s.value ? "bg-(--color-accent)/8 text-(--color-accent) font-medium" : "text-(--color-muted) hover:bg-white/[0.03] hover:text-(--color-text)"
                 }`}
               >
                 <span className="flex-1 text-left">{t(s.labelKey)}</span>
@@ -801,9 +827,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
               </button>
             ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
-    </div>
+    </>
   );
 
   const renderHeader = () => (
@@ -812,14 +839,14 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         <div className="mb-2 flex items-center justify-between px-1">
           <Gamepad2 className="h-4.5 w-4.5" />
           <span className="text-xs font-bold text-(--color-text)">{t("sidebar.games")}</span>
-          <span className="text-[10px] text-(--color-muted)">{t("sidebar.games_count", { count: installed.length })}</span>
+          <span className="text-[10px] text-(--color-muted)">{t("sidebar.games_count", { count: filtered.length })}</span>
         </div>
       )}
 
       {isCompactMode && (
         <div className="mb-2 flex items-center justify-between px-1">
           <span className="text-[11px] font-bold text-(--color-text)">{t("sidebar.games")}</span>
-          <span className="text-[10px] text-(--color-muted)">{installed.length}</span>
+          <span className="text-[10px] text-(--color-muted)">{filtered.length}</span>
         </div>
       )}
 

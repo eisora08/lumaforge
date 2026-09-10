@@ -8,7 +8,7 @@
     "settings": "Configuración",
     "section_main": "Principal",
     "section_system": "Sistema",
-    "games": "Juegos",
+    "games": "Instalados",
     "games_count": "{{count}} juegos",
     "search_placeholder": "Buscar juego...",
     "search_placeholder_compact": "Buscar...",

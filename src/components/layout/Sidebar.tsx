@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 import type { AppPage } from "../../types/navigation";
-import SidebarLibraryList from "./SidebarLibraryList";
+import SidebarLibraryList, { type SidebarSourceFilter, type SidebarSortMode } from "./SidebarLibraryList";
 import { useUserProfile, saveUserProfile, resolveProfileMediaUrl } from "../../features/profile/userProfile";
 import { getAvatarPreset } from "../../features/profile/profilePresets";
 import ProfileModal from "../../features/profile/ProfileModal";
@@ -53,6 +53,25 @@ export default function Sidebar({
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
   const [profile, patchProfile] = useUserProfile();
+
+  // Filter / Sort state — lifted to share between header and list instances
+  const loadFilterSort = (): { filterBy: SidebarSourceFilter; sortBy: SidebarSortMode } => {
+    try {
+      const raw = localStorage.getItem("lumaforge-sidebar-filter-sort");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return { filterBy: parsed.filterBy ?? "all", sortBy: parsed.sortBy ?? "name-asc" };
+      }
+    } catch { /* ignore */ }
+    return { filterBy: "all", sortBy: "name-asc" };
+  };
+  const [sidebarFilterBy, setSidebarFilterBy] = useState<SidebarSourceFilter>(() => loadFilterSort().filterBy);
+  const [sidebarSortBy, setSidebarSortBy] = useState<SidebarSortMode>(() => loadFilterSort().sortBy);
+
+  // Persist filter/sort to localStorage
+  useEffect(() => {
+    localStorage.setItem("lumaforge-sidebar-filter-sort", JSON.stringify({ filterBy: sidebarFilterBy, sortBy: sidebarSortBy }));
+  }, [sidebarFilterBy, sidebarSortBy]);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
 
   const mainItems: SidebarItem[] = [
@@ -156,6 +175,10 @@ export default function Sidebar({
               variant="header"
               searchQuery={sidebarSearchQuery}
               onSearchChange={setSidebarSearchQuery}
+              filterBy={sidebarFilterBy}
+              onFilterChange={setSidebarFilterBy}
+              sortBy={sidebarSortBy}
+              onSortChange={setSidebarSortBy}
             />
           </div>
         )}
@@ -169,6 +192,8 @@ export default function Sidebar({
               compact={mode === "compact"}
               variant="list"
               searchQuery={sidebarSearchQuery}
+              filterBy={sidebarFilterBy}
+              sortBy={sidebarSortBy}
             />
           )}
 
