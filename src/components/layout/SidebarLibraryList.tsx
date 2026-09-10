@@ -22,6 +22,9 @@ import {
   Scan,
   Check,
   Circle,
+  Filter,
+  ArrowUpDown,
+  Star,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -68,6 +71,24 @@ import { useConfirm } from "../../services/confirmService";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 const DEBUG_LUA_DELETE = false;
+
+type SidebarSourceFilter = "all" | "steam" | "epic" | "debrid" | "emulator" | "manual" | "favorites";
+type SidebarSortMode = "name-asc" | "name-desc" | "recent" | "most-played" | "newest";
+const SIDEBAR_FILTER_SORT_KEY = "lumaforge-sidebar-filter-sort";
+
+function loadFilterSort(): { filterBy: SidebarSourceFilter; sortBy: SidebarSortMode } {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_FILTER_SORT_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        filterBy: parsed.filterBy ?? "all",
+        sortBy: parsed.sortBy ?? "name-asc",
+      };
+    }
+  } catch { /* ignore */ }
+  return { filterBy: "all", sortBy: "name-asc" };
+}
 
 type Props = {
   onOpenGame?: () => void;
@@ -185,6 +206,48 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const { jobs } = useDownloadQueueContext();
   const { confirm } = useConfirm();
 
+  // Filter / Sort state with localStorage persistence
+  const [filterBy, setFilterBy] = useState<SidebarSourceFilter>(() => loadFilterSort().filterBy);
+  const [sortBy, setSortBy] = useState<SidebarSortMode>(() => loadFilterSort().sortBy);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
+  const sortDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Persist filter/sort to localStorage
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_FILTER_SORT_KEY, JSON.stringify({ filterBy, sortBy }));
+  }, [filterBy, sortBy]);
+
+  // Close filter/sort dropdowns on click outside
+  useEffect(() => {
+    if (!filterOpen && !sortOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
+        setFilterOpen(false);
+      }
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as Node)) {
+        setSortOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [filterOpen, sortOpen]);
+
+  // Auto-scroll to selected game when navigating from LibraryGameDetails
+  const gameItemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const lastScrolledIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedGame || activePage !== "library-game-detail") return;
+    if (lastScrolledIdRef.current === selectedGame.id) return;
+    lastScrolledIdRef.current = selectedGame.id;
+    const el = gameItemRefs.current.get(selectedGame.id);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [selectedGame, activePage]);
+
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
 
@@ -245,14 +308,66 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   }, [games]);
 
   const filtered = useMemo(() => {
-    if (!searchQuery) return installed;
-    const q = searchQuery.toLowerCase();
-    return installed.filter((g) => {
-      const entry = g.appId ? appInfoMap[g.appId] : undefined;
-      const displayName = entry?.name || g.title;
-      return displayName.toLowerCase().includes(q) || g.appId?.toLowerCase().includes(q);
-    });
-  }, [installed, searchQuery, appInfoMap]);
+    let result = installed;
+
+    // 1. Search filter
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((g) => {
+        const entry = g.appId ? appInfoMap[g.appId] : undefined;
+        const displayName = entry?.name || g.title;
+        return displayName.toLowerCase().includes(q) || g.appId?.toLowerCase().includes(q);
+      });
+    }
+
+    // 2. Source filter
+    if (filterBy !== "all") {
+      if (filterBy === "favorites") {
+        result = result.filter((g) => {
+          const fk = getFavoriteKey(g);
+          return fk ? isFavorite(fk) : false;
+        });
+      } else {
+        result = result.filter((g) => g.source === filterBy);
+      }
+    }
+
+    // 3. Sort
+    if (sortBy === "name-asc") {
+      result = [...result].sort((a, b) => {
+        const nameA = (appInfoMap[a.appId ?? ""]?.name || a.title || "").toLowerCase();
+        const nameB = (appInfoMap[b.appId ?? ""]?.name || b.title || "").toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+    } else if (sortBy === "name-desc") {
+      result = [...result].sort((a, b) => {
+        const nameA = (appInfoMap[a.appId ?? ""]?.name || a.title || "").toLowerCase();
+        const nameB = (appInfoMap[b.appId ?? ""]?.name || b.title || "").toLowerCase();
+        return nameB.localeCompare(nameA);
+      });
+    } else if (sortBy === "recent") {
+      result = [...result].sort((a, b) => {
+        const tA = a.steamLastPlayedAt ?? a.localLastPlayedAt ?? 0;
+        const tB = b.steamLastPlayedAt ?? b.localLastPlayedAt ?? 0;
+        return tB - tA;
+      });
+    } else if (sortBy === "most-played") {
+      result = [...result].sort((a, b) => {
+        const pA = a.steamPlaytimeMinutes ?? a.localPlaytimeMinutes ?? 0;
+        const pB = b.steamPlaytimeMinutes ?? b.localPlaytimeMinutes ?? 0;
+        return pB - pA;
+      });
+    } else if (sortBy === "newest") {
+      result = [...result].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    }
+
+    return result;
+  }, [installed, searchQuery, appInfoMap, filterBy, sortBy, isFavorite]);
+
+  // Reset scroll tracking when filtered list changes (new scroll position needed)
+  useEffect(() => {
+    lastScrolledIdRef.current = null;
+  }, [filtered]);
 
   const isCollapsedMode = collapsed;
   const isCompactMode = compact && !collapsed;
@@ -605,6 +720,92 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     setMenuGame(null);
   }
 
+  const renderFilterDropdown = () => (
+    <div ref={filterDropdownRef} className="relative">
+      <button
+        type="button"
+        onClick={() => { setFilterOpen((v) => !v); setSortOpen(false); }}
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${
+          filterBy !== "all"
+            ? "bg-(--color-accent)/15 text-(--color-accent)"
+            : "text-(--color-muted) hover:bg-white/[0.06] hover:text-(--color-text)"
+        }`}
+        title={t("sidebar.filter")}
+      >
+        <Filter className="h-3 w-3" />
+        {filterBy !== "all" && (
+          <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-(--color-accent)" />
+        )}
+      </button>
+      {filterOpen && (
+        <>
+          <div className="fixed inset-0 z-[9998]" onClick={() => setFilterOpen(false)} />
+          <div className="absolute left-0 top-full z-[9999] mt-1 w-44 overflow-hidden rounded-lg border border-(--color-border) bg-(--color-surface) shadow-xl shadow-black/40">
+            <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-(--color-muted)">{t("sidebar.filter_source")}</div>
+            {(["all", "steam", "epic", "debrid", "emulator", "manual", "favorites"] as SidebarSourceFilter[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => { setFilterBy(f); setFilterOpen(false); }}
+                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] transition hover:bg-white/5 ${
+                  filterBy === f ? "text-(--color-accent)" : "text-(--color-text)"
+                }`}
+              >
+                {f === "favorites" ? <Star className={`h-3 w-3 ${filterBy === f ? "fill-current" : ""}`} /> : <span className="h-3 w-3" />}
+                <span className="flex-1 text-left">{t(`sidebar.filter_${f}`)}</span>
+                {filterBy === f && <Check className="h-3 w-3 text-(--color-accent)" />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const renderSortDropdown = () => (
+    <div ref={sortDropdownRef} className="relative">
+      <button
+        type="button"
+        onClick={() => { setSortOpen((v) => !v); setFilterOpen(false); }}
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${
+          sortBy !== "name-asc"
+            ? "bg-(--color-accent)/15 text-(--color-accent)"
+            : "text-(--color-muted) hover:bg-white/[0.06] hover:text-(--color-text)"
+        }`}
+        title={t("sidebar.sort")}
+      >
+        <ArrowUpDown className="h-3 w-3" />
+      </button>
+      {sortOpen && (
+        <>
+          <div className="fixed inset-0 z-[9998]" onClick={() => setSortOpen(false)} />
+          <div className="absolute right-0 top-full z-[9999] mt-1 w-40 overflow-hidden rounded-lg border border-(--color-border) bg-(--color-surface) shadow-xl shadow-black/40">
+            <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-(--color-muted)">{t("sidebar.sort_by")}</div>
+            {([
+              { value: "name-asc" as SidebarSortMode, labelKey: "sidebar.sort_name_asc" },
+              { value: "name-desc" as SidebarSortMode, labelKey: "sidebar.sort_name_desc" },
+              { value: "recent" as SidebarSortMode, labelKey: "sidebar.sort_recent" },
+              { value: "most-played" as SidebarSortMode, labelKey: "sidebar.sort_most_played" },
+              { value: "newest" as SidebarSortMode, labelKey: "sidebar.sort_newest" },
+            ]).map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => { setSortBy(s.value); setSortOpen(false); }}
+                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] transition hover:bg-white/5 ${
+                  sortBy === s.value ? "text-(--color-accent)" : "text-(--color-text)"
+                }`}
+              >
+                <span className="flex-1 text-left">{t(s.labelKey)}</span>
+                {sortBy === s.value && <Check className="h-3 w-3 text-(--color-accent)" />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   const renderHeader = () => (
     <>
       {isFullMode && (
@@ -622,28 +823,36 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         </div>
       )}
 
-      {/* Search */}
+      {/* Search + Filter + Sort */}
       {isFullMode && (
-        <div className="relative mb-2">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
-          <input
-            value={searchQuery}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder={t("sidebar.search_placeholder")}
-            className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1.5 pl-7 pr-2.5 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
-          />
+        <div className="mb-2 flex items-center gap-1">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
+            <input
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder={t("sidebar.search_placeholder")}
+              className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1.5 pl-7 pr-2.5 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
+            />
+          </div>
+          {renderFilterDropdown()}
+          {renderSortDropdown()}
         </div>
       )}
 
       {isCompactMode && (
-        <div className="relative mb-2">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
-          <input
-            value={searchQuery}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder={t("sidebar.search_placeholder_compact")}
-            className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1 pl-7 pr-2 text-[11px] text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
-          />
+        <div className="mb-2 flex items-center gap-1">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
+            <input
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder={t("sidebar.search_placeholder_compact")}
+              className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1 pl-7 pr-2 text-[11px] text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
+            />
+          </div>
+          {renderFilterDropdown()}
+          {renderSortDropdown()}
         </div>
       )}
     </>
@@ -695,6 +904,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
             return (
               <button
                 key={`sidebar:installed:${game.id}`}
+                ref={(el) => { if (el) gameItemRefs.current.set(game.id, el); else gameItemRefs.current.delete(game.id); }}
                 type="button"
                 title={displayTitle}
                 onClick={() => {
@@ -734,6 +944,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           return (
             <button
               key={`sidebar:installed:${game.id}`}
+              ref={(el) => { if (el) gameItemRefs.current.set(game.id, el); else gameItemRefs.current.delete(game.id); }}
               type="button"
               onClick={() => {
                 setSelectedGame(game);
