@@ -53,6 +53,7 @@ import { SkeletonBox } from "../common/Skeleton";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
+import { useCollectionSubmenuItems } from "../common/CollectionMenuItems";
 import GameEditDialog from "../games/GameEditDialog";
 import GameScannerModal from "../games/GameScannerModal";
 import type { ScannedProgram } from "../games/GameScannerModal";
@@ -71,11 +72,12 @@ import { removeDebridGameFromLibrary, getDebridLaunchMetadata } from "../../serv
 import { setPendingLibraryFocus, notifyPendingFocusReady } from "../../services/libraryNavigationService";
 import UninstallGameDialog from "../games/UninstallGameDialog";
 import { useConfirm } from "../../services/confirmService";
+import { getCachedCollectionItems } from "../../services/collectionsService";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 const DEBUG_LUA_DELETE = false;
 
-export type SidebarSourceFilter = "all" | "steam" | "epic" | "debrid" | "emulator" | "manual" | "favorites";
+export type SidebarSourceFilter = "all" | "steam" | "epic" | "debrid" | "emulator" | "manual" | "favorites" | "collection";
 export type SidebarSortMode = "name-asc" | "name-desc" | "recent" | "most-played" | "newest";
 const SIDEBAR_FILTER_SORT_KEY = "lumaforge-sidebar-filter-sort";
 
@@ -105,6 +107,8 @@ type Props = {
   onFilterChange?: (f: SidebarSourceFilter) => void;
   sortBy?: SidebarSortMode;
   onSortChange?: (s: SidebarSortMode) => void;
+  collectionId?: string | null;
+  onCollectionChange?: (id: string | null) => void;
 };
 
 function logSidebarMedia(appId: string, msg: string): void {
@@ -182,7 +186,7 @@ function getSnapshotMedia(appId: string, game?: { id?: string; libraryId?: strin
   return null;
 }
 
-export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange, filterBy: externalFilterBy, onFilterChange, sortBy: externalSortBy, onSortChange }: Props) {
+export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange, filterBy: externalFilterBy, onFilterChange, sortBy: externalSortBy, onSortChange, collectionId }: Props) {
   countRender("SidebarLibraryList");
   const { t } = useTranslation();
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap, refresh, updateGame } = useLibraryGames();
@@ -206,6 +210,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [uninstallTarget, setUninstallTarget] = useState<LibraryGame | null>(null);
   const { isFavorite, toggleFavorite } = useFavorites();
   const { isInQueue, toggleQueue } = usePlayQueue();
+  const collectionSubmenuItems = useCollectionSubmenuItems(menuGame?.id, handleMenuClose);
   const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
@@ -347,6 +352,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const fk = getFavoriteKey(g);
           return fk ? isFavorite(fk) : false;
         });
+      } else if (filterBy === "collection" && collectionId) {
+        const items = getCachedCollectionItems(collectionId);
+        const gameIds = new Set(items.map((i) => i.gameId));
+        result = result.filter((g) => gameIds.has(g.id));
       } else {
         result = result.filter((g) => g.source === filterBy);
       }
@@ -382,7 +391,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     }
 
     return result;
-  }, [installed, searchQuery, appInfoMap, filterBy, sortBy, isFavorite]);
+  }, [installed, searchQuery, appInfoMap, filterBy, sortBy, isFavorite, collectionId]);
 
   // Reset scroll tracking when filtered list changes (new scroll position needed)
   useEffect(() => {
@@ -772,12 +781,12 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 type="button"
                 onClick={() => { setFilterBy(f); setFilterOpen(false); }}
                 className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] transition ${
-                  filterBy === f ? "bg-(--color-accent)/8 text-(--color-accent) font-medium" : "text-(--color-muted) hover:bg-white/[0.03] hover:text-(--color-text)"
+                  filterBy === f && f !== "collection" ? "bg-(--color-accent)/8 text-(--color-accent) font-medium" : "text-(--color-muted) hover:bg-white/[0.03] hover:text-(--color-text)"
                 }`}
               >
                 {f === "favorites" ? <Star className={`h-3 w-3 ${filterBy === f ? "fill-current" : ""}`} /> : <span className="h-3 w-3" />}
                 <span className="flex-1 text-left">{t(`sidebar.filter_${f}`)}</span>
-                {filterBy === f && <Check className="h-3 w-3 text-(--color-accent)" />}
+                {filterBy === f && f !== "collection" && <Check className="h-3 w-3 text-(--color-accent)" />}
               </button>
             ))}
           </div>
@@ -1125,6 +1134,11 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   toggleQueue(menuGame.id);
                   handleMenuClose();
                 }}
+              />
+              <MenuItem
+                label={t("context_menu.add_to_collection", "Add to Collection")}
+                icon={<FolderOpen className="h-3.5 w-3.5" />}
+                children={collectionSubmenuItems}
               />
               {menuGame.appId && menuGame.source !== "epic" && menuGame.source !== "debrid" && menuGame.source !== "lua" && (
                 <MenuItem

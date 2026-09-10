@@ -10,6 +10,7 @@ import { SettingsProvider } from "./context/SettingsContext";
 import { DownloadQueueProvider } from "./context/DownloadQueueContext";
 import { FavoritesProvider } from "./context/FavoritesContext";
 import { PlayQueueProvider } from "./context/PlayQueueContext";
+import { CollectionsProvider } from "./context/CollectionsContext";
 
 if (import.meta.env.PROD) {
   document.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -27,7 +28,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <DownloadQueueProvider>
           <FavoritesProvider>
             <PlayQueueProvider>
-              <App />
+              <CollectionsProvider>
+                <App />
+              </CollectionsProvider>
             </PlayQueueProvider>
           </FavoritesProvider>
         </DownloadQueueProvider>

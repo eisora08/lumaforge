@@ -39,6 +39,7 @@ import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import Tooltip from "../common/Tooltip";
 import CardActionMenu, { MenuItem } from "./CardActionMenu";
+import { useCollectionSubmenuItems } from "../common/CollectionMenuItems";
 import { SkeletonBox } from "../common/Skeleton";
 import {
   isHttpUrl,
@@ -194,6 +195,8 @@ function GameLauncherTileInner({
   const favorite = _favKey ? isFavorite(_favKey) : false;
   const { isInQueue, toggleQueue } = usePlayQueue();
   const inQueue = isInQueue(game.id);
+  const closeMenu = useCallback(() => { setMenuOpen(false); setContextMenuPos(null); }, []);
+  const collectionSubmenuItems = useCollectionSubmenuItems(game.id, closeMenu);
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -806,6 +809,11 @@ function GameLauncherTileInner({
               label={inQueue ? t("sidebar.play_next_remove") : t("sidebar.play_next_add")}
               icon={<ListPlus className="h-3.5 w-3.5" />}
               onClick={() => { toggleQueue(game.id); setMenuOpen(false); }}
+            />
+            <MenuItem
+              label={t("context_menu.add_to_collection", "Add to Collection")}
+              icon={<FolderOpen className="h-3.5 w-3.5" />}
+              children={collectionSubmenuItems}
             />
             {game.appId && game.source !== "epic" && game.source !== "debrid" && game.source !== "lua" && (
               <MenuItem

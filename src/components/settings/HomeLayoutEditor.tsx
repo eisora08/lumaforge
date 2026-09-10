@@ -83,6 +83,7 @@ const DASHBOARD_SECTIONS: SectionMeta[] = [
   { id: "top-picks", label: "Top Picks", icon: <Trophy className="h-4 w-4" />, color: "text-yellow-400", description: "Highly rated games from the catalog", labelKey: "homeLayout.top_picks", descriptionKey: "homeLayout.top_picks_desc", heroSourceId: "topPicks" },
   { id: "trending-right-now", label: "Trending Right Now", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Recent releases and new arrivals", labelKey: "homeLayout.trending_right_now", descriptionKey: "homeLayout.trending_right_now_desc" },
   { id: "store-highlights", label: "Store Highlights", icon: <Store className="h-4 w-4" />, color: "text-cyan-400", description: "Quick link to the store", labelKey: "homeLayout.store_highlights", descriptionKey: "homeLayout.store_highlights_desc" },
+  { id: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, color: "text-indigo-400", description: "Browse your game collections", labelKey: "homeLayout.collections", descriptionKey: "homeLayout.collections_desc" },
 ];
 
 const DEFAULT_LIMITS: Record<string, number> = {
@@ -97,6 +98,7 @@ const DEFAULT_LIMITS: Record<string, number> = {
   "top-picks": 8,
   "trending-right-now": 8,
   "store-highlights": 4,
+  "collections": 8,
 };
 
 const ROTATE_PRESETS = [

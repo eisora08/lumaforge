@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -8,6 +8,7 @@ use tauri::Manager;
 
 pub mod achievements;
 pub mod catalog_blobs;
+pub mod collections;
 pub mod entities;
 pub mod game_appinfo;
 pub mod game_actions;
@@ -63,6 +64,12 @@ pub use play_queue::{
     add_to_play_queue_inner, clear_play_queue_inner, get_play_queue_inner,
     remove_from_play_queue_inner, reorder_play_queue_inner,
 };
+pub use collections::{
+    Collection, CollectionItem,
+    get_all_collections_inner, get_collection_items_inner,
+    create_collection_inner, update_collection_inner, delete_collection_inner,
+    add_game_to_collection_inner, remove_game_from_collection_inner, reorder_collection_items_inner,
+};
 pub use game_sessions::{
     GameSession, delete_game_sessions_for_game, delete_game_sessions_for_game_inner,
     get_all_game_sessions, get_all_game_sessions_inner,
@@ -112,6 +119,15 @@ pub use play_queue::__cmd__add_to_play_queue;
 pub use play_queue::__cmd__remove_from_play_queue;
 pub use play_queue::__cmd__reorder_play_queue;
 pub use play_queue::__cmd__clear_play_queue;
+pub use collections::__cmd__get_all_collections;
+pub use collections::__cmd__get_collection_items;
+pub use collections::__cmd__create_collection;
+pub use collections::__cmd__update_collection;
+pub use collections::__cmd__delete_collection;
+pub use collections::__cmd__add_game_to_collection;
+pub use collections::__cmd__remove_game_from_collection;
+pub use collections::__cmd__reorder_collection_items;
+pub use collections::__cmd__save_collection_cover;
 pub use achievements::__cmd__upsert_achievement_summary;
 pub use achievements::__cmd__get_achievement_summary;
 pub use achievements::__cmd__get_all_achievement_summaries;
@@ -180,6 +196,15 @@ pub use play_queue::__tauri_command_name_add_to_play_queue;
 pub use play_queue::__tauri_command_name_remove_from_play_queue;
 pub use play_queue::__tauri_command_name_reorder_play_queue;
 pub use play_queue::__tauri_command_name_clear_play_queue;
+pub use collections::__tauri_command_name_get_all_collections;
+pub use collections::__tauri_command_name_get_collection_items;
+pub use collections::__tauri_command_name_create_collection;
+pub use collections::__tauri_command_name_update_collection;
+pub use collections::__tauri_command_name_delete_collection;
+pub use collections::__tauri_command_name_add_game_to_collection;
+pub use collections::__tauri_command_name_remove_game_from_collection;
+pub use collections::__tauri_command_name_reorder_collection_items;
+pub use collections::__tauri_command_name_save_collection_cover;
 pub use achievements::__tauri_command_name_upsert_achievement_summary;
 pub use achievements::__tauri_command_name_get_achievement_summary;
 pub use achievements::__tauri_command_name_get_all_achievement_summaries;
@@ -253,7 +278,7 @@ fn get_store_db_path(app_handle: &AppHandle) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// Store catalog tables — versioned Steam catalog index for Discover/View All.
+// Store catalog tables ΓÇö versioned Steam catalog index for Discover/View All.
 // The DDL body lives here at the single sqlite init site; store_catalog.rs
 // delegates to this function so there is one canonical source for the schema.
 // ---------------------------------------------------------------------------
@@ -313,7 +338,7 @@ pub fn catalog_tables(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Repack catalog tables — Hydra-compatible game repack index.
+// Repack catalog tables ΓÇö Hydra-compatible game repack index.
 // ---------------------------------------------------------------------------
 
 pub fn repack_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -354,7 +379,7 @@ pub fn repack_tables(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 fn init_core_tables(conn: &Connection) -> Result<(), String> {
-    // Library cache table — stores enriched game list as JSON blob for instant startup
+    // Library cache table ΓÇö stores enriched game list as JSON blob for instant startup
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS library_cache (
             cache_key   TEXT PRIMARY KEY,
@@ -364,7 +389,7 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create library_cache table: {}", e))?;
 
-    // Games V2 — unified table for ALL providers (single source of truth)
+    // Games V2 ΓÇö unified table for ALL providers (single source of truth)
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS games_v2 (
@@ -455,7 +480,7 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
     // Migration: add lua_scripts_json column for existing databases
     let _ = conn.execute_batch("ALTER TABLE games_v2 ADD COLUMN lua_scripts_json TEXT DEFAULT '[]';");
 
-    // Startup snapshot table — replaces cache/startup-snapshot.json (single row)
+    // Startup snapshot table ΓÇö replaces cache/startup-snapshot.json (single row)
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS startup_snapshots (
             id              INTEGER PRIMARY KEY CHECK (id = 1),
@@ -466,32 +491,37 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create startup_snapshots table: {}", e))?;
 
-    // Playtime tables — per-game session/playtime tracking
+    // Playtime tables ΓÇö per-game session/playtime tracking
     if let Err(e) = playtime::create_tables(conn) {
         eprintln!("[SqliteCache] playtime table init failed (non-fatal): {}", e);
     }
 
-    // Play Next queue — ordered list of games to play next
+    // Play Next queue ΓÇö ordered list of games to play next
     if let Err(e) = play_queue::create_tables(conn) {
         eprintln!("[SqliteCache] play_queue table init failed (non-fatal): {}", e);
     }
 
-    // Launcher achievements — singleton blobs for launcher meta-achievement data
+    // Collections — user-defined game collections with nesting support
+    if let Err(e) = collections::create_tables(conn) {
+        eprintln!("[SqliteCache] collections table init failed (non-fatal): {}", e);
+    }
+
+    // Launcher achievements ΓÇö singleton blobs for launcher meta-achievement data
     if let Err(e) = launcher_achievements_cache::create_tables(conn) {
         eprintln!("[SqliteCache] launcher_achievements table init failed (non-fatal): {}", e);
     }
 
-    // Store details + library game details — per-game detail page cache (uses SqliteCoreDb)
+    // Store details + library game details ΓÇö per-game detail page cache (uses SqliteCoreDb)
     if let Err(e) = store_details_cache::create_tables(conn) {
         eprintln!("[SqliteCache] store_details table init in core.db failed (non-fatal): {}", e);
     }
 
-    // Achievement tables — all achievement data lives in core.db (FK to games_v2)
+    // Achievement tables ΓÇö all achievement data lives in core.db (FK to games_v2)
     if let Err(e) = init_achievement_tables(conn) {
         eprintln!("[SqliteCache] achievement tables init failed (non-fatal): {}", e);
     }
 
-    // Game sessions — per-game session tracking (FK to games_v2)
+    // Game sessions ΓÇö per-game session tracking (FK to games_v2)
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS game_sessions (
@@ -509,7 +539,7 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
         ",
     ).map_err(|e| eprintln!("[SqliteCache] game_sessions init failed: {}", e)).ok();
 
-    // Game files — unified file registry (FK to games_v2)
+    // Game files ΓÇö unified file registry (FK to games_v2)
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS game_files (
@@ -528,7 +558,7 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
         ",
     ).map_err(|e| eprintln!("[SqliteCache] game_files init failed: {}", e)).ok();
 
-    // Entity tables — genres, companies, categories, features, tags + junction tables
+    // Entity tables ΓÇö genres, companies, categories, features, tags + junction tables
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS genres (
@@ -595,7 +625,7 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
         ",
     ).map_err(|e| eprintln!("[SqliteCache] entity tables init failed: {}", e)).ok();
 
-    // Game actions — custom per-game actions
+    // Game actions ΓÇö custom per-game actions
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS game_actions (
@@ -633,7 +663,7 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// JSON → SQLite migration — runs once on first boot after update.
+// JSON ΓåÆ SQLite migration ΓÇö runs once on first boot after update.
 // Detects migration state by checking if `media_json` column has real data.
 // ---------------------------------------------------------------------------
 
@@ -645,7 +675,7 @@ fn migrate_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
         Err(_) => return,
     };
 
-    // --- Migrate appinfo.json → games table ---
+    // --- Migrate appinfo.json ΓåÆ games table ---
     let already_migrated: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM games WHERE media_json != '{}' LIMIT 1",
@@ -708,12 +738,12 @@ fn migrate_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                 migrated += 1;
             }
             if migrated > 0 {
-                println!("[SqliteCache] migrated {} appinfo.json → games table", migrated);
+                println!("[SqliteCache] migrated {} appinfo.json ΓåÆ games table", migrated);
             }
         }
     }
 
-    // --- Migrate startup-snapshot.json → startup_snapshots table ---
+    // --- Migrate startup-snapshot.json ΓåÆ startup_snapshots table ---
     let snap_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM startup_snapshots", [], |row| row.get(0))
         .unwrap_or(0);
@@ -738,14 +768,14 @@ fn migrate_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                      VALUES (1, ?1, ?2, ?3)",
                     rusqlite::params![version, now, content],
                 );
-                println!("[SqliteCache] migrated startup-snapshot.json → startup_snapshots table");
+                println!("[SqliteCache] migrated startup-snapshot.json ΓåÆ startup_snapshots table");
             }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Migration for P0-P2 JSON stores → SQLite (runs once on first boot after update)
+// Migration for P0-P2 JSON stores ΓåÆ SQLite (runs once on first boot after update)
 // ---------------------------------------------------------------------------
 
 fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
@@ -754,7 +784,7 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
         Err(_) => return,
     };
 
-    // --- Migrate playtime.json → playtime tables ---
+    // --- Migrate playtime.json ΓåÆ playtime tables ---
     let playtime_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM playtime_entries", [], |row| row.get(0))
         .unwrap_or(0);
@@ -807,7 +837,7 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                             migrated += 1;
                         }
                         if migrated > 0 {
-                            println!("[SqliteCache] migrated {} playtime games → playtime_entries + playtime_sessions", migrated);
+                            println!("[SqliteCache] migrated {} playtime games ΓåÆ playtime_entries + playtime_sessions", migrated);
                         }
                     }
                 }
@@ -815,7 +845,7 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
         }
     }
 
-    // --- Migrate source-index.json → source_availability table ---
+    // --- Migrate source-index.json ΓåÆ source_availability table ---
     let source_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM source_availability", [], |row| row.get(0))
         .unwrap_or(0);
@@ -835,7 +865,7 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                             migrated += 1;
                         }
                         if migrated > 0 {
-                            println!("[SqliteCache] migrated {} source entries → source_availability table", migrated);
+                            println!("[SqliteCache] migrated {} source entries ΓåÆ source_availability table", migrated);
                         }
                     }
                 }
@@ -843,7 +873,7 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
         }
     }
 
-    // --- Migrate provider-status/snapshot.json → provider_status_snapshot table ---
+    // --- Migrate provider-status/snapshot.json ΓåÆ provider_status_snapshot table ---
     let snap_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM provider_status_snapshot", [], |row| row.get(0))
         .unwrap_or(0);
@@ -856,12 +886,12 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                     "INSERT INTO provider_status_snapshot (id, data_json, updated_at) VALUES (1, ?1, ?2)",
                     rusqlite::params![content, now],
                 );
-                println!("[SqliteCache] migrated provider-status/snapshot.json → provider_status_snapshot table");
+                println!("[SqliteCache] migrated provider-status/snapshot.json ΓåÆ provider_status_snapshot table");
             }
         }
     }
 
-    // --- Migrate store/appinfo.json → store_appinfo table ---
+    // --- Migrate store/appinfo.json ΓåÆ store_appinfo table ---
     let store_app_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM store_appinfo", [], |row| row.get(0))
         .unwrap_or(0);
@@ -881,7 +911,7 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                             migrated += 1;
                         }
                         if migrated > 0 {
-                            println!("[SqliteCache] migrated {} store appinfo entries → store_appinfo table", migrated);
+                            println!("[SqliteCache] migrated {} store appinfo entries ΓåÆ store_appinfo table", migrated);
                         }
                     }
                 }
@@ -889,7 +919,7 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
         }
     }
 
-    // --- Migrate discovery-index, catalog-sections, sgdb-artwork → game_catalog_blobs ---
+    // --- Migrate discovery-index, catalog-sections, sgdb-artwork ΓåÆ game_catalog_blobs ---
     let blob_migrations: &[(&str, &str)] = &[
         ("discovery-index", "store/discovery-index.json"),
         ("catalog-sections-cache", "store/catalog-sections-cache.json"),
@@ -908,13 +938,13 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                         "INSERT OR REPLACE INTO game_catalog_blobs (catalog_key, data_json, updated_at) VALUES (?1, ?2, ?3)",
                         rusqlite::params![key, content, now],
                     );
-                    println!("[SqliteCache] migrated {} → game_catalog_blobs", rel_path);
+                    println!("[SqliteCache] migrated {} ΓåÆ game_catalog_blobs", rel_path);
                 }
             }
         }
     }
 
-    // --- Migrate store-details.json files → store_details table ---
+    // --- Migrate store-details.json files ΓåÆ store_details table ---
     let sd_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM store_details", [], |row| row.get(0))
         .unwrap_or(0);
@@ -938,12 +968,12 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                 }
             }
             if migrated > 0 {
-                println!("[SqliteCache] migrated {} store-details.json → store_details table", migrated);
+                println!("[SqliteCache] migrated {} store-details.json ΓåÆ store_details table", migrated);
             }
         }
     }
 
-    // --- Migrate library/details/*.json → library_game_details table ---
+    // --- Migrate library/details/*.json ΓåÆ library_game_details table ---
     let lgd_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM library_game_details", [], |row| row.get(0))
         .unwrap_or(0);
@@ -966,14 +996,14 @@ fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
                 }
             }
             if migrated > 0 {
-                println!("[SqliteCache] migrated {} library/details/*.json → library_game_details table", migrated);
+                println!("[SqliteCache] migrated {} library/details/*.json ΓåÆ library_game_details table", migrated);
             }
         }
     }
 }
 
 fn init_achievement_tables(conn: &Connection) -> Result<(), String> {
-    // Achievement tables — volatile per-game progress
+    // Achievement tables ΓÇö volatile per-game progress
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS achievement_summaries (
@@ -1053,7 +1083,7 @@ fn init_achievement_tables(conn: &Connection) -> Result<(), String> {
 }
 
 fn init_store_tables(conn: &Connection) -> Result<(), String> {
-    // Store reviews — replaces store/reviews/{appid}.json
+    // Store reviews ΓÇö replaces store/reviews/{appid}.json
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS store_reviews (
@@ -1065,7 +1095,7 @@ fn init_store_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create store_reviews table: {}", e))?;
 
-    // Provider status — replaces store/provider-status/{appId}/{providerId}.json
+    // Provider status ΓÇö replaces store/provider-status/{appId}/{providerId}.json
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS provider_status (
@@ -1079,7 +1109,7 @@ fn init_store_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create provider_status table: {}", e))?;
 
-    // Game catalog blobs — single-row per catalog storing the full JSON
+    // Game catalog blobs ΓÇö single-row per catalog storing the full JSON
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS game_catalog_blobs (
@@ -1091,37 +1121,37 @@ fn init_store_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create game_catalog_blobs table: {}", e))?;
 
-    // Store catalog tables — versioned Steam catalog index for Discover/View All
+    // Store catalog tables ΓÇö versioned Steam catalog index for Discover/View All
     if let Err(e) = catalog_tables(conn) {
         eprintln!("[SqliteCache] catalog table init failed (non-fatal): {}", e);
     }
 
-    // Repack catalog tables — Hydra-compatible game repack index
+    // Repack catalog tables ΓÇö Hydra-compatible game repack index
     if let Err(e) = repack_tables(conn) {
         eprintln!("[SqliteCache] repack catalog table init failed (non-fatal): {}", e);
     }
 
-    // Source availability — per-game download source index
+    // Source availability ΓÇö per-game download source index
     if let Err(e) = source_availability::create_tables(conn) {
         eprintln!("[SqliteCache] source_availability table init failed (non-fatal): {}", e);
     }
 
-    // Store appinfo cache — Steam appdetails API responses
+    // Store appinfo cache ΓÇö Steam appdetails API responses
     if let Err(e) = store_appinfo_cache::create_tables(conn) {
         eprintln!("[SqliteCache] store_appinfo table init failed (non-fatal): {}", e);
     }
 
-    // Store media cache — store media resolution per game
+    // Store media cache ΓÇö store media resolution per game
     if let Err(e) = store_media_cache::create_tables(conn) {
         eprintln!("[SqliteCache] store_media_cache table init failed (non-fatal): {}", e);
     }
 
-    // Provider status snapshot — singleton blob for provider status index
+    // Provider status snapshot ΓÇö singleton blob for provider status index
     if let Err(e) = provider_snapshot::create_tables(conn) {
         eprintln!("[SqliteCache] provider_status_snapshot table init failed (non-fatal): {}", e);
     }
 
-    // Store details + library game details — per-game detail page cache
+    // Store details + library game details ΓÇö per-game detail page cache
     if let Err(e) = store_details_cache::create_tables(conn) {
         eprintln!("[SqliteCache] store_details tables init failed (non-fatal): {}", e);
     }
@@ -1205,7 +1235,7 @@ pub fn initialize_core_sqlite(app_handle: &AppHandle) -> SqliteCoreDb {
                 }
             }
 
-            // Fix double-prefix manual IDs (e.g., "manual:manual:uuid" → "manual:uuid")
+            // Fix double-prefix manual IDs (e.g., "manual:manual:uuid" ΓåÆ "manual:uuid")
             // and fix provider_game_id that also got the prefix
             if let Err(e) = conn.execute_batch(
                 "UPDATE games_v2 SET
@@ -1238,7 +1268,7 @@ pub fn initialize_achievements_sqlite(app_handle: &AppHandle) -> SqliteAchieveme
     let db_path = get_achievements_db_path(app_handle);
 
     // Achievements now use core.db (achievement tables created in init_core_tables).
-    // This function returns a dummy SqliteAchievementsDb(None) — callers should
+    // This function returns a dummy SqliteAchievementsDb(None) ΓÇö callers should
     // use SqliteCoreDb instead. Kept for backwards compat during migration.
     match Connection::open(&db_path) {
         Ok(conn) => {
@@ -1282,7 +1312,7 @@ pub fn initialize_store_sqlite(app_handle: &AppHandle) -> SqliteStoreDb {
 }
 
 // ---------------------------------------------------------------------------
-// Versioned Migration System — PRAGMA user_version
+// Versioned Migration System ΓÇö PRAGMA user_version
 // ---------------------------------------------------------------------------
 
 /// Current target schema version. Increment when adding a new migration.
@@ -1334,9 +1364,9 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// Migration v4 → v5: Create games_v2 unified table + indexes.
+/// Migration v4 ΓåÆ v5: Create games_v2 unified table + indexes.
 fn migrate_v4_to_v5(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v4 → v5: creating games_v2 table");
+    println!("[SqliteCache] running migration v4 ΓåÆ v5: creating games_v2 table");
 
     conn.execute_batch(
         "
@@ -1422,22 +1452,22 @@ fn migrate_v4_to_v5(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create games_v2 table: {}", e))?;
 
-    println!("[SqliteCache] migration v4 → v5 complete: games_v2 table created");
+    println!("[SqliteCache] migration v4 ΓåÆ v5 complete: games_v2 table created");
     Ok(())
 }
 
-/// Migration v5 → v6: Migrate playtime_entries → games_v2.
+/// Migration v5 ΓåÆ v6: Migrate playtime_entries ΓåÆ games_v2.
 ///
 /// Key format mapping:
-///   - `app-{steamId}`  → `steam-{steamId}`
-///   - `manual:<uuid>`  → `manual:<uuid>` (unchanged)
-///   - `epic:<id>`      → `epic:<id>` (unchanged)
-///   - `debrid:<id>`    → `debrid:<id>` (unchanged)
+///   - `app-{steamId}`  ΓåÆ `steam-{steamId}`
+///   - `manual:<uuid>`  ΓåÆ `manual:<uuid>` (unchanged)
+///   - `epic:<id>`      ΓåÆ `epic:<id>` (unchanged)
+///   - `debrid:<id>`    ΓåÆ `debrid:<id>` (unchanged)
 ///
 /// Games that exist in playtime_entries but not in games_v2 are skipped
 /// (they will be handled when their source is synced to games_v2).
 fn migrate_v5_to_v6(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v5 → v6: migrating playtime_entries → games_v2");
+    println!("[SqliteCache] running migration v5 ΓåÆ v6: migrating playtime_entries ΓåÆ games_v2");
 
     // Check if playtime_entries table exists (first install may not have it)
     let table_exists: bool = conn
@@ -1450,7 +1480,7 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<(), String> {
         > 0;
 
     if !table_exists {
-        println!("[SqliteCache] playtime_entries table not found — skipping migration");
+        println!("[SqliteCache] playtime_entries table not found ΓÇö skipping migration");
         return Ok(());
     }
 
@@ -1568,7 +1598,7 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<(), String> {
     }
 
     println!(
-        "[SqliteCache] migration v5 → v6 complete: migrated {} entries, skipped {} (not in games_v2)",
+        "[SqliteCache] migration v5 ΓåÆ v6 complete: migrated {} entries, skipped {} (not in games_v2)",
         migrated, skipped
     );
     Ok(())
@@ -1576,14 +1606,14 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<(), String> {
 
 /// Map a playtime_entries game_key to a games_v2 id.
 ///
-/// - `app-{steamId}` → `steam-{steamId}`
-/// - `manual:<uuid>` → `manual:<uuid>`
-/// - `epic:<id>`     → `epic:<id>`
-/// - `debrid:<id>`   → `debrid:<id>`
+/// - `app-{steamId}` ΓåÆ `steam-{steamId}`
+/// - `manual:<uuid>` ΓåÆ `manual:<uuid>`
+/// - `epic:<id>`     ΓåÆ `epic:<id>`
+/// - `debrid:<id>`   ΓåÆ `debrid:<id>`
 /// - fallback: return game_key as-is (for any future provider format)
 fn map_playtime_key_to_game_id(game_key: &str, app_id: Option<&str>) -> String {
     if let Some(key) = game_key.strip_prefix("app-") {
-        // Steam game: "app-730" → "steam-730"
+        // Steam game: "app-730" ΓåÆ "steam-730"
         return format!("steam-{}", key);
     }
 
@@ -1606,10 +1636,10 @@ fn map_playtime_key_to_game_id(game_key: &str, app_id: Option<&str>) -> String {
     game_key.to_string()
 }
 
-/// Migration v6 → v7: Drop playtime_entries table (data migrated to games_v2 in v5→v6).
-/// Keep playtime_sessions — still used by session tracking (will be migrated in Fase 4).
+/// Migration v6 ΓåÆ v7: Drop playtime_entries table (data migrated to games_v2 in v5ΓåÆv6).
+/// Keep playtime_sessions ΓÇö still used by session tracking (will be migrated in Fase 4).
 fn migrate_v6_to_v7(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v6 → v7: dropping playtime_entries table");
+    println!("[SqliteCache] running migration v6 ΓåÆ v7: dropping playtime_entries table");
 
     // Check if playtime_entries table exists
     let table_exists: bool = conn
@@ -1626,17 +1656,17 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to drop playtime_entries: {}", e))?;
         println!("[SqliteCache] dropped playtime_entries table");
     } else {
-        println!("[SqliteCache] playtime_entries table not found — skipping drop");
+        println!("[SqliteCache] playtime_entries table not found ΓÇö skipping drop");
     }
 
-    println!("[SqliteCache] migration v6 → v7 complete: playtime_entries dropped");
+    println!("[SqliteCache] migration v6 ΓåÆ v7 complete: playtime_entries dropped");
     Ok(())
 }
 
-/// Migration v7 → v8: Initialize old achievement tables (if not exist).
-/// These will be migrated to new schema with FK in v8→v9.
+/// Migration v7 ΓåÆ v8: Initialize old achievement tables (if not exist).
+/// These will be migrated to new schema with FK in v8ΓåÆv9.
 fn migrate_v7_to_v8(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v7 → v8: initializing achievement tables");
+    println!("[SqliteCache] running migration v7 ΓåÆ v8: initializing achievement tables");
 
     conn.execute_batch(
         "
@@ -1678,11 +1708,11 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create old achievement tables: {}", e))?;
 
-    println!("[SqliteCache] migration v7 → v8 complete: old achievement tables initialized");
+    println!("[SqliteCache] migration v7 ΓåÆ v8 complete: old achievement tables initialized");
     Ok(())
 }
 
-/// Migration v8 → v9: Create new achievement tables with FK to games_v2.
+/// Migration v8 ΓåÆ v9: Create new achievement tables with FK to games_v2.
 ///
 /// New tables:
 ///   - achievements (replaces achievement_entries)
@@ -1690,10 +1720,10 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<(), String> {
 ///   - achievement_summaries (new schema with game_id + source)
 ///   - achievement_percentages (new schema with game_id)
 ///
-/// Migrates data from old tables, mapping app_id → game_id.
+/// Migrates data from old tables, mapping app_id ΓåÆ game_id.
 /// Old tables are dropped after migration.
 fn migrate_v8_to_v9(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v8 → v9: creating new achievement tables with FK to games_v2");
+    println!("[SqliteCache] running migration v8 ΓåÆ v9: creating new achievement tables with FK to games_v2");
 
     // Create new tables with foreign keys
     conn.execute_batch(
@@ -1746,7 +1776,7 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create new achievement tables: {}", e))?;
 
-    // Migrate achievement_entries → achievements_new + achievement_progress_new
+    // Migrate achievement_entries ΓåÆ achievements_new + achievement_progress_new
     let entries_exist: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='achievement_entries'",
@@ -1793,10 +1823,10 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("Failed to migrate achievement_entries to achievement_progress_new: {}", e))?;
 
-        println!("[SqliteCache] migrated achievement_entries → achievements_new + achievement_progress_new");
+        println!("[SqliteCache] migrated achievement_entries ΓåÆ achievements_new + achievement_progress_new");
     }
 
-    // Migrate achievement_summaries → achievement_summaries_new
+    // Migrate achievement_summaries ΓåÆ achievement_summaries_new
     let summaries_exist: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='achievement_summaries'",
@@ -1823,10 +1853,10 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("Failed to migrate achievement_summaries: {}", e))?;
 
-        println!("[SqliteCache] migrated achievement_summaries → achievement_summaries_new");
+        println!("[SqliteCache] migrated achievement_summaries ΓåÆ achievement_summaries_new");
     }
 
-    // Migrate achievement_percentages → achievement_percentages_new
+    // Migrate achievement_percentages ΓåÆ achievement_percentages_new
     let percentages_exist: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='achievement_percentages'",
@@ -1847,7 +1877,7 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("Failed to migrate achievement_percentages: {}", e))?;
 
-        println!("[SqliteCache] migrated achievement_percentages → achievement_percentages_new");
+        println!("[SqliteCache] migrated achievement_percentages ΓåÆ achievement_percentages_new");
     }
 
     // Drop old tables
@@ -1875,14 +1905,14 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create achievement indexes: {}", e))?;
 
-    println!("[SqliteCache] migration v8 → v9 complete: new achievement tables created with FK to games_v2");
+    println!("[SqliteCache] migration v8 ΓåÆ v9 complete: new achievement tables created with FK to games_v2");
     Ok(())
 }
 
-/// Migration v9 → v10: Create game_sessions table with FK to games_v2.
-/// Migrates data from playtime_sessions, mapping game_key → game_id.
+/// Migration v9 ΓåÆ v10: Create game_sessions table with FK to games_v2.
+/// Migrates data from playtime_sessions, mapping game_key ΓåÆ game_id.
 fn migrate_v9_to_v10(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v9 → v10: creating game_sessions table");
+    println!("[SqliteCache] running migration v9 ΓåÆ v10: creating game_sessions table");
 
     // Create game_sessions table
     conn.execute_batch(
@@ -1903,7 +1933,7 @@ fn migrate_v9_to_v10(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create game_sessions table: {}", e))?;
 
-    // Migrate playtime_sessions → game_sessions
+    // Migrate playtime_sessions ΓåÆ game_sessions
     let sessions_exist: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='playtime_sessions'",
@@ -1914,7 +1944,7 @@ fn migrate_v9_to_v10(conn: &Connection) -> Result<(), String> {
         > 0;
 
     if sessions_exist {
-        // Migrate sessions, mapping game_key → game_id
+        // Migrate sessions, mapping game_key ΓåÆ game_id
         conn.execute_batch(
             "INSERT OR IGNORE INTO game_sessions (session_id, game_id, started_at, ended_at, duration_seconds, exit_reason, source)
              SELECT
@@ -1939,20 +1969,20 @@ fn migrate_v9_to_v10(conn: &Connection) -> Result<(), String> {
         conn.execute_batch("DROP TABLE IF EXISTS playtime_sessions;")
             .map_err(|e| format!("Failed to drop playtime_sessions: {}", e))?;
 
-        println!("[SqliteCache] migrated playtime_sessions → game_sessions");
+        println!("[SqliteCache] migrated playtime_sessions ΓåÆ game_sessions");
     }
 
     // Migrate localStorage session-history-v1 if it exists in a temp table
     // (This is handled by the TypeScript side during boot)
 
-    println!("[SqliteCache] migration v9 → v10 complete: game_sessions table created");
+    println!("[SqliteCache] migration v9 ΓåÆ v10 complete: game_sessions table created");
     Ok(())
 }
 
-/// Migration v10 → v11: Create normalized entity tables + junction tables.
+/// Migration v10 ΓåÆ v11: Create normalized entity tables + junction tables.
 /// Migrates JSON arrays from games_v2 into proper relational tables.
 fn migrate_v10_to_v11(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v10 → v11: creating entity tables");
+    println!("[SqliteCache] running migration v10 ΓåÆ v11: creating entity tables");
 
     conn.execute_batch(
         "
@@ -1986,7 +2016,7 @@ fn migrate_v10_to_v11(conn: &Connection) -> Result<(), String> {
         );
 
         -- ============================================
-        -- JUNCTION TABLES (game ↔ entity)
+        -- JUNCTION TABLES (game Γåö entity)
         -- ============================================
 
         CREATE TABLE IF NOT EXISTS game_genres (
@@ -2121,13 +2151,13 @@ fn migrate_v10_to_v11(conn: &Connection) -> Result<(), String> {
         );
     }
 
-    println!("[SqliteCache] migration v10 → v11 complete: entity tables created + data migrated");
+    println!("[SqliteCache] migration v10 ΓåÆ v11 complete: entity tables created + data migrated");
     Ok(())
 }
 
-/// Migration v11 → v12: Create game_files unified file registry.
+/// Migration v11 ΓåÆ v12: Create game_files unified file registry.
 fn migrate_v11_to_v12(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v11 → v12: creating game_files table");
+    println!("[SqliteCache] running migration v11 ΓåÆ v12: creating game_files table");
 
     conn.execute_batch(
         "
@@ -2193,7 +2223,7 @@ fn migrate_v11_to_v12(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create game_files table: {}", e))?;
 
-    // Migrate data from media_manifests → game_files (if media_manifests exists)
+    // Migrate data from media_manifests ΓåÆ game_files (if media_manifests exists)
     {
         let has_media_manifests: bool = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='media_manifests'")
@@ -2269,19 +2299,19 @@ fn migrate_v11_to_v12(conn: &Connection) -> Result<(), String> {
             }
 
             println!(
-                "[SqliteCache] migrated {} media manifests → game_files",
+                "[SqliteCache] migrated {} media manifests ΓåÆ game_files",
                 migrated
             );
         }
     }
 
-    println!("[SqliteCache] migration v11 → v12 complete: game_files table created + media migrated");
+    println!("[SqliteCache] migration v11 ΓåÆ v12 complete: game_files table created + media migrated");
     Ok(())
 }
 
-/// Migration v12 → v13: Create import_exclusions table.
+/// Migration v12 ΓåÆ v13: Create import_exclusions table.
 fn migrate_v12_to_v13(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v12 → v13: creating import_exclusions table");
+    println!("[SqliteCache] running migration v12 ΓåÆ v13: creating import_exclusions table");
 
     conn.execute_batch(
         "
@@ -2303,13 +2333,13 @@ fn migrate_v12_to_v13(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create import_exclusions table: {}", e))?;
 
-    println!("[SqliteCache] migration v12 → v13 complete: import_exclusions table created");
+    println!("[SqliteCache] migration v12 ΓåÆ v13 complete: import_exclusions table created");
     Ok(())
 }
 
-/// Migration v13 → v14: Create game_actions table.
+/// Migration v13 ΓåÆ v14: Create game_actions table.
 fn migrate_v13_to_v14(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v13 → v14: creating game_actions table");
+    println!("[SqliteCache] running migration v13 ΓåÆ v14: creating game_actions table");
 
     conn.execute_batch(
         "
@@ -2334,13 +2364,13 @@ fn migrate_v13_to_v14(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create game_actions table: {}", e))?;
 
-    println!("[SqliteCache] migration v13 → v14 complete: game_actions table created");
+    println!("[SqliteCache] migration v13 ΓåÆ v14 complete: game_actions table created");
     Ok(())
 }
 
-/// Migration v14 → v15: Drop dead table `achievement_game_configs`.
+/// Migration v14 ΓåÆ v15: Drop dead table `achievement_game_configs`.
 fn migrate_v14_to_v15(conn: &Connection) -> Result<(), String> {
-    println!("[SqliteCache] running migration v14 → v15: dropping dead table achievement_game_configs");
+    println!("[SqliteCache] running migration v14 ΓåÆ v15: dropping dead table achievement_game_configs");
 
     let has_table: bool = conn
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='achievement_game_configs'")
@@ -2356,10 +2386,10 @@ fn migrate_v14_to_v15(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to drop achievement_game_configs: {}", e))?;
         println!("[SqliteCache] dropped achievement_game_configs table");
     } else {
-        println!("[SqliteCache] achievement_game_configs table not found — skipping drop");
+        println!("[SqliteCache] achievement_game_configs table not found ΓÇö skipping drop");
     }
 
-    println!("[SqliteCache] migration v14 → v15 complete");
+    println!("[SqliteCache] migration v14 ΓåÆ v15 complete");
     Ok(())
 }
 

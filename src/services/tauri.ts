@@ -2996,6 +2996,114 @@ export async function clearPlayQueue(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Collections — user-defined game collections with nesting support
+// ---------------------------------------------------------------------------
+
+export type Collection = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  position: number;
+  color: string | null;
+  coverPath: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type CollectionItem = {
+  id: number;
+  collectionId: string;
+  gameId: string;
+  position: number;
+  addedAt: number;
+};
+
+export async function getAllCollections(): Promise<Collection[]> {
+  try {
+    return await invoke<Collection[]>("get_all_collections");
+  } catch {
+    return [];
+  }
+}
+
+export async function getCollectionItems(collectionId: string): Promise<CollectionItem[]> {
+  try {
+    return await invoke<CollectionItem[]>("get_collection_items", { collectionId });
+  } catch {
+    return [];
+  }
+}
+
+export async function createCollection(
+  name: string,
+  parentId?: string | null,
+  color?: string | null,
+  coverPath?: string | null,
+): Promise<Collection | null> {
+  try {
+    return await invoke<Collection>("create_collection", { name, parentId, color, coverPath });
+  } catch {
+    return null;
+  }
+}
+
+export async function updateCollection(
+  id: string,
+  name?: string | null,
+  color?: string | null,
+  coverPath?: string | null,
+  parentId?: string | null,
+  position?: number | null,
+): Promise<void> {
+  try {
+    await invoke("update_collection", { id, name, color, coverPath, parentId, position });
+  } catch {}
+}
+
+export async function deleteCollection(id: string): Promise<void> {
+  try {
+    await invoke("delete_collection", { id });
+  } catch {}
+}
+
+export async function addGameToCollection(
+  collectionId: string,
+  gameId: string,
+): Promise<CollectionItem | null> {
+  try {
+    return await invoke<CollectionItem>("add_game_to_collection", { collectionId, gameId });
+  } catch {
+    return null;
+  }
+}
+
+export async function removeGameFromCollection(
+  collectionId: string,
+  gameId: string,
+): Promise<void> {
+  try {
+    await invoke("remove_game_from_collection", { collectionId, gameId });
+  } catch {}
+}
+
+export async function reorderCollectionItems(
+  collectionId: string,
+  gameIds: string[],
+): Promise<void> {
+  try {
+    await invoke("reorder_collection_items", { collectionId, gameIds });
+  } catch {}
+}
+
+export async function saveCollectionCover(
+  collectionId: string,
+  contentBase64: string,
+  ext: string,
+): Promise<string> {
+  return invoke("save_collection_cover", { collectionId, contentBase64, ext });
+}
+
+// ---------------------------------------------------------------------------
 // Achievement SQLite tables — volatile per-game progress
 // ---------------------------------------------------------------------------
 

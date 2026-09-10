@@ -8,6 +8,7 @@ import {
   Library,
   Home,
   Settings,
+  FolderOpen,
   X,
 } from "lucide-react";
 
@@ -78,6 +79,7 @@ export default function Sidebar({
   const mainItems: SidebarItem[] = [
     { label: t("sidebar.home"),              page: "home",                   icon: Home },
     { label: t("sidebar.library"),          page: "library",                icon: Library },
+    { label: t("sidebar.collections", "Collections"), page: "collections",  icon: FolderOpen },
     { label: t("sidebar.store"),            page: "store",                  icon: Store },
     { label: t("sidebar.stats"),            page: "activity",               icon: BarChart3 },
     { label: t("sidebar.achievements"),     page: "launcher-achievements",  icon: Award },

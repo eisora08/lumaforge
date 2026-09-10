@@ -17,6 +17,7 @@ const Verification = lazy(() => import("./pages/Verification"));
 const GameDetailsPage = lazy(() => import("./pages/GameDetails"));
 const LibraryGameDetailPage = lazy(() => import("./pages/LibraryGameDetailPage"));
 const ConsoleModePage = lazy(() => import("./features/console/ConsoleModePage"));
+const CollectionsPage = lazy(() => import("./components/collections/CollectionsPage"));
 import { GameDetailsProvider } from "./context/GameDetailsContext";
 import { GameSessionProvider, useGameSession } from "./context/GameSessionContext";
 import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
@@ -46,6 +47,7 @@ import { useSettings } from "./context/SettingsContext";
 import { setConsoleMode } from "./features/console/consoleInputHints";
 import { bootstrapExtensions } from "./extensions/bootstrap";
 import { useGameDetails } from "./context/GameDetailsContext";
+import { useLibraryGames } from "./context/LibraryGamesContext";
 import { setPageContextSource } from "./services/ambientBackgroundStore";
 import { getBootSnapshot } from "./services/appBootCoordinator";
 import { localPathToUrl, isLocalPath } from "./services/gameCacheService";
@@ -54,6 +56,7 @@ import { pushToHistory } from "./services/navigationHistory";
 import { readStartupConfig } from "./services/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { checkForUpdate } from "./services/appUpdateStore";
+import { consumePendingCollectionId } from "./services/collectionNavigation";
 import FirstRunWizard from "./components/wizard/FirstRunWizard";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
@@ -61,7 +64,7 @@ const KNOWN_PAGES: Set<AppPage> = new Set([
   "home", "library", "games", "store",
   "achievements", "activity", "verification",
   "game-details", "library-game-detail", "global-search", "console",
-  "launcher-achievements",
+  "launcher-achievements", "collections",
 ]);
 
 function restoreActivePage(): AppPage {
@@ -162,6 +165,23 @@ function AmbientNavFallback({ activePage }: { activePage: AppPage }) {
   }, [activePage, selectedGame?.imageUrl]);
 
   return null;
+}
+
+function CollectionsPageWrapper({ onNavigate }: { onNavigate: (p: AppPage) => void }) {
+  const { setSelectedGame } = useLibraryGames();
+  const [initialCollectionId, setInitialCollectionId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    const id = consumePendingCollectionId();
+    if (id) setInitialCollectionId(id);
+  }, []);
+
+  return (
+    <CollectionsPage onOpenGame={(game) => {
+      setSelectedGame(game);
+      onNavigate("library-game-detail");
+    }} initialCollectionId={initialCollectionId} />
+  );
 }
 
 function App() {
@@ -439,6 +459,9 @@ function App() {
         break;
       case "launcher-achievements":
         pageComponent = <LauncherAchievements />;
+        break;
+      case "collections":
+        pageComponent = <CollectionsPageWrapper onNavigate={handleNavigate} />;
         break;
       case "verification":
         pageComponent = <Verification />;

@@ -10,6 +10,7 @@ import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import PlayNextSection from "../components/dashboard/PlayNextSection";
+import CollectionsSection from "../components/dashboard/CollectionsSection";
 
 import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
 import TopPicksDashboardSection from "../components/dashboard/TopPicksDashboardSection";
@@ -266,6 +267,15 @@ export default function Home({ onNavigate }: Props) {
               onNavigate={onNavigate}
               continuePlayingAppIds={continuePlayingAppIds}
               maxItems={getSectionLimit("recommended", sectionLimits, 12)}
+            />
+          </LazySectionWrapper>
+        )}
+
+        {isSectionVisible("collections", sectionVisibility) && (
+          <LazySectionWrapper sectionId="collections">
+            <CollectionsSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("collections", sectionLimits, 8)}
             />
           </LazySectionWrapper>
         )}

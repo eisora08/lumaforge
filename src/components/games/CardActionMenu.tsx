@@ -255,8 +255,84 @@ function SubmenuItem({
   subtitle,
   destructive,
   onClick,
+  children,
   onClose,
 }: MenuItemProps & { onClose: () => void }) {
+  const [subOpen, setSubOpen] = useState(false);
+  const [subAnchorRect, setSubAnchorRect] = useState<DOMRect | null>(null);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseEnter = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (!children || !itemRef.current) return;
+    setSubAnchorRect(itemRef.current.getBoundingClientRect());
+    setSubOpen(true);
+  }, [children]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (children) {
+      hideTimer.current = setTimeout(() => {
+        setSubOpen(false);
+        setSubAnchorRect(null);
+      }, SUBMENU_DELAY);
+    }
+  }, [children]);
+
+  const handleSubEnter = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+  }, []);
+
+  const handleSubLeave = useCallback(() => {
+    setSubOpen(false);
+    setSubAnchorRect(null);
+  }, []);
+
+  const handleItemClick = useCallback(() => {
+    setSubOpen(false);
+    setSubAnchorRect(null);
+  }, []);
+
+  if (children) {
+    return (
+      <div
+        ref={itemRef}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        className="relative"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          disabled={disabled}
+          className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition ${
+            disabled
+              ? "cursor-not-allowed text-(--color-muted)/40"
+              : destructive
+                ? "cursor-pointer text-red-400 hover:bg-red-500/10"
+                : "cursor-pointer text-(--color-text) hover:bg-white/5"
+          }`}
+        >
+          {icon && <span className="shrink-0">{icon}</span>}
+          <span className="flex-1">{label}</span>
+          {subtitle && (
+            <span className="text-[10px] text-(--color-muted)">{subtitle}</span>
+          )}
+          <ChevronRight className="h-3 w-3 text-(--color-muted)" />
+        </button>
+        {subOpen && subAnchorRect && (
+          <div onMouseEnter={handleSubEnter} onMouseLeave={handleSubLeave}>
+            <SubmenuPanel
+              items={children}
+              anchorRect={subAnchorRect}
+              onItemClick={handleItemClick}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"

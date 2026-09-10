@@ -60,6 +60,7 @@ import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall
 import { setAmbientSource, clearAmbientSource, rememberLibraryDetails } from "../../services/ambientBackgroundStore";
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { showInfo, showSuccess, showError } from "../toast/GameToast";
+import { CollectionDropdownItems } from "../common/CollectionMenuItems";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { removeDepotInstallInfo, getDepotManifests } from "../../services/depotUpdateStore";
 import { setStandalone } from "../../services/standaloneStore";
@@ -2892,6 +2893,11 @@ export default function LibraryGameDetails({
               label={inQueue ? t("sidebar.play_next_remove") : t("sidebar.play_next_add")}
               onClick={() => { setShowActions(false); toggleQueue(game.id); }}
             />
+            <div className="border-t border-(--surface-active-border) my-1" />
+            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-(--color-muted)">
+              {t("context_menu.add_to_collection", "Add to Collection")}
+            </div>
+            <CollectionDropdownItems gameId={game.id} onAfterAction={() => setShowActions(false)} />
             <DropdownItem label={t("library_details.actions.editGameDetails")} onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
             <DropdownItem
               label={game.source === "epic" || (game.source === "manual" && !game.appId) ? t("library_details.actions.manageArtwork") : t("library_details.actions.refreshArtwork")}
