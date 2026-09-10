@@ -410,6 +410,14 @@ export const emulatorPlatforms: EmulatorPlatform[] = [
     emulatorIds: ["retroarch", "fs-uae", "winuae"],
   },
   {
+    id: "commodore_amiga_cd32",
+    name: "Commodore Amiga CD32",
+    shortName: "CD32",
+    igdbId: 15,
+    databases: ["Commodore - Amiga CD32"],
+    emulatorIds: ["retroarch", "winuae"],
+  },
+  {
     id: "commodore_vic20",
     name: "Commodore VIC-20",
     shortName: "VIC-20",
