@@ -113,6 +113,7 @@ import { achievementWatcherService } from "../../services/achievementWatcherServ
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import { usePlayQueue } from "../../context/PlayQueueContext";
 import GameEditDialog from "../games/GameEditDialog";
 import { useGameSession } from "../../context/GameSessionContext";
 import { invoke } from "@tauri-apps/api/core";
@@ -289,8 +290,10 @@ export default function LibraryGameDetails({
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const { confirm } = useConfirm();
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { isInQueue, toggleQueue } = usePlayQueue();
   const favoriteId = getFavoriteKey(game) ?? game.id;
   const favorite = isFavorite(favoriteId);
+  const inQueue = isInQueue(game.id);
   const actionsRef = useRef<HTMLDivElement>(null);
   const stickyActionsBtnRef = useRef<HTMLButtonElement>(null);
   const dropdownMenuRef = useRef<HTMLDivElement>(null);
@@ -2885,6 +2888,10 @@ export default function LibraryGameDetails({
                   handleUninstallDepot();
                 }} />
             )}
+            <DropdownItem
+              label={inQueue ? t("sidebar.play_next_remove") : t("sidebar.play_next_add")}
+              onClick={() => { setShowActions(false); toggleQueue(game.id); }}
+            />
             <DropdownItem label={t("library_details.actions.editGameDetails")} onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
             <DropdownItem
               label={game.source === "epic" || (game.source === "manual" && !game.appId) ? t("library_details.actions.manageArtwork") : t("library_details.actions.refreshArtwork")}

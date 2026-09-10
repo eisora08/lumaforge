@@ -18,6 +18,7 @@ pub mod import_exclusions;
 pub mod launcher_achievements_cache;
 pub mod library_cache;
 pub mod media_manifests;
+pub mod play_queue;
 pub mod playtime;
 pub mod provider_snapshot;
 pub mod provider_status;
@@ -56,6 +57,11 @@ pub use games_v2::{
     get_game_v2_by_app_id, get_game_v2_count, get_games_v2_by_app_id, get_games_v2_by_source,
     increment_play_count_v2, search_games_v2,
     update_completion_status_v2, update_playtime_v2, upsert_game_v2,
+};
+pub use play_queue::{
+    PlayQueueEntry,
+    add_to_play_queue_inner, clear_play_queue_inner, get_play_queue_inner,
+    remove_from_play_queue_inner, reorder_play_queue_inner,
 };
 pub use game_sessions::{
     GameSession, delete_game_sessions_for_game, delete_game_sessions_for_game_inner,
@@ -101,6 +107,11 @@ pub use store_reviews::{
 pub use library_cache::__cmd__read_library_cache;
 pub use library_cache::__cmd__write_library_cache;
 pub use library_cache::__cmd__delete_library_cache;
+pub use play_queue::__cmd__get_play_queue;
+pub use play_queue::__cmd__add_to_play_queue;
+pub use play_queue::__cmd__remove_from_play_queue;
+pub use play_queue::__cmd__reorder_play_queue;
+pub use play_queue::__cmd__clear_play_queue;
 pub use achievements::__cmd__upsert_achievement_summary;
 pub use achievements::__cmd__get_achievement_summary;
 pub use achievements::__cmd__get_all_achievement_summaries;
@@ -164,6 +175,11 @@ pub use games_v2::__tauri_command_name_update_playtime_v2;
 pub use games_v2::__tauri_command_name_update_completion_status_v2;
 pub use games_v2::__tauri_command_name_increment_play_count_v2;
 pub use games_v2::__tauri_command_name_add_playtime_v2;
+pub use play_queue::__tauri_command_name_get_play_queue;
+pub use play_queue::__tauri_command_name_add_to_play_queue;
+pub use play_queue::__tauri_command_name_remove_from_play_queue;
+pub use play_queue::__tauri_command_name_reorder_play_queue;
+pub use play_queue::__tauri_command_name_clear_play_queue;
 pub use achievements::__tauri_command_name_upsert_achievement_summary;
 pub use achievements::__tauri_command_name_get_achievement_summary;
 pub use achievements::__tauri_command_name_get_all_achievement_summaries;
@@ -453,6 +469,11 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
     // Playtime tables — per-game session/playtime tracking
     if let Err(e) = playtime::create_tables(conn) {
         eprintln!("[SqliteCache] playtime table init failed (non-fatal): {}", e);
+    }
+
+    // Play Next queue — ordered list of games to play next
+    if let Err(e) = play_queue::create_tables(conn) {
+        eprintln!("[SqliteCache] play_queue table init failed (non-fatal): {}", e);
     }
 
     // Launcher achievements — singleton blobs for launcher meta-achievement data

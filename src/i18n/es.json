@@ -67,7 +67,14 @@
     "sort_name_desc": "Z → A",
     "sort_recent": "Jugados reciente",
     "sort_most_played": "Más jugados",
-    "sort_newest": "Más recientes"
+    "sort_newest": "Más recientes",
+    "play_next": "Jugar después",
+    "play_next_add": "Agregar a Jugar después",
+    "play_next_remove": "Quitar de Jugar después",
+    "play_next_in_queue": "En cola",
+    "play_next_clear": "Limpiar cola",
+    "play_next_empty": "No hay juegos en la cola",
+    "play_next_next_up": "Siguiente"
   },
   "topbar": {
     "search_placeholder": "Buscar juegos de Steam…",
@@ -2524,6 +2531,8 @@
     "max_items": "Máx. elementos:",
     "continue_playing": "Continuar Jugando",
     "continue_playing_desc": "Juegos jugados recientemente con acción de reanudar",
+    "play_next": "Jugar Después",
+    "play_next_desc": "Tus juegos en cola para jugar después",
     "favorites_label": "Favoritos",
     "favorites_desc": "Tus juegos favoritos",
     "recently_played_label": "Jugados Recientemente",

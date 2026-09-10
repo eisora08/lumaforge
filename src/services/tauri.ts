@@ -2952,6 +2952,50 @@ export async function addPlaytimeV2(
 }
 
 // ---------------------------------------------------------------------------
+// Play Next queue
+// ---------------------------------------------------------------------------
+
+export type PlayQueueEntry = {
+  gameId: string;
+  position: number;
+  addedAt: number;
+};
+
+export async function getPlayQueue(): Promise<PlayQueueEntry[]> {
+  try {
+    return await invoke<PlayQueueEntry[]>("get_play_queue");
+  } catch {
+    return [];
+  }
+}
+
+export async function addToPlayQueue(gameId: string): Promise<PlayQueueEntry | null> {
+  try {
+    return await invoke<PlayQueueEntry>("add_to_play_queue", { gameId });
+  } catch {
+    return null;
+  }
+}
+
+export async function removeFromPlayQueue(gameId: string): Promise<void> {
+  try {
+    await invoke("remove_from_play_queue", { gameId });
+  } catch {}
+}
+
+export async function reorderPlayQueue(gameIds: string[]): Promise<void> {
+  try {
+    await invoke("reorder_play_queue", { gameIds });
+  } catch {}
+}
+
+export async function clearPlayQueue(): Promise<void> {
+  try {
+    await invoke("clear_play_queue");
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
 // Achievement SQLite tables — volatile per-game progress
 // ---------------------------------------------------------------------------
 

@@ -26,6 +26,7 @@ import {
   Filter,
   ArrowUpDown,
   Star,
+  ListPlus,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -43,6 +44,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import { usePlayQueue } from "../../context/PlayQueueContext";
 import { useSettings } from "../../context/SettingsContext";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry } from "../../services/tauri";
@@ -203,6 +205,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const [uninstallTarget, setUninstallTarget] = useState<LibraryGame | null>(null);
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { isInQueue, toggleQueue } = usePlayQueue();
   const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
@@ -1058,6 +1061,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) console.log(`[SIDEBAR_ACTION_RENDER] appid=${menuGame.appId} uninstallPending=${mPendingUninstall} action=${mPendingUninstall ? "uninstalling" : mAction}`);
           const _sfk = getFavoriteKey(menuGame);
           const fav = _sfk ? isFavorite(_sfk) : false;
+          const inQueue = isInQueue(menuGame.id);
 
           return (
             <>
@@ -1111,6 +1115,14 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 onClick={() => {
                   const fk = getFavoriteKey(menuGame);
                   if (fk) toggleFavorite(fk);
+                  handleMenuClose();
+                }}
+              />
+              <MenuItem
+                label={inQueue ? t("sidebar.play_next_remove") : t("sidebar.play_next_add")}
+                icon={<ListPlus className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  toggleQueue(menuGame.id);
                   handleMenuClose();
                 }}
               />

@@ -67,7 +67,14 @@
     "sort_name_desc": "Z → A",
     "sort_recent": "Recently Played",
     "sort_most_played": "Most Played",
-    "sort_newest": "Newest Added"
+    "sort_newest": "Newest Added",
+    "play_next": "Play Next",
+    "play_next_add": "Add to Play Next",
+    "play_next_remove": "Remove from Play Next",
+    "play_next_in_queue": "In Queue",
+    "play_next_clear": "Clear Queue",
+    "play_next_empty": "No games in queue",
+    "play_next_next_up": "Next Up"
   },
   "topbar": {
     "search_placeholder": "Search Steam games…",
@@ -2524,6 +2531,8 @@
     "max_items": "Max items:",
     "continue_playing": "Continue Playing",
     "continue_playing_desc": "Recently played games with resume action",
+    "play_next": "Play Next",
+    "play_next_desc": "Your queued games to play next",
     "favorites_label": "Favorites",
     "favorites_desc": "Your favorite games",
     "recently_played_label": "Recently Played",

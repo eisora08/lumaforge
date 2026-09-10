@@ -13,6 +13,7 @@ import {
 
 import type { AppPage } from "../../types/navigation";
 import SidebarLibraryList, { type SidebarSourceFilter, type SidebarSortMode } from "./SidebarLibraryList";
+import PlayNextSidebarCard from "./PlayNextSidebarCard";
 import { useUserProfile, saveUserProfile, resolveProfileMediaUrl } from "../../features/profile/userProfile";
 import { getAvatarPreset } from "../../features/profile/profilePresets";
 import ProfileModal from "../../features/profile/ProfileModal";
@@ -180,6 +181,13 @@ export default function Sidebar({
               sortBy={sidebarSortBy}
               onSortChange={setSidebarSortBy}
             />
+          </div>
+        )}
+
+        {/* Play Next card — fixed, outside scroll */}
+        {showLabels && (
+          <div className="shrink-0 pb-2">
+            <PlayNextSidebarCard onNavigate={onNavigate} />
           </div>
         )}
 

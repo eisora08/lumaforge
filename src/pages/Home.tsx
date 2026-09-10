@@ -9,6 +9,7 @@ import CompletedSection from "../components/dashboard/CompletedSection";
 import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
+import PlayNextSection from "../components/dashboard/PlayNextSection";
 
 import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
 import TopPicksDashboardSection from "../components/dashboard/TopPicksDashboardSection";
@@ -217,6 +218,15 @@ export default function Home({ onNavigate }: Props) {
               onNavigate={onNavigate}
               excludeAppId={runningAppId}
               maxItems={getSectionLimit("continue-playing", sectionLimits, 12)}
+            />
+          </LazySectionWrapper>
+        )}
+
+        {isSectionVisible("play-next", sectionVisibility) && (
+          <LazySectionWrapper sectionId="play-next">
+            <PlayNextSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("play-next", sectionLimits, 12)}
             />
           </LazySectionWrapper>
         )}

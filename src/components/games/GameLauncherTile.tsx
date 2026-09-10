@@ -23,6 +23,7 @@ import {
   Wrench,
   Check,
   Circle,
+  ListPlus,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -58,6 +59,7 @@ import {
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import { usePlayQueue } from "../../context/PlayQueueContext";
 import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
 import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp, downloadAndInstallPackage, computeFileHash, markSyncIndexItem, deleteDirectory, deleteGameV2, updateCompletionStatusV2 } from "../../services/tauri";
@@ -190,6 +192,8 @@ function GameLauncherTileInner({
   const { isFavorite, toggleFavorite } = useFavorites();
   const _favKey = getFavoriteKey(game);
   const favorite = _favKey ? isFavorite(_favKey) : false;
+  const { isInQueue, toggleQueue } = usePlayQueue();
+  const inQueue = isInQueue(game.id);
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -797,6 +801,11 @@ function GameLauncherTileInner({
               label={favorite ? t("context_menu.remove_favorites", "Remove from favorites") : t("context_menu.add_favorites", "Add to favorites")}
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
               onClick={() => { const fk = getFavoriteKey(game); if (fk) toggleFavorite(fk); setMenuOpen(false); }}
+            />
+            <MenuItem
+              label={inQueue ? t("sidebar.play_next_remove") : t("sidebar.play_next_add")}
+              icon={<ListPlus className="h-3.5 w-3.5" />}
+              onClick={() => { toggleQueue(game.id); setMenuOpen(false); }}
             />
             {game.appId && game.source !== "epic" && game.source !== "debrid" && game.source !== "lua" && (
               <MenuItem

@@ -14,6 +14,7 @@ import {
   Trophy,
   FolderOpen,
   BookOpen,
+  ListPlus,
   ChevronDown,
   ChevronUp,
   Lock,
@@ -72,6 +73,7 @@ interface SectionMeta {
 
 const DASHBOARD_SECTIONS: SectionMeta[] = [
   { id: "continue-playing", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action", labelKey: "homeLayout.continue_playing", descriptionKey: "homeLayout.continue_playing_desc", heroSourceId: "continuePlaying" },
+  { id: "play-next", label: "Play Next", icon: <ListPlus className="h-4 w-4" />, color: "text-cyan-400", description: "Your queued games to play next", labelKey: "homeLayout.play_next", descriptionKey: "homeLayout.play_next_desc" },
   { id: "in-progress", label: "In Progress", icon: <TrendingUp className="h-4 w-4" />, color: "text-amber-400", description: "Games you're currently playing", labelKey: "homeLayout.in_progress", descriptionKey: "homeLayout.in_progress_desc" },
   { id: "completed", label: "Completed", icon: <Check className="h-4 w-4" />, color: "text-emerald-400", description: "Games you've finished", labelKey: "homeLayout.completed", descriptionKey: "homeLayout.completed_desc" },
   { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorited games", labelKey: "homeLayout.favorites_label", descriptionKey: "homeLayout.favorites_desc", heroSourceId: "favorites" },
@@ -85,6 +87,7 @@ const DASHBOARD_SECTIONS: SectionMeta[] = [
 
 const DEFAULT_LIMITS: Record<string, number> = {
   "continue-playing": 12,
+  "play-next": 12,
   "in-progress": 12,
   "completed": 12,
   "favorites": 12,
