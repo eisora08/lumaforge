@@ -1,8 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../types/libraryGame";
 import { dedupeLibraryGames } from "./gameCacheService";
-
-const CACHE_KEY = "lumaforge-library-games-v3";
 
 type DetectedGamesCache = {
   savedAt: number;
@@ -134,13 +131,9 @@ export async function saveCachedGames(
   };
   inMemoryCache = cache;
 
-  // Write to both: library_cache (transitional) AND games_v2 (unified table)
-  // library_cache is kept for now but not read on boot — games_v2 is authoritative
+  // Write to games_v2 (unified table) — library_cache blob is deprecated and no longer read on boot
   try {
-    await Promise.all([
-      invoke("write_library_cache", { key: CACHE_KEY, value: JSON.stringify(cache) }).catch(() => {}),
-      seedGamesV2FromLibraryCache(deduped),
-    ]);
+    await seedGamesV2FromLibraryCache(deduped);
   } catch {
     // SQLite unavailable
   }

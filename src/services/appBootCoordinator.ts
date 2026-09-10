@@ -271,16 +271,13 @@ export async function runBootTasks(): Promise<void> {
                 // it wakes up, so hydrate MUST complete before _snapshotResolve().
                 if (_snapshotResolve) _snapshotResolve();
                 setBootPhaseLabel("critical-done");
-                logBoot("phase=critical-done");
-                await closeSplashscreenAndShowMainOnce();
+                logBoot("snapshot-resolved: data ready, splash deferred to stage 4.5");
                 emitEarlyShow();
-                logBoot("early-show: main window visible, boot continues in background");
               } else {
                 if (DEBUG_BOOT) console.log(`[BOOT][CACHE] snapshotFresh=false (no snapshot file)`);
-                // No snapshot — still show the window so the user sees an empty state
+                // No snapshot — resolve so LibraryGamesContext can proceed, splash deferred to stage 4.5
                 if (_snapshotResolve) _snapshotResolve();
                 setBootPhaseLabel("critical-done");
-                await closeSplashscreenAndShowMainOnce();
                 emitEarlyShow();
               }
             } catch {
@@ -758,6 +755,11 @@ export async function runBootTasks(): Promise<void> {
             }
             logBoot("reconcile lua games end");
           });
+
+          // Show main window now that reconcile is done and games_v2 is populated
+          await closeSplashscreenAndShowMainOnce();
+          emitEarlyShow();
+          logBoot("early-show: main window visible after reconcile");
 
           // Stage 4.6: Fetch Steam owned games (non-installed) on every boot
           await track("fetch-steam-owned-games", async () => {

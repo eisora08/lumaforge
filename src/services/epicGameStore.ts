@@ -356,9 +356,7 @@ async function enrichEpicGamesFromCatalog(games: LibraryGame[]): Promise<void> {
 
     // Persist any corrections so next boot loads full data instantly.
     notifyListeners();
-    persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch((err) =>
-      console.warn("[EPIC_STORE] enrich persist failed:", err),
-    );
+    schedulePersistEpicGames();
   } catch (err) {
     console.warn("[EPIC_STORE] catalog enrichment failed:", err);
   }
@@ -991,6 +989,19 @@ export function initOverrideSubscription(): void {
 const _overrideDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const OVERRIDE_DEBOUNCE_MS = 150;
 
+// Global debounce for persistEpicGamesToSqlite — coalesces all persist calls
+// during enrichment into a single write instead of O(N²) writes
+let _persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const PERSIST_DEBOUNCE_MS = 3000;
+
+function schedulePersistEpicGames(): void {
+  if (_persistDebounceTimer) clearTimeout(_persistDebounceTimer);
+  _persistDebounceTimer = setTimeout(() => {
+    _persistDebounceTimer = null;
+    persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
+  }, PERSIST_DEBOUNCE_MS);
+}
+
 function applyEpicOverridesUpdate(providerGameId: string): void {
   if (!EPIC_LIBRARY_ENABLED) return;
 
@@ -1037,7 +1048,7 @@ function _applyEpicOverridesUpdateInner(providerGameId: string): void {
     }
 
     // Re-persist to games_v2 so screenshots/movies survive app restart
-    persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
+    schedulePersistEpicGames();
 
     notifyListeners();
     return;
@@ -1067,5 +1078,5 @@ function _applyEpicOverridesUpdateInner(providerGameId: string): void {
   notifyListeners();
 
   // Re-persist to games_v2 so screenshots/movies survive app restart
-  persistEpicGamesToSqlite([..._epicGames, ..._ownedGames]).catch(() => {});
+  schedulePersistEpicGames();
 }

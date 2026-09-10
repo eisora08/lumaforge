@@ -1,6 +1,4 @@
   import {
-    readLibraryAppinfo,
-    updateLibraryAppinfoEntry,
     readLibraryGameDetails,
     getGameMediaCache,
     saveGameMediaCache,
@@ -39,17 +37,11 @@
 
   let _appInfoCache: LibraryAppInfoMap | null = null;
 
+  // DEPRECATED: library/appinfo.json is superseded by canonical per-game appinfo + games_v2.
+  // These functions return empty data — callers should migrate to gameCacheService.
   async function ensureAppInfoLoaded(): Promise<LibraryAppInfoMap> {
     if (_appInfoCache === null) {
-      try {
-        _appInfoCache = await readLibraryAppinfo();
-        if (ENABLE_VERBOSE_LIBRARY_CACHE_LOGS) {
-          const size = Object.keys(_appInfoCache).length;
-          console.log(`[LibraryCache] appinfo loaded (${size} entries)`);
-        }
-      } catch {
-        _appInfoCache = {};
-      }
+      _appInfoCache = {};
     }
     return _appInfoCache!;
   }
@@ -73,15 +65,10 @@
     appId: string,
     entry: LibraryAppInfoEntry
   ): Promise<boolean> {
-    try {
-      await updateLibraryAppinfoEntry(appId, entry);
-      if (_appInfoCache) {
-        _appInfoCache[appId] = entry;
-      }
-      return true;
-    } catch {
-      return false;
+    if (_appInfoCache) {
+      _appInfoCache[appId] = entry;
     }
+    return true;
   }
 
   // ---------------------------------------------------------------------------
