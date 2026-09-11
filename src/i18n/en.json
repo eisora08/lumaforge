@@ -1034,7 +1034,12 @@
     "source_web_search": "Web Search",
     "source_local_file": "Local File",
     "remove": "Remove",
-    "download": "Download"
+    "download": "Download",
+    "emulator_config": "Emulator Configuration",
+    "emulator": "Emulator",
+    "emulator_profile": "Profile",
+    "emulator_profile_default": "Default",
+    "emulator_config_not_found": "Configuration not found — select a different emulator"
   },
   "repack_install": {
     "title": "Install repack",

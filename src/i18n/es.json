@@ -1034,7 +1034,12 @@
     "source_web_search": "Búsqueda web",
     "source_local_file": "Archivo local",
     "remove": "Quitar",
-    "download": "Descargar"
+    "download": "Descargar",
+    "emulator_config": "Configuración del emulador",
+    "emulator": "Emulador",
+    "emulator_profile": "Perfil",
+    "emulator_profile_default": "Predeterminado",
+    "emulator_config_not_found": "Configuración no encontrada — selecciona otro emulador"
   },
   "repack_install": {
     "title": "Instalar repack",

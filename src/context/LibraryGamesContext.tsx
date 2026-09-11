@@ -494,7 +494,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           existing.landscapePath === game.landscapePath &&
           existing.backgroundPath === game.backgroundPath &&
           existing.logoPath === game.logoPath &&
-          existing.iconPath === game.iconPath
+          existing.iconPath === game.iconPath &&
+          existing.emulatorConfigId === game.emulatorConfigId &&
+          existing.emulatorProfileId === game.emulatorProfileId
         ) {
           stable.push(existing);
         } else {

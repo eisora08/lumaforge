@@ -218,7 +218,7 @@ export async function dispatchProviderLaunch(game: LibraryGame): Promise<LaunchD
         return { dispatched: false, error: "No matching emulator profile found" };
       }
 
-      const exePath = `${emulatorDir}\\${matchingBuiltin.startupExecutable.replace(/[\^$]/g, "")}`;
+      const exePath = `${emulatorDir}\\${matchingBuiltin.startupExecutable.replace(/[\^$]/g, "").replace(/\\(.)/g, "$1")}`;
       const argsString = expandArgs(matchingBuiltin.startupArguments);
 
       console.log("[EMULATOR_LAUNCH] dispatching", { exePath, argsString });

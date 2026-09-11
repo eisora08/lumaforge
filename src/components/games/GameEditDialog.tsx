@@ -45,6 +45,7 @@ import { updateDebridGamePath, updateDebridGameAppId, updateDebridGameTitle, get
 import GameImageSearchDialog from "./GameImageSearchDialog";
 import GameMediaRoleRow from "./GameMediaRoleRow";
 import { SourceOption } from "./GameMediaRoleRow";
+import SourceDropdown from "../common/SourceDropdown";
 
 // ── Constants ──
 
@@ -250,6 +251,10 @@ export default function GameEditDialog({
 
   // Linked IDs for manual games
   const [linkedIgdbIdDraft, setLinkedIgdbIdDraft] = useState<string | undefined>(undefined);
+
+  // Emulator config/profile drafts
+  const [draftEmulatorConfigId, setDraftEmulatorConfigId] = useState<string | undefined>(undefined);
+  const [draftEmulatorProfileId, setDraftEmulatorProfileId] = useState<string | undefined>(undefined);
 
   // Steam App ID draft (editable for manual/debrid, readonly for steam/epic/lua)
   const [appIdDraft, setAppIdDraft] = useState("");
@@ -533,6 +538,8 @@ export default function GameEditDialog({
           setGenresDraft(emulatorGame.genres?.join(", ") ?? "");
           setDescriptionDraft(emulatorGame.description ?? "");
           setReleaseDateDraft(emulatorGame.releaseDate ?? "");
+          setDraftEmulatorConfigId(emulatorGame.emulatorConfigId);
+          setDraftEmulatorProfileId(emulatorGame.emulatorProfileId);
           // Load IGDB screenshots/movies from persisted store
           if (emulatorGame.screenshots?.length || emulatorGame.movies?.length) {
             setMetadata({
@@ -1504,6 +1511,20 @@ export default function GameEditDialog({
           showSuccess(t("game_edit.save_success", "Game details saved"));
         }
 
+        // Installation tab fields (emulator config/profile)
+        if (activeTab === "installation" && existing) {
+          saveEmulatorGame({
+            ...existing,
+            emulatorConfigId: draftEmulatorConfigId,
+            emulatorProfileId: draftEmulatorProfileId,
+          });
+          updateGame(emulatorProviderGameId, {
+            emulatorConfigId: draftEmulatorConfigId,
+            emulatorProfileId: draftEmulatorProfileId,
+          } as Partial<LibraryGame>);
+          showSuccess(t("game_edit.save_success", "Game details saved"));
+        }
+
         setHasEdits(false);
         setSaving(false);
         return;
@@ -1608,7 +1629,7 @@ export default function GameEditDialog({
       showError(t("game_edit.save_failed", "Failed to save game details"));
     }
     setSaving(false);
-  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, emulatorProviderGameId, isManualMode, isEpicMode, isDebridMode, isEmulatorMode, isCreateMode, createdManualId, appInfo, game, activeTab, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, lastPlayedDraft, playtimeHoursDraft, playtimeMinutesDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged, metadata]);
+  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, emulatorProviderGameId, isManualMode, isEpicMode, isDebridMode, isEmulatorMode, isCreateMode, createdManualId, appInfo, game, activeTab, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, lastPlayedDraft, playtimeHoursDraft, playtimeMinutesDraft, updateDebridGameAppId, updateDebridGamePath, updateGame, onMediaChanged, metadata, draftEmulatorConfigId, draftEmulatorProfileId]);
 
   // ── Track edits ──
   useEffect(() => {
@@ -3296,6 +3317,37 @@ export default function GameEditDialog({
                 </button>
               )}
 
+              {/* ── Emulator Configuration (only for emulator games) ── */}
+              {isEmulatorMode && (
+                <div className="mt-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4 space-y-3">
+                  <h4 className="text-sm font-semibold text-(--color-text)">
+                    {t("game_edit.emulator_config", "Emulator Configuration")}
+                  </h4>
+
+                  {/* Emulator Config selector */}
+                  <EmulatorConfigSelector
+                    value={draftEmulatorConfigId}
+                    onChange={(v) => {
+                      setDraftEmulatorConfigId(v);
+                      setDraftEmulatorProfileId(undefined);
+                      setHasEdits(true);
+                    }}
+                  />
+
+                  {/* Profile selector (only if config is valid) */}
+                  {draftEmulatorConfigId && (
+                    <EmulatorProfileSelector
+                      configId={draftEmulatorConfigId}
+                      value={draftEmulatorProfileId}
+                      onChange={(v) => {
+                        setDraftEmulatorProfileId(v);
+                        setHasEdits(true);
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+
             </div>
           </>
         )}
@@ -3733,6 +3785,86 @@ function FieldRow({ label, value }: { label: string; value: string | null | unde
 }
 
 /* SourceOption is imported from GameMediaRoleRow */
+
+function EmulatorConfigSelector({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
+}) {
+  const { t } = useTranslation();
+  const [configs, setConfigs] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    import("../../services/emulatorConfigStore").then(({ getAllEmulatorConfigs }) => {
+      setConfigs(getAllEmulatorConfigs().map((c) => ({ id: c.id, name: c.name })));
+    });
+  }, []);
+
+  const configNotFound = value && !configs.some((c) => c.id === value);
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+        {t("game_edit.emulator", "Emulator")}
+      </label>
+      <SourceDropdown
+        portal
+        className="w-full"
+        value={value ?? ""}
+        onChange={(v) => onChange(v || undefined)}
+        options={[
+          { value: "", label: "—" },
+          ...configs.map((c) => ({ value: c.id, label: c.name })),
+        ]}
+      />
+      {configNotFound && (
+        <p className="mt-1 text-xs text-red-400">
+          {t("game_edit.emulator_config_not_found", "Configuration not found — select a different emulator")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function EmulatorProfileSelector({
+  configId,
+  value,
+  onChange,
+}: {
+  configId: string;
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
+}) {
+  const { t } = useTranslation();
+  const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    import("../../services/emulatorConfigStore").then(({ getEmulatorConfig }) => {
+      const config = getEmulatorConfig(configId);
+      setProfiles(config?.profiles.map((p) => ({ id: p.id, name: p.name })) ?? []);
+    });
+  }, [configId]);
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+        {t("game_edit.emulator_profile", "Profile")}
+      </label>
+      <SourceDropdown
+        portal
+        className="w-full"
+        value={value ?? ""}
+        onChange={(v) => onChange(v || undefined)}
+        options={[
+          { value: "", label: t("game_edit.emulator_profile_default", "Default") },
+          ...profiles.map((p) => ({ value: p.id, label: p.name })),
+        ]}
+      />
+    </div>
+  );
+}
 
 function formatBytes(bytes?: number): string {
   if (bytes == null) return "Unknown";
