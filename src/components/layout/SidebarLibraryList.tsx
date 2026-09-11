@@ -53,7 +53,7 @@ import { SkeletonBox } from "../common/Skeleton";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
-import { useCollectionSubmenuItems } from "../common/CollectionMenuItems";
+import { useCollectionSubmenuItems, useRemoveFromCollectionSubmenuItems } from "../common/CollectionMenuItems";
 import GameEditDialog from "../games/GameEditDialog";
 import GameScannerModal from "../games/GameScannerModal";
 import type { ScannedProgram } from "../games/GameScannerModal";
@@ -211,6 +211,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const { isFavorite, toggleFavorite } = useFavorites();
   const { isInQueue, toggleQueue } = usePlayQueue();
   const collectionSubmenuItems = useCollectionSubmenuItems(menuGame?.id, handleMenuClose);
+  const removeFromCollectionItems = useRemoveFromCollectionSubmenuItems(menuGame?.id, handleMenuClose);
   const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
@@ -1140,6 +1141,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 icon={<FolderOpen className="h-3.5 w-3.5" />}
                 children={collectionSubmenuItems}
               />
+              {removeFromCollectionItems.length > 0 && (
+                <MenuItem
+                  label={t("context_menu.remove_from_collection", "Remove from Collection")}
+                  icon={<X className="h-3.5 w-3.5" />}
+                  children={removeFromCollectionItems}
+                />
+              )}
               {menuGame.appId && menuGame.source !== "epic" && menuGame.source !== "debrid" && menuGame.source !== "lua" && (
                 <MenuItem
                   label={t("context_menu.open_steam")}

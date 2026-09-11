@@ -1512,11 +1512,11 @@ html {
 ========================= */
 
 .lf-press-effect {
-  transition: transform 100ms ease;
+  transition: opacity 100ms ease;
 }
 
 .lf-press-effect:active {
-  transform: scale(0.98);
+  opacity: 0.85 !important;
 }
 
 /* =========================

@@ -39,7 +39,7 @@ import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import Tooltip from "../common/Tooltip";
 import CardActionMenu, { MenuItem } from "./CardActionMenu";
-import { useCollectionSubmenuItems } from "../common/CollectionMenuItems";
+import { useCollectionSubmenuItems, useRemoveFromCollectionSubmenuItems } from "../common/CollectionMenuItems";
 import { SkeletonBox } from "../common/Skeleton";
 import {
   isHttpUrl,
@@ -197,6 +197,10 @@ function GameLauncherTileInner({
   const inQueue = isInQueue(game.id);
   const closeMenu = useCallback(() => { setMenuOpen(false); setContextMenuPos(null); }, []);
   const collectionSubmenuItems = useCollectionSubmenuItems(game.id, closeMenu);
+  const removeFromCollectionItems = useRemoveFromCollectionSubmenuItems(
+    game.id,
+    closeMenu,
+  );
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -815,6 +819,13 @@ function GameLauncherTileInner({
               icon={<FolderOpen className="h-3.5 w-3.5" />}
               children={collectionSubmenuItems}
             />
+            {removeFromCollectionItems.length > 0 && (
+              <MenuItem
+                label={t("context_menu.remove_from_collection", "Remove from Collection")}
+                icon={<X className="h-3.5 w-3.5" />}
+                children={removeFromCollectionItems}
+              />
+            )}
             {game.appId && game.source !== "epic" && game.source !== "debrid" && game.source !== "lua" && (
               <MenuItem
                 label={t("context_menu.open_steam", "Open in Steam")}

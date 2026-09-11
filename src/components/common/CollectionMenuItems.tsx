@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { FolderPlus, Check } from "lucide-react";
+import { FolderPlus, Check, X } from "lucide-react";
 import { useCollections } from "../../context/CollectionsContext";
 import type { Collection } from "../../services/tauri";
 import type { MenuItemProps } from "../games/CardActionMenu";
@@ -187,4 +187,33 @@ function DropdownItem({
       <span>{label}</span>
     </button>
   );
+}
+
+/**
+ * Hook that builds a submenu list of collections a game belongs to,
+ * for removal. Returns MenuItemProps[] suitable for passing as
+ * `children` to a CardActionMenu MenuItem.
+ *
+ * Must be called unconditionally at the component top level.
+ * Pass `gameId` = null to get an empty list.
+ */
+export function useRemoveFromCollectionSubmenuItems(
+  gameId: string | null | undefined,
+  onAfterAction?: () => void,
+): MenuItemProps[] {
+  const { getCollectionsForGame, removeFromCollection } = useCollections();
+
+  if (!gameId) return [];
+
+  const collections = getCollectionsForGame(gameId);
+  if (collections.length === 0) return [];
+
+  return collections.map((col) => ({
+    label: col.name,
+    icon: <X className="h-3.5 w-3.5" />,
+    onClick: () => {
+      removeFromCollection(col.id, gameId);
+      onAfterAction?.();
+    },
+  }));
 }
