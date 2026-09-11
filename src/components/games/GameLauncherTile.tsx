@@ -11,7 +11,9 @@ import {
   Gamepad2,
   HardDrive,
   Heart,
+  Key,
   Loader2,
+  Pin,
   Play,
   RefreshCw,
   Settings,
@@ -24,6 +26,7 @@ import {
   Check,
   Circle,
   ListPlus,
+  Unlock,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -203,6 +206,16 @@ function GameLauncherTileInner({
   );
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
+  const [hasPins, setHasPins] = useState(false);
+
+  // Check pin status when menu opens
+  useEffect(() => {
+    if (menuOpen && game.appId) {
+      import("../../services/steamKeysService").then(({ steamKeysHasPins }) => {
+        steamKeysHasPins(Number(game.appId)).then(setHasPins).catch(() => setHasPins(false));
+      });
+    }
+  }, [menuOpen, game.appId]);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
   const hasRequestedData = useRef(false);
   // Request game data via priority system when card enters viewport
@@ -982,6 +995,109 @@ function GameLauncherTileInner({
                       onClick: () => { setMenuOpen(false); setDepotModalOpen(true); onOverlayToggle?.(true); },
                     }]
                   : []),
+                  ...(game.appId && game.source !== "epic" && game.source !== "debrid"
+                    ? [{
+                        label: t("context_menu.steam_keys", "Steam Keys"),
+                        icon: <Key className="h-3.5 w-3.5" />,
+                        children: [
+                          {
+                            label: t("context_menu.generate_lua", "Generate Lua"),
+                            icon: <FileText className="h-3.5 w-3.5" />,
+                            onClick: async () => {
+                              setMenuOpen(false);
+                              try {
+                                const { steamKeysGenerateLua } = await import("../../services/steamKeysService");
+                                const result = await steamKeysGenerateLua({ app_id: Number(game.appId) });
+                                if (result.success) {
+                                  showSuccess(result.message);
+                                } else {
+                                  showError(result.message);
+                                }
+                              } catch (err) {
+                                showError(`${t("context_menu.generate_lua_error", "Error generating Lua")}: ${err}`);
+                              }
+                            },
+                          },
+                          {
+                            label: t("context_menu.fetch_manifests", "Fetch Manifests"),
+                            icon: <Download className="h-3.5 w-3.5" />,
+                            onClick: async () => {
+                              setMenuOpen(false);
+                              try {
+                                const { steamKeysFetchManifests } = await import("../../services/steamKeysService");
+                                const result = await steamKeysFetchManifests({ app_id: Number(game.appId) });
+                                if (result.success) {
+                                  showSuccess(result.message);
+                                } else {
+                                  showError(result.message);
+                                }
+                              } catch (err) {
+                                showError(`${t("context_menu.fetch_manifests_error", "Error fetching manifests")}: ${err}`);
+                              }
+                            },
+                          },
+                          {
+                            label: t("context_menu.query_dlcs", "Query DLCs"),
+                            icon: <ListPlus className="h-3.5 w-3.5" />,
+                            onClick: async () => {
+                              setMenuOpen(false);
+                              try {
+                                const { steamKeysQueryDlcs } = await import("../../services/steamKeysService");
+                                const dlcs = await steamKeysQueryDlcs(Number(game.appId));
+                                const message = dlcs.length > 0
+                                  ? t("context_menu.dlcs_found", "Found {{count}} DLCs", { count: dlcs.length })
+                                  : t("context_menu.no_dlcs", "No DLCs found");
+                                showInfo(message);
+                              } catch (err) {
+                                showError(`${t("context_menu.query_dlcs_error", "Error querying DLCs")}: ${err}`);
+                              }
+                            },
+                          },
+                          {
+                            label: t("context_menu.separator", "───────────"),
+                            onClick: () => {},
+                          },
+                          ...(hasPins
+                            ? [{
+                                label: t("context_menu.unpin", "Unpin"),
+                                icon: <Unlock className="h-3.5 w-3.5" />,
+                                onClick: async () => {
+                                  setMenuOpen(false);
+                                  try {
+                                    const { steamKeysUnpinAll } = await import("../../services/steamKeysService");
+                                    const result = await steamKeysUnpinAll({ app_id: Number(game.appId) });
+                                    if (result.success) {
+                                      showSuccess(result.message);
+                                    } else {
+                                      showError(result.message);
+                                    }
+                                  } catch (err) {
+                                    showError(`${t("context_menu.unpin_error", "Error unpinning manifests")}: ${err}`);
+                                  }
+                                },
+                              }]
+                            : [{
+                                label: t("context_menu.pin_to_current", "Pin to Current Version"),
+                                icon: <Pin className="h-3.5 w-3.5" />,
+                                onClick: async () => {
+                                  setMenuOpen(false);
+                                  try {
+                                    const { steamKeysPinToCurrent } = await import("../../services/steamKeysService");
+                                    const result = await steamKeysPinToCurrent({ app_id: Number(game.appId) });
+                                    if (result.success) {
+                                      showSuccess(result.message);
+                                    } else {
+                                      showError(result.message);
+                                    }
+                                  } catch (err) {
+                                    showError(`${t("context_menu.pin_error", "Error pinning manifests")}: ${err}`);
+                                  }
+                                },
+                              }]
+                          ),
+                        ],
+                      }]
+                    : []),
                     ...(game.source === "manual"
                     ? [{
                         label: t("context_menu.delete_manual", "Delete Manual Game"),

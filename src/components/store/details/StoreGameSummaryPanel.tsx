@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import AsyncImage from "../../common/AsyncImage";
 import HubcapProviderBadges from "../../settings/HubcapProviderBadges";
+import { useSettings } from "../../../context/SettingsContext";
 import {
   CheckCircle2,
   Database,
@@ -284,6 +285,8 @@ export default function StoreGameSummaryPanel({
 }: StoreGameSummaryPanelProps) {
   const { t } = useTranslation();
   const { getJobByAppId } = useDownloadQueueContext();
+  const { settings, updateSetting } = useSettings();
+  const [autoFetchManifests, setAutoFetchManifests] = useState(settings.steamKeysAutoFetchManifests);
   const isChecking = (sourceStatus === "checking" || sourceStatus === "idle") && !isBackgroundChecking;
   const isReady = sourceStatus === "ready" || availableSources > 0;
   const isNone = sourceStatus === "none" && availableSources === 0;
@@ -704,6 +707,23 @@ export default function StoreGameSummaryPanel({
 
         {/* Primary action button */}
         <div className="space-y-2">
+          {/* Steam Keys auto-fetch manifests checkbox */}
+          {selectedSource?.providerId === "steamkeys" && (
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10">
+              <input
+                type="checkbox"
+                checked={autoFetchManifests}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setAutoFetchManifests(checked);
+                  updateSetting("steamKeysAutoFetchManifests", checked);
+                }}
+                className="h-3.5 w-3.5 rounded border-(--surface-active-border) bg-(--surface-bg) accent-(--color-accent)"
+              />
+              {t("store.summary.steam_keys_auto_fetch", "Auto-fetch manifests")}
+            </label>
+          )}
+
           <button
             type="button"
             disabled={!buttonConfig.enabled}

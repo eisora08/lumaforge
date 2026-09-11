@@ -28,6 +28,8 @@ export const defaultSettings: AppSettings = {
 
   providers: defaultProviderSettings,
 
+  steamKeysAutoFetchManifests: true,
+
   steamRoot: "",
   luaPath: "",
   depotcachePath: "",

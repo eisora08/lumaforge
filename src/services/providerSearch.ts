@@ -155,6 +155,28 @@ async function searchRealProviderAvailability(
     const downloadUrl = buildProviderDownloadUrl(provider, appId, settings, fileType);
     const authHeaders = buildProviderAuthHeaders(provider, settings);
 
+    // Steam Keys: always available, no HTTP check needed (uses local Tauri commands)
+    if (provider.id === "steamkeys") {
+      skipSources.push({
+        providerId: "steamkeys",
+        providerName: provider.name,
+        fileType: "lua",
+        available: true,
+        checkedAt: new Date().toISOString(),
+        requiresApiKey: false,
+        authType: "none",
+        hasAuth: false,
+      });
+      skipReports.push({
+        providerId: "steamkeys",
+        providerName: provider.name,
+        status: "found",
+        resultCount: 1,
+        message: "Steam Keys (local)",
+      });
+      continue;
+    }
+
     if (!availabilityUrl) {
       console.log(`[PROVIDER][DISCOVERY_SKIP] appid=${appId} provider=${provider.id} reason=no-availability-url`);
       logResolution(`skip appid=${appId} provider=${provider.id} reason=no-availability-url`);

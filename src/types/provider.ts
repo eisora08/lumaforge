@@ -2,7 +2,8 @@ export type ApiProviderId =
   | "hubcapdb"
   | "ryuu"
   | "custom"
-  | "repack";
+  | "repack"
+  | "steamkeys";
 
 export type ProviderCapability =
   | "search"

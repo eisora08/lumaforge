@@ -59,3 +59,4 @@ pub mod crack_achievements;
 pub mod launcher_achievements;
 pub mod web_image_search;
 pub mod depot_downloader;
+pub mod steam_keys;

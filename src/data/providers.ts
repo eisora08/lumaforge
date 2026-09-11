@@ -98,6 +98,31 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
 
     supportedFileTypes: ["zip", "lua", "manifest"],
   },
+  {
+    id: "steamkeys",
+    name: "Steam Keys",
+    description:
+      "Proveedor nativo para DLC Query, Pin Version y Fetch Manifest desde GitHub.",
+    baseUrl: "https://github.com/P-ToyStore/SteamManifestCache_Pro",
+
+    downloadUrlTemplate: "",
+
+    enabledByDefault: true,
+    requiresApiKey: false,
+
+    authType: "none",
+
+    successCode: 200,
+    unavailableCode: 404,
+
+    capabilities: [
+      "availability-check",
+      "download-lua",
+      "download-manifest",
+    ],
+
+    supportedFileTypes: ["lua", "manifest"],
+  },
 ];
 
 export const defaultProviderSettings: Record<
@@ -122,6 +147,11 @@ export const defaultProviderSettings: Record<
   repack: {
     enabled: false,
     baseUrl: "",
+    apiKey: "",
+  },
+  steamkeys: {
+    enabled: true,
+    baseUrl: "https://github.com/P-ToyStore/SteamManifestCache_Pro",
     apiKey: "",
   },
 };

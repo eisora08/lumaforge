@@ -7,6 +7,11 @@ import type { AppSettings } from "../../types/settings";
 import type { PackageGame, PackageSource } from "../../types/package";
 import type { DownloadJob } from "../../types/download";
 import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabilityCacheService";
+import {
+  steamKeysEnsureCache,
+  steamKeysGenerateLua,
+  steamKeysFetchManifests,
+} from "../../services/steamKeysService";
 
 export type DownloadFromSourceDeps = {
   settings: AppSettings;
@@ -51,6 +56,67 @@ export async function downloadFromSource(
       title: i18next.t("download_from_source.source_required_title"),
     });
     return { success: false, error: "source-not-available" };
+  }
+
+  // Steam Keys: local Tauri commands, no HTTP download
+  if (source.providerId === "steamkeys") {
+    const job = addJob({
+      appId: game.appId,
+      gameTitle: game.title,
+      providerId: "steamkeys",
+      providerName: "Steam Keys",
+      fileType: "lua",
+      downloadUrl: "local://steamkeys",
+    });
+
+    try {
+      // Step 1: Ensure depot keys cache is ready
+      updateJob(job.id, { status: "waiting", progress: 10 });
+      await steamKeysEnsureCache();
+
+      // Step 2: Generate Lua file
+      updateJob(job.id, { status: "installing", progress: 30 });
+      const luaResult = await steamKeysGenerateLua({ app_id: Number(game.appId) });
+      if (!luaResult.success) {
+        throw new Error(luaResult.message);
+      }
+
+      // Step 3: Auto-fetch manifests if enabled
+      if (settings.steamKeysAutoFetchManifests) {
+        updateJob(job.id, { status: "installing", progress: 60 });
+        const manifestResult = await steamKeysFetchManifests({ app_id: Number(game.appId) });
+        if (!manifestResult.success) {
+          console.warn(`[STEAM_KEYS][MANIFEST_WARN] appid=${game.appId} message="${manifestResult.message}"`);
+        }
+      }
+
+      if (!mountedRef.current) {
+        return { success: false, error: "unmounted" };
+      }
+
+      updateJob(job.id, { status: "done", progress: 100 });
+
+      if (refreshInstalledScripts) {
+        refreshInstalledScripts();
+      }
+
+      await saveProviderStatusAfterInstall(game.appId, "steamkeys", undefined, {
+        luaDir: settings.luaPath || undefined,
+        steamRoot: settings.steamRoot || undefined,
+      });
+
+      libraryRefresh().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[LIBRARY][GAME_UPSERT] appid=${game.appId} error="${msg}"`);
+      });
+
+      return { success: true, jobId: job.id };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      updateJob(job.id, { status: "failed", progress: 0, error: message });
+      showError(message, { title: i18next.t("download_from_source.install_failed_title") });
+      return { success: false, error: message };
+    }
   }
 
   if (!source.downloadUrl) {

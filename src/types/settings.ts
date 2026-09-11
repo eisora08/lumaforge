@@ -9,6 +9,8 @@ export type AppSettings = {
 
   providers: Record<ApiProviderId, ApiProviderUserSettings>;
 
+  steamKeysAutoFetchManifests: boolean;
+
   steamRoot: string;
   luaPath: string;
   depotcachePath: string;

@@ -73,6 +73,67 @@ pub fn try_read_manifest(path: &Path) -> Option<ManifestInfo> {
     None
 }
 
+/// Try to parse manifest metadata from an in-memory byte slice.
+/// This is used to validate downloaded manifest bytes without writing to disk first.
+pub fn try_read_manifest_bytes(data: &[u8]) -> Option<ManifestInfo> {
+    if data.len() < 16 {
+        return None;
+    }
+
+    // Check for ZIP header
+    if data[0] == b'P' && data[1] == b'K' {
+        // ZIP-wrapped: try to parse as zip in-memory
+        let cursor = std::io::Cursor::new(data);
+        if let Ok(mut archive) = zip::ZipArchive::new(cursor) {
+            for i in 0..archive.len() {
+                if let Ok(mut entry) = archive.by_index(i) {
+                    let name = entry.name().to_string();
+                    if name.contains("metadata") || i == 0 {
+                        let mut buf = Vec::new();
+                        if entry.read_to_end(&mut buf).is_ok() {
+                            return parse_metadata(&buf);
+                        }
+                    }
+                }
+            }
+        }
+        return None;
+    }
+
+    // Scan for metadata section in raw bytes
+    let mut offset = 0;
+    while offset + 8 <= data.len() {
+        let magic = u32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+        ]);
+        let len = u32::from_le_bytes([
+            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+        ]) as usize;
+
+        offset += 8;
+
+        if magic == MAGIC_EOF {
+            break;
+        }
+
+        if len > 10 * 1024 * 1024 {
+            break;
+        }
+
+        if offset + len > data.len() {
+            break;
+        }
+
+        if magic == MAGIC_METADATA {
+            return parse_metadata(&data[offset..offset + len]);
+        }
+
+        offset += len;
+    }
+
+    None
+}
+
 /// Try to read a ZIP-wrapped manifest.
 fn try_read_zipped_manifest(path: &Path) -> Option<ManifestInfo> {
     let file = std::fs::File::open(path).ok()?;

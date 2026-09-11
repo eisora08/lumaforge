@@ -18,6 +18,7 @@ import {
   Gamepad2,
   Cog,
   Database,
+  Key,
   Library,
   Power,
   ExternalLink,
@@ -1220,6 +1221,39 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   </div>
                 </SettingsSection>
                 <IntegrationsSection />
+
+                <SettingsSection
+                  title={t("settings.steam_keys_management")}
+                  description={t("settings.steam_keys_management_desc")}
+                >
+                  <div className="space-y-4">
+                    <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
+                      <Key className="h-4 w-4" />
+                      {t("settings.steam_keys_management_icon")}
+                    </div>
+                    <p className="text-xs text-(--color-muted)">
+                      {t("settings.steam_keys_management_note")}
+                    </p>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const { steamKeysUnpinAll } = await import("../services/steamKeysService");
+                          const result = await steamKeysUnpinAll({ app_id: 0 });
+                          if (result.success) {
+                            showSuccess(result.message);
+                          } else {
+                            showError(result.message);
+                          }
+                        } catch (err) {
+                          showError(`${t("settings.unpin_all_error", "Error unpinning all manifests")}: ${err}`);
+                        }
+                      }}
+                      className="rounded-lg bg-red-500/10 px-4 py-2 text-sm text-red-400 hover:bg-red-500/20 transition-colors"
+                    >
+                      {t("settings.unpin_all", "Unpin All Manifests")}
+                    </button>
+                  </div>
+                </SettingsSection>
               </>
             )}
 
