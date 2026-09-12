@@ -2850,7 +2850,7 @@ export default function LibraryGameDetails({
                 removeDebridGameFromLibrary(providerGameId);
                 showSuccess(t("library_details.toast.removedFromLibrary", { title: game.title ?? providerGameId }));
               }} />
-            ) : game.steamInstalled && game.source !== "epic" && game.source !== "lua" ? (
+            ) : game.steamInstalled && game.source !== "epic" && game.source !== "lua" && game.source !== "emulator" ? (
               <DropdownItem label={t("library_details.actions.uninstallInSteam")} onClick={async () => {
                 setShowActions(false);
                 const appIdNum = Number(game.appId);
@@ -2862,7 +2862,7 @@ export default function LibraryGameDetails({
             {(script || game.hasLua) && onDeleteScript && (
               <DropdownItem label={t("library_details.actions.deleteLua")} onClick={() => { setShowActions(false); onDeleteScript(game); }} />
             )}
-            {(!(script || game.hasLua) || !onDeleteScript) && (
+            {(!(script || game.hasLua) || !onDeleteScript) && (game.source === "steam" || game.source === "lua") && (
               <DropdownItem label={t("library_details.actions.deleteLua")} disabled={!(script || game.hasLua)} subtitle={!(script || game.hasLua) ? t("library_details.noLuaScript") : undefined} />
             )}
             <div className="border-t border-(--surface-active-border) my-1" />
@@ -2875,7 +2875,7 @@ export default function LibraryGameDetails({
                   setUninstallDialogOpen(true);
                 }} />
             )}
-            {game.source === "lua" && game.appId && game.installDir && (
+            {game.source === "lua" && game.appId && game.installDir && !getDepotManifests(game.appId)?.destDir && (
               <DropdownItem label={t("library_details.actions.removeFromLibrary")} destructive
                 onClick={() => {
                   setShowActions(false);

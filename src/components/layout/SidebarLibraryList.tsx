@@ -64,6 +64,8 @@ import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts, deleteDirectory, deleteGameV2, updateCompletionStatusV2 } from "../../services/tauri";
+import { getDepotManifests, removeDepotInstallInfo } from "../../services/depotUpdateStore";
+import { setStandalone } from "../../services/standaloneStore";
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey, detectAndQueueMissingMedia } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
@@ -1377,7 +1379,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                           showSuccess(t("sidebar.debrid_removed", { title: menuGame.title ?? providerGameId }));
                         },
                       }]
-                    : menuGame.source !== "manual" && menuGame.source !== "epic" && menuGame.source !== "lua"
+                    : menuGame.source !== "manual" && menuGame.source !== "epic" && menuGame.source !== "lua" && menuGame.source !== "emulator"
                       ? [{
                         label: t("context_menu.uninstall_steam"),
                         icon: <ExternalLink className="h-3.5 w-3.5" />,
@@ -1411,6 +1413,34 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                       icon: <X className="h-3.5 w-3.5" />,
                       destructive: true as const,
                       onClick: () => { handleMenuClose(); handleDeleteScript(menuGame); },
+                    }]
+                    : []),
+                  ...(menuGame.appId && getDepotManifests(menuGame.appId)?.destDir
+                    ? [{
+                      label: t("context_menu.uninstall_depot", "Uninstall Depot Files"),
+                      icon: <Trash2 className="h-3.5 w-3.5" />,
+                      destructive: true as const,
+                      onClick: async () => {
+                        handleMenuClose();
+                        const depotInfo = getDepotManifests(menuGame.appId!);
+                        if (!depotInfo?.destDir) return;
+                        const result = await confirm({
+                          title: t("context_menu.uninstall_depot", "Uninstall Depot Files"),
+                          description: t("context_menu.uninstall_depot_confirm", { defaultValue: `This will permanently delete all downloaded depot files at:\n${depotInfo.destDir}\n\nThis action cannot be undone.`, destDir: depotInfo.destDir }),
+                          confirmLabel: t("context_menu.delete_files", "Delete Files"),
+                          variant: "danger",
+                        });
+                        if (!result.confirmed) return;
+                        try {
+                          await deleteDirectory(depotInfo.destDir);
+                          removeDepotInstallInfo(menuGame.appId!);
+                          setStandalone(menuGame.appId!, false);
+                          showSuccess(t("context_menu.depot_uninstalled", { defaultValue: "Depot files deleted.", title: menuGame.title }));
+                          window.dispatchEvent(new CustomEvent("lumaforge-lua-changed"));
+                        } catch (err) {
+                          showError(String(err), { title: t("sidebar.error") });
+                        }
+                      },
                     }]
                     : []),
                 ]}
