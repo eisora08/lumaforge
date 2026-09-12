@@ -4921,6 +4921,11 @@ export async function libraryUnfixCatalogFix(params: {
 // Third-party tools (src-tauri/commands/thirdparty.rs)
 // ---------------------------------------------------------------------------
 
+export type ThirdPartyToolVariantInfo = {
+  id: string;
+  name: string;
+};
+
 export type ThirdPartyToolInfo = {
   id: string;
   name: string;
@@ -4934,6 +4939,10 @@ export type ThirdPartyToolInfo = {
   installPath: string | null;
   /** Only present for tools with `install_to_steam_root` (e.g. OpenSteamTool). */
   enabled?: boolean;
+  /** Available variants (only for tools with `variants`). */
+  variants?: ThirdPartyToolVariantInfo[];
+  /** Currently selected variant id. */
+  selectedVariant?: string | null;
 };
 
 export type ThirdPartyToolResult = {
@@ -4969,7 +4978,11 @@ export async function setThirdPartyToolEnabled(toolId: string, enabled: boolean,
 }
 
 export async function openThirdPartyFolder(): Promise<void> {
-  await invoke<void>("open_thirdparty_folder");
+  return await invoke<void>("open_thirdparty_folder");
+}
+
+export async function setThirdPartyToolVariant(toolId: string, variantId: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("set_thirdparty_tool_variant", { toolId, variantId });
 }
 
 export type GenerateSchemaResult = {

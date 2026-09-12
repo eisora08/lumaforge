@@ -12,3 +12,6 @@ pub mod dlc_resolver;
 pub mod config_vdf_parser;
 pub mod manifest_parser;
 pub mod steamcmd_api;
+pub mod cloud_redirect;
+pub mod cloud_config;
+pub mod oauth2;

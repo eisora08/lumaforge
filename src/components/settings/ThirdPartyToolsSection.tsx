@@ -12,6 +12,7 @@ import {
   HardDrive,
   Code,
   Download,
+  Cloud,
 } from "lucide-react";
 
 import {
@@ -21,11 +22,14 @@ import {
   checkThirdPartyUpdates,
   updateThirdPartyTool,
   setThirdPartyToolEnabled,
+  setThirdPartyToolVariant,
   openThirdPartyFolder,
+  terminateProcessByName,
   ThirdPartyToolInfo,
 } from "../../services/tauri";
 import { showSuccess, showError } from "../toast/GameToast";
 import { useSettings } from "../../context/SettingsContext";
+import { useConfirm } from "../../services/confirmService";
 
 function toolIcon(id: string): React.ReactNode {
   switch (id) {
@@ -39,19 +43,50 @@ function toolIcon(id: string): React.ReactNode {
       return <Code className="h-5 w-5" />;
     case "depotdownloader":
       return <Download className="h-5 w-5" />;
+    case "cloud_redirect":
+      return <Cloud className="h-5 w-5" />;
     default:
       return <HardDrive className="h-5 w-5" />;
   }
 }
 
+const STEAM_LOCKED_MESSAGES = ["steam_running", "os error 32", "os error 33", "being used by another process"];
+
+function isSteamLockedError(err: unknown): boolean {
+  const msg = String(err);
+  return STEAM_LOCKED_MESSAGES.some((m) => msg.includes(m));
+}
+
 export default function ThirdPartyToolsSection() {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const { confirm } = useConfirm();
   const [tools, setTools] = useState<ThirdPartyToolInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [workingAction, setWorkingAction] = useState<"install" | "uninstall" | "update" | "toggle">("install");
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+
+  const withSteamCloseRetry = useCallback(
+    async <T,>(operation: () => Promise<T>): Promise<T> => {
+      try {
+        return await operation();
+      } catch (err) {
+        if (!isSteamLockedError(err)) throw err;
+        const result = await confirm({
+          title: t("tools_section.steam_locked_title"),
+          description: t("tools_section.steam_locked_desc"),
+          confirmLabel: t("tools_section.steam_locked_confirm"),
+          variant: "danger",
+        });
+        if (!result.confirmed) throw err;
+        await terminateProcessByName("steam.exe");
+        await new Promise((r) => setTimeout(r, 2000));
+        return await operation();
+      }
+    },
+    [confirm, t],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,48 +109,66 @@ export default function ThirdPartyToolsSection() {
     setWorkingAction("install");
     try {
       const steamRoot = settings.steamRoot || undefined;
-      const res = await installThirdPartyTool(toolId, steamRoot);
+      const res = await withSteamCloseRetry(() => installThirdPartyTool(toolId, steamRoot));
       if (res.ok) showSuccess(res.message || t("tools_section.install_ok"));
       else showError(res.message || t("tools_section.install_fail"));
     } catch (err) {
+      if (isSteamLockedError(err)) return; // user declined — no error toast
       showError(t("tools_section.error_install", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setWorkingId(null);
       load();
     }
-  }, [load, settings.steamRoot]);
+  }, [load, settings.steamRoot, withSteamCloseRetry]);
 
   const handleUninstall = useCallback(async (toolId: string) => {
     setWorkingId(toolId);
     setWorkingAction("uninstall");
     try {
       const steamRoot = settings.steamRoot || undefined;
-      const res = await uninstallThirdPartyTool(toolId, steamRoot);
+      const res = await withSteamCloseRetry(() => uninstallThirdPartyTool(toolId, steamRoot));
       if (res.ok) showSuccess(res.message || t("tools_section.uninstall_ok"));
       else showError(res.message || t("tools_section.uninstall_fail"));
     } catch (err) {
+      if (isSteamLockedError(err)) return;
       showError(t("tools_section.error_uninstall", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setWorkingId(null);
       load();
     }
-  }, [load, settings.steamRoot]);
+  }, [load, settings.steamRoot, withSteamCloseRetry]);
 
   const handleToggle = useCallback(async (toolId: string, currentEnabled: boolean) => {
     setWorkingId(toolId);
     setWorkingAction("toggle");
     try {
       const steamRoot = settings.steamRoot || undefined;
-      const res = await setThirdPartyToolEnabled(toolId, !currentEnabled, steamRoot);
+      const res = await withSteamCloseRetry(() => setThirdPartyToolEnabled(toolId, !currentEnabled, steamRoot));
       if (res.ok) showSuccess(res.message || t("tools_section.toggle_ok"));
       else showError(res.message || t("tools_section.toggle_fail"));
     } catch (err) {
+      if (isSteamLockedError(err)) return;
       showError(t("tools_section.error_toggle", { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setWorkingId(null);
       load();
     }
   }, [load, settings.steamRoot]);
+
+  const handleVariantChange = useCallback(async (toolId: string, variantId: string) => {
+    setWorkingId(toolId);
+    setWorkingAction("toggle");
+    try {
+      const res = await setThirdPartyToolVariant(toolId, variantId);
+      if (res.ok) showSuccess(res.message);
+      else showError(res.message);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkingId(null);
+      load();
+    }
+  }, [load]);
 
   const handleUpdateAll = useCallback(async () => {
     setCheckingUpdates(true);
@@ -238,6 +291,28 @@ export default function ThirdPartyToolsSection() {
                       </span>
                     )}
                   </div>
+                  {tool.variants && tool.variants.length > 0 && (
+                    <div className="mt-2 flex gap-1 rounded-lg bg-white/5 p-0.5">
+                      {tool.variants.map((v) => {
+                        const isSelected = (tool.selectedVariant ?? "original") === v.id;
+                        return (
+                          <button
+                            key={v.id}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleVariantChange(tool.id, v.id)}
+                            className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                              isSelected
+                                ? "bg-(--color-accent) text-white"
+                                : "text-(--color-muted) hover:text-(--color-text)"
+                            } disabled:opacity-50`}
+                          >
+                            {v.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   <p className="mt-1 line-clamp-2 text-xs text-(--color-muted)">{tool.description}</p>
                   {!tool.installed && tool.latestVersion && (
                     <p className="mt-0.5 text-[11px] text-(--color-muted)">

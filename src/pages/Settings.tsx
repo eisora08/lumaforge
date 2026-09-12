@@ -2,6 +2,7 @@ import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 
 import ThirdPartyToolsSection from "../components/settings/ThirdPartyToolsSection";
+import CloudSyncSection from "../components/settings/CloudSyncSection";
 import { EpicAuthPanel } from "../features/epic/EpicAuthPanel";
 import { setAmbientEnabled, setAmbientIntensity, setAmbientMode, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
 import { setHeroTransition, subscribeHeroTransition, getHeroTransitionSnapshot, HERO_TRANSITION_OPTIONS } from "../services/heroTransitionStore";
@@ -975,6 +976,12 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       {t("settings.backup_description")}
                     </p>
                   </div>
+                </SettingsSection>
+                <SettingsSection
+                  title={t("settings.cloud_sync_title", "Cloud & Sync")}
+                  description={t("settings.cloud_sync_desc", "Configure cloud save synchronization")}
+                >
+                  <CloudSyncSection />
                 </SettingsSection>
                 <SettingsSection
                   title={t("settings.backup_local")}

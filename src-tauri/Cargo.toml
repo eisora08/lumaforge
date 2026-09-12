@@ -65,6 +65,8 @@ fs2 = "0.4"
 anyhow = "1"
 regex = "1"
 flate2 = "1.0"
+ureq = { version = "2", features = ["json"] }
+libloading = "0.8"
 
 windows = { version = "0.57", features = [
     "Win32_System_Com",

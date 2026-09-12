@@ -20,6 +20,16 @@ const APP_USER_AGENT: &str = concat!(
 );
 
 // ---------------------------------------------------------------------------
+// File-lock detection
+// ---------------------------------------------------------------------------
+
+/// Check if an IO error is a file-lock error (Steam has the file open).
+/// ERROR_SHARING_VIOLATION (32) or ERROR_LOCK_VIOLATION (33) on Windows.
+fn is_file_locked_error(e: &std::io::Error) -> bool {
+    e.raw_os_error() == Some(32) || e.raw_os_error() == Some(33)
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions (static metadata)
 // ---------------------------------------------------------------------------
 
@@ -28,6 +38,15 @@ struct ExtraRepo {
     repo: &'static str,
     /// Exact asset filename to prefer. When `None`, selects `.zip` then `.7z`.
     preferred_asset: Option<&'static str>,
+}
+
+struct ToolVariant {
+    id: &'static str,
+    name: &'static str,
+    github_owner: &'static str,
+    github_repo: &'static str,
+    preferred_asset: Option<&'static str>,
+    preferred_asset_contains: Option<&'static str>,
 }
 
 struct ToolDef {
@@ -54,6 +73,9 @@ struct ToolDef {
     /// DLL filenames to copy to Steam root (only when install_to_steam_root).
     /// No .bak is created during install to avoid conflicts on updates.
     steam_dll_names: &'static [&'static str],
+    /// Optional variants (e.g. Original vs Fork). When present, the UI shows
+    /// a variant selector. The selected variant overrides github_owner/repo.
+    variants: Option<&'static [ToolVariant]>,
 }
 
 const TOOL_DEFS: &[ToolDef] = &[
@@ -68,6 +90,7 @@ const TOOL_DEFS: &[ToolDef] = &[
         extra_repos: None,
         install_to_steam_root: false,
         steam_dll_names: &[],
+        variants: None,
     },
     ToolDef {
         id: "steamless",
@@ -80,6 +103,7 @@ const TOOL_DEFS: &[ToolDef] = &[
         extra_repos: None,
         install_to_steam_root: false,
         steam_dll_names: &[],
+        variants: None,
     },
     ToolDef {
         id: "goldberg_fork",
@@ -96,6 +120,7 @@ const TOOL_DEFS: &[ToolDef] = &[
         }]),
         install_to_steam_root: false,
         steam_dll_names: &[],
+        variants: None,
     },
     ToolDef {
         id: "opensteamtool",
@@ -108,6 +133,24 @@ const TOOL_DEFS: &[ToolDef] = &[
         extra_repos: None,
         install_to_steam_root: true,
         steam_dll_names: &["dwmapi.dll", "xinput1_4.dll", "OpenSteamTool.dll"],
+        variants: Some(&[
+            ToolVariant {
+                id: "original",
+                name: "Original",
+                github_owner: "OpenSteam001",
+                github_repo: "OpenSteamTool",
+                preferred_asset: None,
+                preferred_asset_contains: Some("Release"),
+            },
+            ToolVariant {
+                id: "fork",
+                name: "Fork (mmxlyo)",
+                github_owner: "mmxlyo",
+                github_repo: "OpenSteamTool",
+                preferred_asset: None,
+                preferred_asset_contains: None,
+            },
+        ]),
     },
     ToolDef {
         id: "depotdownloader",
@@ -120,6 +163,20 @@ const TOOL_DEFS: &[ToolDef] = &[
         extra_repos: None,
         install_to_steam_root: false,
         steam_dll_names: &[],
+        variants: None,
+    },
+    ToolDef {
+        id: "cloud_redirect",
+        name: "CloudRedirect",
+        description: "Redirect Steam Cloud saves to Google Drive, OneDrive, S3, R2, or local folder",
+        github_owner: "Selectively11",
+        github_repo: "CloudRedirect",
+        preferred_asset: Some("cloud_redirect.dll"),
+        preferred_asset_contains: None,
+        extra_repos: None,
+        install_to_steam_root: true,
+        steam_dll_names: &["cloud_redirect.dll"],
+        variants: None,
     },
 ];
 
@@ -143,6 +200,19 @@ pub struct ThirdPartyToolInfo {
     /// Whether the tool is enabled (only for tools with `install_to_steam_root`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Available variants (only for tools with `variants`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<Vec<ThirdPartyToolVariantInfo>>,
+    /// Currently selected variant id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_variant: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThirdPartyToolVariantInfo {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +267,10 @@ struct ToolStateEntry {
     /// renamed to `.bak`. Defaults to `true` for backward compatibility.
     #[serde(default = "default_true")]
     enabled: bool,
+    /// Selected variant id (e.g. "original" | "fork"). Only meaningful for
+    /// tools with `variants`. Defaults to "original" for backward compatibility.
+    #[serde(default)]
+    variant: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -370,7 +444,13 @@ async fn get_latest_github_release(
                 .iter()
                 .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(".7z")))
         })
-        .ok_or_else(|| "No ZIP/7z asset found in release".to_string())?;
+        .or_else(|| {
+            // Raw DLL/SO files (e.g. cloud_redirect.dll from CloudRedirect releases)
+            assets
+                .iter()
+                .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(".dll")))
+        })
+        .ok_or_else(|| "No ZIP/7z/DLL asset found in release".to_string())?;
 
     let zip_url = zip_asset["browser_download_url"]
         .as_str()
@@ -384,6 +464,8 @@ async fn get_latest_github_release(
 
     let archive_ext = if zip_name.ends_with(".7z") {
         "7z".to_string()
+    } else if zip_name.ends_with(".dll") || zip_name.ends_with(".so") {
+        "dll".to_string()
     } else {
         "zip".to_string()
     };
@@ -570,8 +652,19 @@ pub async fn list_thirdparty_tools(
 
         let mut installed_version = state.tools.get(def.id).map(|e| e.version.clone());
 
+        // Resolve variant for version check
+        let (gh_owner, gh_repo, pref_asset, pref_asset_contains) =
+            if let Some(variant_id) = state.tools.get(def.id).and_then(|e| e.variant.as_deref()) {
+                def.variants
+                    .and_then(|vs| vs.iter().find(|v| v.id == variant_id))
+                    .map(|v| (v.github_owner, v.github_repo, v.preferred_asset, v.preferred_asset_contains))
+                    .unwrap_or((def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains))
+            } else {
+                (def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
+            };
+
         let latest_version =
-            get_github_release_tag(&client, def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
+            get_github_release_tag(&client, gh_owner, gh_repo, pref_asset, pref_asset_contains)
                 .await
                 .ok();
 
@@ -586,6 +679,7 @@ pub async fn list_thirdparty_tools(
                             .format("%Y-%m-%dT%H:%M:%S")
                             .to_string(),
                         enabled: true,
+                        variant: None,
                     },
                 );
                 installed_version = Some(ver.clone());
@@ -605,6 +699,17 @@ pub async fn list_thirdparty_tools(
             None
         };
 
+        let variants = def.variants.map(|vs| {
+            vs.iter()
+                .map(|v| ThirdPartyToolVariantInfo {
+                    id: v.id.to_string(),
+                    name: v.name.to_string(),
+                })
+                .collect()
+        });
+
+        let selected_variant = state.tools.get(def.id).and_then(|e| e.variant.clone());
+
         tools.push(ThirdPartyToolInfo {
             id: def.id.to_string(),
             name: def.name.to_string(),
@@ -617,6 +722,8 @@ pub async fn list_thirdparty_tools(
             update_available,
             install_path: tool_dir.map(|p| p.to_string_lossy().to_string()),
             enabled,
+            variants,
+            selected_variant,
         });
     }
 
@@ -638,6 +745,23 @@ pub async fn install_thirdparty_tool(
         .find(|d| d.id == tool_id)
         .ok_or_else(|| format!("Unknown tool: {tool_id}"))?;
 
+    // Resolve variant: use selected variant's GitHub info if available
+    let state = load_state(&app_handle);
+    let resolved = if let Some(variant_id) = state.tools.get(def.id).and_then(|e| e.variant.as_deref()) {
+        def.variants
+            .and_then(|vs| vs.iter().find(|v| v.id == variant_id))
+            .map(|v| (v.github_owner, v.github_repo, v.preferred_asset, v.preferred_asset_contains))
+    } else {
+        None
+    };
+    let (gh_owner, gh_repo, pref_asset, pref_asset_contains) = resolved.unwrap_or((
+        def.github_owner,
+        def.github_repo,
+        def.preferred_asset,
+        def.preferred_asset_contains,
+    ));
+    drop(state);
+
     let target_dir = thirdparty_dir(&app_handle)?.join(def.id);
 
     // Ensure the destination exists before extraction + copy (os error 3 otherwise).
@@ -655,7 +779,7 @@ pub async fn install_thirdparty_tool(
                 .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
             let version =
-                get_latest_github_release(&client, def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
+                get_latest_github_release(&client, gh_owner, gh_repo, pref_asset, pref_asset_contains)
                     .await
                     .map(|r| r.tag_name)
                     .unwrap_or_else(|_| "detected".to_string());
@@ -668,6 +792,7 @@ pub async fn install_thirdparty_tool(
                         .format("%Y-%m-%dT%H:%M:%S")
                         .to_string(),
                     enabled: true,
+                    variant: None,
                 },
             );
             save_state(&app_handle, &state);
@@ -697,7 +822,7 @@ pub async fn install_thirdparty_tool(
     );
 
     let release =
-        get_latest_github_release(&client, def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
+        get_latest_github_release(&client, gh_owner, gh_repo, pref_asset, pref_asset_contains)
             .await
             .map_err(|e| format!("Failed to fetch release: {e}"))?;
 
@@ -730,30 +855,39 @@ pub async fn install_thirdparty_tool(
         }),
     );
 
-    let extract_dir = temp_dir.path().join("extracted");
-    std::fs::create_dir_all(&extract_dir)
-        .map_err(|e| format!("Failed to create extract dir: {e}"))?;
+    let mut all_installed: Vec<String> = Vec::new();
 
-    if release.archive_ext == "7z" {
-        // Pure-Rust 7z extraction (no external 7-Zip CLI required).
-        crate::commands::debrid_installer::extract_7z_native(&zip_path, &extract_dir)
-            .map_err(|e| format!("Failed to extract 7z: {e}"))?;
+    if release.archive_ext == "dll" {
+        // Raw file (e.g. cloud_redirect.dll) — no extraction needed
+        let dest = target_dir.join(&release.zip_name);
+        std::fs::copy(&zip_path, &dest)
+            .map_err(|e| format!("Failed to copy DLL: {e}"))?;
+        all_installed.push(release.zip_name.clone());
     } else {
-        let zip_file =
-            std::fs::File::open(&zip_path).map_err(|e| format!("Failed to open ZIP: {e}"))?;
-        let mut archive =
-            zip::ZipArchive::new(zip_file).map_err(|e| format!("Failed to read ZIP: {e}"))?;
-        archive
-            .extract(&extract_dir)
-            .map_err(|e| format!("Failed to extract ZIP: {e}"))?;
+        let extract_dir = temp_dir.path().join("extracted");
+        std::fs::create_dir_all(&extract_dir)
+            .map_err(|e| format!("Failed to create extract dir: {e}"))?;
+
+        if release.archive_ext == "7z" {
+            // Pure-Rust 7z extraction (no external 7-Zip CLI required).
+            crate::commands::debrid_installer::extract_7z_native(&zip_path, &extract_dir)
+                .map_err(|e| format!("Failed to extract 7z: {e}"))?;
+        } else {
+            let zip_file =
+                std::fs::File::open(&zip_path).map_err(|e| format!("Failed to open ZIP: {e}"))?;
+            let mut archive =
+                zip::ZipArchive::new(zip_file).map_err(|e| format!("Failed to read ZIP: {e}"))?;
+            archive
+                .extract(&extract_dir)
+                .map_err(|e| format!("Failed to extract ZIP: {e}"))?;
+        }
+
+        let effective_src = flatten_extracted_dir(&extract_dir).unwrap_or(extract_dir);
+        all_installed = copy_dir_recursive(&effective_src, &target_dir)
+            .map_err(|e| format!("Failed to copy files: {e}"))?;
     }
 
-    let effective_src = flatten_extracted_dir(&extract_dir).unwrap_or(extract_dir);
-    let installed = copy_dir_recursive(&effective_src, &target_dir)
-        .map_err(|e| format!("Failed to copy files: {e}"))?;
-
     // Download extra repos (e.g. gbe_fork_tools for goldberg_fork)
-    let mut all_installed = installed;
     if let Some(extra_repos) = def.extra_repos {
         for extra in extra_repos {
             let extra_cache_key = format!("{}/{}", extra.owner, extra.repo);
@@ -828,12 +962,14 @@ pub async fn install_thirdparty_tool(
 
     // Persist version
     let mut state = load_state(&app_handle);
+    let selected_variant = state.tools.get(&tool_id).and_then(|e| e.variant.clone());
     state.tools.insert(
         tool_id.clone(),
         ToolStateEntry {
             version: release.tag_name.clone(),
             installed_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
             enabled: true,
+            variant: selected_variant,
         },
     );
     save_state(&app_handle, &state);
@@ -843,6 +979,7 @@ pub async fn install_thirdparty_tool(
         if let Some(ref root) = steam_root {
             let steam_path = PathBuf::from(root);
             let mut copy_errors = Vec::new();
+            let mut steam_locked = false;
             for dll_name in def.steam_dll_names {
                 let src = target_dir.join(dll_name);
                 let dest = steam_path.join(dll_name);
@@ -850,6 +987,10 @@ pub async fn install_thirdparty_tool(
                     // Overwrite directly — no .bak during install (avoids
                     // conflicts on updates).
                     if let Err(e) = std::fs::copy(&src, &dest) {
+                        if is_file_locked_error(&e) {
+                            steam_locked = true;
+                            break;
+                        }
                         copy_errors.push(format!("{dll_name}: {e}"));
                     } else {
                         all_installed.push(dll_name.to_string());
@@ -857,6 +998,9 @@ pub async fn install_thirdparty_tool(
                 } else {
                     copy_errors.push(format!("{dll_name} not found in extracted files"));
                 }
+            }
+            if steam_locked {
+                return Err("steam_running: DLL files are locked by Steam. Close Steam and retry.".to_string());
             }
             // Create config/lua/ directory if it doesn't exist
             let lua_dir = steam_path.join("config").join("lua");
@@ -877,6 +1021,17 @@ pub async fn install_thirdparty_tool(
                     files_installed: all_installed,
                     errors: copy_errors,
                 });
+            }
+        }
+    }
+
+    // Auto-patch OpenSteamTool [cloud] config when installing CloudRedirect
+    if def.id == "cloud_redirect" {
+        if let Some(ref root) = steam_root {
+            let steam_path = PathBuf::from(root);
+            match crate::utils::cloud_config::patch_opensteamtool_cloud_enabled(&steam_path) {
+                Ok(result) => println!("[THIRDPARTY] opensteamtool.toml: {result}"),
+                Err(e) => eprintln!("[THIRDPARTY] Failed to patch opensteamtool.toml: {e}"),
             }
         }
     }
@@ -937,6 +1092,7 @@ pub async fn uninstall_thirdparty_tool(
     );
 
     let mut errors = Vec::new();
+    let mut steam_locked = false;
 
     // Clean Steam root DLLs for tools with install_to_steam_root
     if def.install_to_steam_root {
@@ -948,12 +1104,19 @@ pub async fn uninstall_thirdparty_tool(
                 let bak = steam_path.join(format!("{dll_name}.bak"));
                 if dll.exists() {
                     if let Err(e) = std::fs::remove_file(&dll) {
+                        if is_file_locked_error(&e) {
+                            steam_locked = true;
+                            break;
+                        }
                         errors.push(format!("Failed to remove {}: {e}", dll_name));
                     }
                 }
                 if bak.exists() {
                     let _ = std::fs::remove_file(&bak);
                 }
+            }
+            if steam_locked {
+                return Err("steam_running: DLL files are locked by Steam. Close Steam and retry.".to_string());
             }
             // Remove config/lua/ if empty
             let lua_dir = steam_path.join("config").join("lua");
@@ -1058,6 +1221,7 @@ pub async fn set_thirdparty_tool_enabled(
     let mut state = load_state(&app_handle);
     let mut errors = Vec::new();
     let mut toggled = Vec::new();
+    let mut steam_locked = false;
 
     for dll_name in def.steam_dll_names {
         let dll = steam_path.join(dll_name);
@@ -1070,6 +1234,10 @@ pub async fn set_thirdparty_tool_enabled(
                     let _ = std::fs::remove_file(&dll); // remove stale original
                 }
                 if let Err(e) = std::fs::rename(&bak, &dll) {
+                    if is_file_locked_error(&e) {
+                        steam_locked = true;
+                        break;
+                    }
                     errors.push(format!("{dll_name}: {e}"));
                 } else {
                     toggled.push(dll_name.to_string());
@@ -1087,6 +1255,10 @@ pub async fn set_thirdparty_tool_enabled(
                     let _ = std::fs::remove_file(&bak);
                 }
                 if let Err(e) = std::fs::rename(&dll, &bak) {
+                    if is_file_locked_error(&e) {
+                        steam_locked = true;
+                        break;
+                    }
                     errors.push(format!("{dll_name}: {e}"));
                 } else {
                     toggled.push(format!("{dll_name}.bak"));
@@ -1098,6 +1270,10 @@ pub async fn set_thirdparty_tool_enabled(
                 errors.push(format!("{dll_name} not found (neither DLL nor .bak)"));
             }
         }
+    }
+
+    if steam_locked {
+        return Err("steam_running: DLL files are locked by Steam. Close Steam and retry.".to_string());
     }
 
     // Update state
@@ -1112,6 +1288,7 @@ pub async fn set_thirdparty_tool_enabled(
                     .format("%Y-%m-%dT%H:%M:%S")
                     .to_string(),
                 enabled,
+                variant: None,
             },
         );
     }
@@ -1143,4 +1320,66 @@ pub fn open_thirdparty_folder(app_handle: tauri::AppHandle) -> Result<(), String
     let dir = thirdparty_dir(&app_handle)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create folder: {e}"))?;
     open::that(&dir).map_err(|e| format!("Failed to open folder: {e}"))
+}
+
+#[tauri::command]
+pub async fn set_thirdparty_tool_variant(
+    tool_id: String,
+    variant_id: String,
+    app_handle: tauri::AppHandle,
+) -> Result<ThirdPartyToolResult, String> {
+    let def = TOOL_DEFS
+        .iter()
+        .find(|d| d.id == tool_id)
+        .ok_or_else(|| format!("Unknown tool: {tool_id}"))?;
+
+    // Validate variant exists
+    let variant = def
+        .variants
+        .and_then(|vs| vs.iter().find(|v| v.id == variant_id))
+        .ok_or_else(|| format!("Unknown variant '{}' for tool '{}'", variant_id, tool_id))?;
+
+    let mut state = load_state(&app_handle);
+
+    // Check if currently installed with a different variant
+    let needs_reinstall = if let Some(entry) = state.tools.get(&tool_id) {
+        entry.variant.as_deref() != Some(variant_id.as_str()) && entry.version != "detected"
+    } else {
+        false
+    };
+
+    // Update or insert variant
+    if let Some(entry) = state.tools.get_mut(&tool_id) {
+        entry.variant = Some(variant_id.to_string());
+    } else {
+        state.tools.insert(
+            tool_id.clone(),
+            ToolStateEntry {
+                version: "detected".to_string(),
+                installed_at: chrono::Local::now()
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string(),
+                enabled: true,
+                variant: Some(variant_id.to_string()),
+            },
+        );
+    }
+    save_state(&app_handle, &state);
+
+    let message = if needs_reinstall {
+        format!(
+            "Switched to {}. Please reinstall to use the new variant.",
+            variant.name
+        )
+    } else {
+        format!("Switched to {}", variant.name)
+    };
+
+    Ok(ThirdPartyToolResult {
+        ok: true,
+        tool: tool_id,
+        message,
+        files_installed: Vec::new(),
+        errors: Vec::new(),
+    })
 }
