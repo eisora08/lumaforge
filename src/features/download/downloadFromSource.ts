@@ -10,6 +10,7 @@ import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabil
 import {
   steamKeysEnsureCache,
   steamKeysGenerateLua,
+  steamKeysAddAllDlcs,
   steamKeysFetchManifests,
 } from "../../services/steamKeysService";
 
@@ -79,6 +80,13 @@ export async function downloadFromSource(
       const luaResult = await steamKeysGenerateLua({ app_id: Number(game.appId) });
       if (!luaResult.success) {
         throw new Error(luaResult.message);
+      }
+
+      // Step 2.5: Add all DLCs to Lua
+      updateJob(job.id, { status: "installing", progress: 45 });
+      const dlcResult = await steamKeysAddAllDlcs({ app_id: Number(game.appId) });
+      if (!dlcResult.success) {
+        console.warn(`[STEAM_KEYS][DLC_WARN] appid=${game.appId} message="${dlcResult.message}"`);
       }
 
       // Step 3: Auto-fetch manifests if enabled

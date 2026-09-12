@@ -488,45 +488,34 @@ fn find_acf_file(steam_root: &std::path::Path, app_id: u64) -> Option<std::path:
     None
 }
 
-/// Parse MountedDepots section from an ACF file.
+/// Parse mounted/installed depots from an ACF file.
 /// Returns a map of depot_id -> manifest_id.
+/// Uses regex matching (like the reference project) to handle both
+/// MountedDepots and InstalledDepots sections in nested or flat format.
 fn parse_mounted_depots(acf_path: &std::path::Path) -> Result<std::collections::HashMap<u64, String>, String> {
     let content = std::fs::read_to_string(acf_path)
         .map_err(|e| format!("Failed to read ACF: {e}"))?;
 
     let mut mounted = std::collections::HashMap::new();
-    let mut in_mounted = false;
-    let mut brace_depth = 0u32;
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.contains("\"MountedDepots\"") {
-            in_mounted = true;
-            brace_depth = 0;
-            continue;
+    // Strategy 1: Match nested format "depotId" { "manifest" "manifestGid" }
+    // Works for both InstalledDepots and MountedDepots sections
+    let re_nested = regex::Regex::new(r#""(\d+)"\s*\{\s*"manifest"\s+"(\d+)""#).unwrap();
+    for cap in re_nested.captures_iter(&content) {
+        if let Ok(depot_id) = cap[1].parse::<u64>() {
+            mounted.insert(depot_id, cap[2].to_string());
         }
+    }
 
-        if in_mounted {
-            if trimmed == "{" {
-                brace_depth += 1;
-                continue;
-            }
-            if trimmed == "}" {
-                brace_depth -= 1;
-                if brace_depth == 0 {
-                    break;
-                }
-                continue;
-            }
-
-            // Parse "depot_id"    "manifest_id"
-            if trimmed.starts_with('"') {
-                let parts: Vec<&str> = trimmed.split('"').collect();
-                if parts.len() >= 5 {
-                    if let Ok(depot_id) = parts[1].parse::<u64>() {
-                        mounted.insert(depot_id, parts[3].to_string());
-                    }
+    // Strategy 2: Flat format "depotId" "manifestGid" inside MountedDepots section (fallback)
+    if mounted.is_empty() {
+        let re_section = regex::Regex::new(r#""MountedDepots"\s*\{([^}]*)\}"#).unwrap();
+        if let Some(section) = re_section.captures(&content) {
+            let inner = &section[1];
+            let re_flat = regex::Regex::new(r#""(\d+)"\s+"(\d+)""#).unwrap();
+            for cap in re_flat.captures_iter(inner) {
+                if let Ok(depot_id) = cap[1].parse::<u64>() {
+                    mounted.insert(depot_id, cap[2].to_string());
                 }
             }
         }
@@ -562,5 +551,80 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("731"));
         assert!(json.contains("Test DLC"));
+    }
+
+    #[test]
+    fn test_parse_mounted_depots_installed_depots_format() {
+        // Real ACF content from app 268910 (Cuphead) — uses InstalledDepots nested format
+        let acf_content = r#""AppState"
+{
+    "appid"		"268910"
+    "name"		"Cuphead"
+    "StateFlags"		"4"
+    "installdir"		"Cuphead"
+}
+"InstalledDepots"
+{
+    "268911"
+    {
+        "manifest"		"2961019062399342472"
+        "size"		"4044947883"
+    }
+    "1117850"
+    {
+        "manifest"		"7764187989484304781"
+        "size"		"1747323887"
+        "dlcappid"		"1117850"
+    }
+}"#;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let acf_path = tmp.path().join("appmanifest_268910.acf");
+        std::fs::write(&acf_path, acf_content).unwrap();
+
+        let result = parse_mounted_depots(&acf_path).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get(&268911).unwrap(), "2961019062399342472");
+        assert_eq!(result.get(&1117850).unwrap(), "7764187989484304781");
+    }
+
+    #[test]
+    fn test_parse_mounted_depots_flat_format() {
+        // Flat MountedDepots format (older ACF style)
+        let acf_content = r#""AppState"
+{
+    "appid"		"730"
+    "name"		"CS2"
+}
+"MountedDepots"
+{
+    "2555350"		"1234567890123456789"
+    "2555351"		"9876543210987654321"
+}"#;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let acf_path = tmp.path().join("appmanifest_730.acf");
+        std::fs::write(&acf_path, acf_content).unwrap();
+
+        let result = parse_mounted_depots(&acf_path).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get(&2555350).unwrap(), "1234567890123456789");
+        assert_eq!(result.get(&2555351).unwrap(), "9876543210987654321");
+    }
+
+    #[test]
+    fn test_parse_mounted_depots_no_depots() {
+        let acf_content = r#""AppState"
+{
+    "appid"		"999999"
+    "name"		"Empty Game"
+}"#;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let acf_path = tmp.path().join("appmanifest_999999.acf");
+        std::fs::write(&acf_path, acf_content).unwrap();
+
+        let result = parse_mounted_depots(&acf_path).unwrap();
+        assert!(result.is_empty());
     }
 }

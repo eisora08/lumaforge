@@ -1000,16 +1000,21 @@ function GameLauncherTileInner({
                         label: t("context_menu.steam_keys", "Steam Keys"),
                         icon: <Key className="h-3.5 w-3.5" />,
                         children: [
-                          {
+                           {
                             label: t("context_menu.generate_lua", "Generate Lua"),
                             icon: <FileText className="h-3.5 w-3.5" />,
                             onClick: async () => {
                               setMenuOpen(false);
                               try {
-                                const { steamKeysGenerateLua } = await import("../../services/steamKeysService");
+                                const { steamKeysGenerateLua, steamKeysAddAllDlcs } = await import("../../services/steamKeysService");
                                 const result = await steamKeysGenerateLua({ app_id: Number(game.appId) });
                                 if (result.success) {
-                                  showSuccess(result.message);
+                                  const dlcResult = await steamKeysAddAllDlcs({ app_id: Number(game.appId) });
+                                  if (dlcResult.success) {
+                                    showSuccess(`${result.message} — ${dlcResult.message}`);
+                                  } else {
+                                    showSuccess(result.message);
+                                  }
                                 } else {
                                   showError(result.message);
                                 }

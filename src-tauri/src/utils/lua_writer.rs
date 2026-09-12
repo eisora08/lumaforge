@@ -61,9 +61,10 @@ pub fn generate_lua_file(
     lines.push("-- lua by LumaForge".to_string());
     lines.push(String::new());
 
-    // Main app entry — requires depot key
+    // Main app entry — bare addappid if no key (reference behavior)
+    // Use the first depot's key as the main key (base game depot)
     let name_comment = sanitize_lua_comment(game_name);
-    let main_key = depots.iter().find(|(id, _)| *id == app_id).and_then(|(_, k)| k.as_ref());
+    let main_key = depots.first().and_then(|(_, k)| k.as_ref());
     if let Some(key) = main_key {
         if name_comment.is_empty() {
             lines.push(format!("addappid({}, 1, \"{}\")", app_id, key));
@@ -71,16 +72,17 @@ pub fn generate_lua_file(
             lines.push(format!("addappid({}, 1, \"{}\") -- {}", app_id, key, name_comment));
         }
     } else {
-        return Err(format!(
-            "No depot key found for app {}. Depot key is required to generate Lua.",
-            app_id
-        ));
+        if name_comment.is_empty() {
+            lines.push(format!("addappid({})", app_id));
+        } else {
+            lines.push(format!("addappid({}) -- {}", app_id, name_comment));
+        }
     }
 
-    // Depot entries (excluding main app_id) — skip depots without key
-    for (depot_id, key) in depots {
-        if *depot_id == app_id {
-            continue;
+    // Depot entries (skip the first depot which is the main app entry)
+    for (i, (depot_id, key)) in depots.iter().enumerate() {
+        if i == 0 {
+            continue; // First depot is already added as main app entry
         }
         if let Some(k) = key {
             lines.push(format!("addappid({}, 1, \"{}\")", depot_id, k));
@@ -409,10 +411,11 @@ mod tests {
         let tokens: Vec<(u64, String)> = vec![];
         let pins: Vec<(u64, String)> = vec![];
 
-        // Should fail: no depot key for main app
-        let result = generate_lua_file(tmp.path(), 730, "CS2", &depots, &tokens, &pins);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("No depot key found"));
+        // Should succeed with bare addappid (reference behavior)
+        let path = generate_lua_file(tmp.path(), 730, "CS2", &depots, &tokens, &pins).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("addappid(730) -- CS2"));
+        assert!(!content.contains("addappid(730, 1,"));
     }
 
     #[test]
@@ -571,5 +574,161 @@ mod tests {
         let lua_content = "addappid(730, 1, \"abc\")\nsetManifestid(730,\"11111111111111111\",0)\n--setManifestid(2555350,\"22222222222222222\",0)\n";
         let path = create_test_lua(tmp.path(), 733, lua_content);
         assert!(has_active_pins(&path));
+    }
+
+    /// Simulates Lua generation for game 1971870 (Mortal Kombat 1)
+    /// using Hubcap's depot data and compares output.
+    /// Verifies: no depots without keys, correct structure, Hubcap parity.
+    #[test]
+    fn test_mk1_1971870_matches_hubcap() {
+        let tmp = TempDir::new().unwrap();
+
+        // Hubcap depot data for 1971870 (Mortal Kombat 1)
+        // Main app (1971870) has no key — bare addappid
+        // Main app depots, shared depots, and DLC depots with keys
+        let depots = vec![
+            // Main app — no key (bare addappid)
+            (1971870u64, None),
+            // Main app depots (with keys)
+            (1971872, Some("2fb68660ef98508853b7901a8c4758d2811c558bc23eb52105126af40209be9c".to_string())),
+            (1971873, Some("1721fcefd622e29779c2aaf9b3c0b7fbad0d149f94d00e611b8185720bd65afb".to_string())),
+            (1971874, Some("d7c65f47842d7fe05e6489fd6f86355ebfb7a3f1261c503cdbeebaba66849d82".to_string())),
+            (1971875, Some("020f4d21f49e187c5ee0dc181a3d10cdc166bc935868f83e5add726947973b51".to_string())),
+            // Shared depots (from App 228980)
+            (228989, Some("ad69276eb476cf06c40312df7376d63deac0c838b9a2767005be8bb306ffb853".to_string())),
+            (228990, Some("44d8c45ce229a11c4f231a3d2a350eaf80b0d69a8af938ec7ccca720f694b0e8".to_string())),
+            // DLC depots with keys
+            (2615191, Some("881b5265b81aaa6e34ba005510561510c74dca7c4ddf56e688110dc4708702f7".to_string())),
+            (3168021, Some("30cb9e85c44a2e1796c48b863ad72b03f0c8c8944fc32e93af78420d958df89e".to_string())),
+            (3233541, Some("202206a238ab830b8c5dc5506ae41300989cd12ceadff8bb3c6d554bf3feb56b".to_string())),
+        ];
+        let tokens: Vec<(u64, String)> = vec![];
+        let pins: Vec<(u64, String)> = vec![];
+
+        let path = generate_lua_file(
+            tmp.path(),
+            1971870,
+            "Mortal Kombat 1",
+            &depots,
+            &tokens,
+            &pins,
+        )
+        .unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+
+        // --- Verify main app ---
+        // Main app (1971870) has no key → bare addappid
+        assert!(
+            lines.iter().any(|l| l.contains("addappid(1971870)") && !l.contains("addappid(1971870, 1,")),
+            "Main app 1971870 should be bare addappid (no key). Got:\n{}",
+            content
+        );
+
+        // --- Verify main app depots (with keys) ---
+        for (depot_id, key) in &[
+            (1971872, "2fb68660"),
+            (1971873, "1721fcef"),
+            (1971874, "d7c65f47"),
+            (1971875, "020f4d21"),
+        ] {
+            assert!(
+                lines.iter().any(|l| l.contains(&format!("addappid({}, 1, \"{}", depot_id, key))),
+                "Depot {} should have key starting with {}. Got:\n{}",
+                depot_id,
+                key,
+                content
+            );
+        }
+
+        // --- Verify shared depots (with keys) ---
+        assert!(
+            lines.iter().any(|l| l.contains("addappid(228989, 1, \"ad69276e")),
+            "Shared depot 228989 (VC 2022 Redist) should be present with key. Got:\n{}",
+            content
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("addappid(228990, 1, \"44d8c45c")),
+            "Shared depot 228990 (DirectX Jun 2010 Redist) should be present with key. Got:\n{}",
+            content
+        );
+
+        // --- Verify DLC depots with keys ---
+        for (depot_id, key_prefix) in &[
+            (2615191, "881b5265"),
+            (3168021, "30cb9e85"),
+            (3233541, "202206a2"),
+        ] {
+            assert!(
+                lines.iter().any(|l| l.contains(&format!("addappid({}, 1, \"{}", depot_id, key_prefix))),
+                "DLC depot {} should have key starting with {}. Got:\n{}",
+                depot_id,
+                key_prefix,
+                content
+            );
+        }
+
+        // --- CRITICAL: No depots without keys ---
+        // Every addappid line should either be bare (no key) for the main app only,
+        // or have a key. No depot should appear as addappid(id) without key.
+        for line in &lines {
+            if let Some(l) = line.strip_prefix("addappid(") {
+                // Check if it's a bare addappid (no key)
+                if !l.contains(", 1, \"") {
+                    // Bare addappid — only allowed for main app 1971870
+                    let id_str = l.trim_end_matches(')');
+                    if let Ok(id) = id_str.parse::<u64>() {
+                        assert_eq!(
+                            id, 1971870,
+                            "Bare addappid (no key) only allowed for main app 1971870, found for {}. Line: {}",
+                            id, line
+                        );
+                    }
+                }
+            }
+        }
+
+        // --- Verify no depots without keys leaked ---
+        // Count total addappid lines (excluding bare main app)
+        let keyed_count = lines.iter()
+            .filter(|l| l.starts_with("addappid(") && l.contains(", 1, \""))
+            .count();
+        assert_eq!(
+            keyed_count,
+            9,
+            "Expected 9 keyed addappid lines (4 main depots + 2 shared + 3 DLC), got {}. Full:\n{}",
+            keyed_count,
+            content
+        );
+
+        // --- Verify structure matches Hubcap ---
+        assert!(content.starts_with("-- lua by LumaForge"));
+        assert!(content.contains("Mortal Kombat 1"));
+    }
+
+    /// Verify that depots without keys are never included in output.
+    #[test]
+    fn test_no_keyless_depots_in_output() {
+        let tmp = TempDir::new().unwrap();
+
+        // Simulate a game with multiple depots, some without keys
+        let depots = vec![
+            (100000u64, None),   // main app — no key
+            (100001, Some("aaaa".to_string())),  // depot with key
+            (100002, None),     // DLC depot WITHOUT key — should be excluded
+            (100003, Some("bbbb".to_string())),  // DLC depot with key
+        ];
+
+        let path = generate_lua_file(tmp.path(), 100000, "Test Game", &depots, &[], &[]).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+
+        // Main app should be bare
+        assert!(content.contains("addappid(100000) -- Test Game"));
+        // Depots with keys should be present
+        assert!(content.contains("addappid(100001, 1, \"aaaa\")"));
+        assert!(content.contains("addappid(100003, 1, \"bbbb\")"));
+        // Depot without key (100002) should NOT be present
+        assert!(!content.contains("addappid(100002)"), "Keyless depot 100002 should not appear. Got:\n{}", content);
+        assert!(!content.contains("addappid(100002, 1,"), "Keyless depot 100002 should not appear with key. Got:\n{}", content);
     }
 }

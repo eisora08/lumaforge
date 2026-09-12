@@ -3216,6 +3216,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "dirs 5.0.1",
+ "flate2",
  "fs2",
  "futures",
  "goblin",

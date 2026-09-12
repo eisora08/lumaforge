@@ -634,6 +634,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
     const deduped = dedupeLibraryGames(incoming);
     // Phase 10: Prevent owned merge from downgrading installed state
+    // Only restore steamInstalled=true if the game was NOT scanned from Steam
+    // (i.e., it's from buildFromOwned, not buildFromSteam).
+    // Games from buildFromSteam have installDir or libraryPath set.
     const currentByAppId = new Map<string, LibraryGame>();
     for (const g of current) {
       if (g.appId && g.steamInstalled) currentByAppId.set(g.appId, g);
@@ -641,9 +644,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     if (currentByAppId.size > 0) {
       for (const game of deduped) {
         if (game.appId && currentByAppId.has(game.appId) && !game.steamInstalled) {
-          console.log(`[INSTALL_STATE] appid=${game.appId} downgradeBlocked oldInstalled=true incomingOwnedOnly=true`);
-          game.steamInstalled = true;
-          game.isInstallable = false;
+          if (game.steamInstalled === undefined) {
+            console.log(`[INSTALL_STATE] appid=${game.appId} downgradeBlocked oldInstalled=true incomingUnknown`);
+            game.steamInstalled = true;
+            game.isInstallable = false;
+          }
         }
       }
     }
