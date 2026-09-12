@@ -10,6 +10,7 @@ import type {
   SteamKeysAddAllDlcsRequest,
   SteamKeysUnpinAllRequest,
   SteamKeysPinToCurrentRequest,
+  SteamKeysPinToLatestRequest,
 } from "../types/steam-keys";
 
 /**
@@ -136,6 +137,17 @@ export async function steamKeysPinToCurrent(
   request: SteamKeysPinToCurrentRequest
 ): Promise<SteamKeysCommandResult> {
   return await invoke<SteamKeysCommandResult>("steam_keys_pin_to_current", {
+    appId: request.app_id,
+  });
+}
+
+/**
+ * Pin all manifests to the latest version available on Steam.
+ */
+export async function steamKeysPinToLatest(
+  request: SteamKeysPinToLatestRequest
+): Promise<SteamKeysCommandResult> {
+  return await invoke<SteamKeysCommandResult>("steam_keys_pin_to_latest", {
     appId: request.app_id,
   });
 }

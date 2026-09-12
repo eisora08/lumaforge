@@ -36,15 +36,48 @@ fn re_addtoken() -> Regex {
     .unwrap()
 }
 
-/// Generate a complete .lua file for a game.
+/// A single depot entry with metadata for categorized Lua output.
+#[derive(Debug, Clone)]
+pub struct LuaDepotEntry {
+    pub depot_id: u64,
+    pub key: Option<String>,
+    pub is_shared: bool,
+    pub from_app_id: Option<u64>,
+    pub dlc_app_id: Option<u64>,
+}
+
+impl LuaDepotEntry {
+    pub fn new(depot_id: u64) -> Self {
+        Self { depot_id, key: None, is_shared: false, from_app_id: None, dlc_app_id: None }
+    }
+
+    pub fn with_key(mut self, key: String) -> Self {
+        self.key = Some(key);
+        self
+    }
+
+    pub fn with_shared(mut self, from_app_id: u64) -> Self {
+        self.is_shared = true;
+        self.from_app_id = Some(from_app_id);
+        self
+    }
+
+    pub fn with_dlc(mut self, dlc_app_id: u64) -> Self {
+        self.dlc_app_id = Some(dlc_app_id);
+        self
+    }
+}
+
+/// Generate a complete .lua file for a game with Hubcap-style section comments.
 ///
 /// # Arguments
 /// * `lua_dir` - Directory where the .lua file will be created (typically Steam's config/lua)
 /// * `app_id` - The Steam App ID
 /// * `game_name` - Human-readable game name (used as comment)
-/// * `depots` - List of (depot_id, optional_hex_key) tuples
+/// * `depots` - List of `LuaDepotEntry` with metadata for categorization
+/// * `dlc_ids` - All DLC app IDs for this game (used to identify DLCs without dedicated depots)
 /// * `tokens` - List of (app_id, token_hex) tuples
-/// * `manifest_pins` - List of (depot_id, manifest_id) tuples to pin
+/// * `manifest_pins` - List of (depot_id, manifest_id, optional_size_on_disk) tuples to pin
 ///
 /// # Returns
 /// Path to the created .lua file
@@ -52,20 +85,45 @@ pub fn generate_lua_file(
     lua_dir: &Path,
     app_id: u64,
     game_name: &str,
-    depots: &[(u64, Option<String>)],
+    depots: &[LuaDepotEntry],
+    dlc_ids: &[u64],
     tokens: &[(u64, String)],
-    manifest_pins: &[(u64, String)],
+    manifest_pins: &[(u64, String, Option<u64>)],
 ) -> Result<std::path::PathBuf, String> {
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("-- lua by LumaForge".to_string());
-    lines.push(String::new());
 
-    // Main app entry — bare addappid if no key (reference behavior)
-    // Use the first depot's key as the main key (base game depot)
     let name_comment = sanitize_lua_comment(game_name);
-    let main_key = depots.first().and_then(|(_, k)| k.as_ref());
-    if let Some(key) = main_key {
+
+    // Classify depots into categories
+    let main_app_entry = depots.iter().find(|d| d.depot_id == app_id);
+    let main_app_key = main_app_entry.and_then(|d| d.key.as_ref());
+
+    // Main app depots: not shared, not a DLC depot, not the main app itself
+    let main_depots: Vec<&LuaDepotEntry> = depots.iter()
+        .filter(|d| d.depot_id != app_id && !d.is_shared && (d.dlc_app_id.is_none() || d.dlc_app_id == Some(app_id)))
+        .collect();
+
+    // Shared depots
+    let shared_depots: Vec<&LuaDepotEntry> = depots.iter()
+        .filter(|d| d.is_shared)
+        .collect();
+
+    // DLC depots (have a DLC app ID, not the main app, not shared)
+    let dlc_depots: Vec<&LuaDepotEntry> = depots.iter()
+        .filter(|d| d.depot_id != app_id && !d.is_shared && d.dlc_app_id.is_some() && d.dlc_app_id != Some(app_id))
+        .collect();
+
+    // DLC app IDs that have at least one depot with a key
+    let dlc_ids_with_depots: std::collections::HashSet<u64> = dlc_depots.iter()
+        .filter_map(|d| d.dlc_app_id)
+        .collect();
+
+    // --- MAIN APPLICATION ---
+    lines.push(String::new());
+    lines.push("-- MAIN APPLICATION".to_string());
+    if let Some(key) = main_app_key {
         if name_comment.is_empty() {
             lines.push(format!("addappid({}, 1, \"{}\")", app_id, key));
         } else {
@@ -79,25 +137,91 @@ pub fn generate_lua_file(
         }
     }
 
-    // Depot entries (skip the first depot which is the main app entry)
-    for (i, (depot_id, key)) in depots.iter().enumerate() {
-        if i == 0 {
-            continue; // First depot is already added as main app entry
+    // --- MAIN APP DEPOTS ---
+    if !main_depots.is_empty() {
+        lines.push(String::new());
+        lines.push("-- MAIN APP DEPOTS".to_string());
+        for d in &main_depots {
+            if let Some(k) = &d.key {
+                lines.push(format!("addappid({}, 1, \"{}\") -- Depot {}", d.depot_id, k, d.depot_id));
+            }
         }
-        if let Some(k) = key {
-            lines.push(format!("addappid({}, 1, \"{}\")", depot_id, k));
+    }
+
+    // --- SHARED DEPOTS ---
+    if !shared_depots.is_empty() {
+        lines.push(String::new());
+        lines.push("-- SHARED DEPOTS (from other apps)".to_string());
+        for d in &shared_depots {
+            if let Some(k) = &d.key {
+                let from = d.from_app_id.map(|id| format!(" (Shared from App {})", id)).unwrap_or_default();
+                lines.push(format!("addappid({}, 1, \"{}\") -- Shared Depot {}{}", d.depot_id, k, d.depot_id, from));
+            }
         }
-        // Depots without key are skipped silently
+    }
+
+    // --- DLCS WITH DEDICATED DEPOTS ---
+    if !dlc_depots.is_empty() {
+        lines.push(String::new());
+        lines.push("-- DLCS WITH DEDICATED DEPOTS".to_string());
+        // Group by DLC app ID
+        let mut dlc_groups: Vec<(u64, Vec<&LuaDepotEntry>)> = Vec::new();
+        let mut seen_dlc: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for d in &dlc_depots {
+            if let Some(dlc_id) = d.dlc_app_id {
+                if seen_dlc.insert(dlc_id) {
+                    let group: Vec<&LuaDepotEntry> = dlc_depots.iter()
+                        .copied()
+                        .filter(|dd| dd.dlc_app_id == Some(dlc_id))
+                        .collect();
+                    dlc_groups.push((dlc_id, group));
+                }
+            }
+        }
+        for (dlc_id, group) in &dlc_groups {
+            lines.push(format!("-- DLC {} (AppID: {})", dlc_id, dlc_id));
+            // Add bare addappid for the DLC app itself
+            lines.push(format!("addappid({})", dlc_id));
+            for d in group {
+                if let Some(k) = &d.key {
+                    lines.push(format!("addappid({}, 1, \"{}\") -- Depot {}", d.depot_id, k, d.depot_id));
+                }
+            }
+        }
+    }
+
+    // --- DLCS WITHOUT DEDICATED DEPOTS ---
+    // DLC IDs from the full list that have no depots in the depots list
+    let dlc_ids_without_depots: Vec<u64> = dlc_ids.iter()
+        .copied()
+        .filter(|id| *id != app_id && !dlc_ids_with_depots.contains(id))
+        .collect();
+    if !dlc_ids_without_depots.is_empty() {
+        lines.push(String::new());
+        lines.push("-- DLCS WITHOUT DEDICATED DEPOTS".to_string());
+        for dlc_id in &dlc_ids_without_depots {
+            lines.push(format!("addappid({})", dlc_id));
+        }
     }
 
     // App access tokens
-    for (token_app_id, token_hex) in tokens {
-        lines.push(format!("addtoken({}, \"{}\")", token_app_id, token_hex));
+    if !tokens.is_empty() {
+        lines.push(String::new());
+        for (token_app_id, token_hex) in tokens {
+            lines.push(format!("addtoken({}, \"{}\")", token_app_id, token_hex));
+        }
     }
 
-    // Manifest pins
-    for (depot_id, manifest_id) in manifest_pins {
-        lines.push(format!("setManifestid({},\"{}\",0)", depot_id, manifest_id));
+    // Manifest pins (commented out like Hubcap)
+    if !manifest_pins.is_empty() {
+        lines.push(String::new());
+        for (depot_id, manifest_id, size_on_disk) in manifest_pins {
+            if let Some(size) = size_on_disk {
+                lines.push(format!("--setManifestid({}, \"{}\", {})", depot_id, manifest_id, size));
+            } else {
+                lines.push(format!("--setManifestid({}, \"{}\", 0)", depot_id, manifest_id));
+            }
+        }
     }
 
     // Ensure lua directory exists
@@ -120,14 +244,31 @@ pub fn set_manifest_pin(
     depot_id: u64,
     manifest_id: &str,
     pin: bool,
+    size_override: Option<u64>,
 ) -> Result<(), String> {
     let content = fs::read_to_string(lua_path)
         .map_err(|e| format!("Failed to read lua file: {e}"))?;
 
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
+    // Regex that matches both active and commented setManifestid lines
+    let re_any = Regex::new(
+        r#"setManifestid\s*\(\s*(\d+)\s*,\s*"(\d+)"\s*(?:,\s*(\d+))?"#,
+    )
+    .unwrap();
+
     if pin {
-        let new_line = format!("setManifestid({},\"{}\",0)", depot_id, manifest_id);
+        // Look for existing line (active or commented) to preserve the real size
+        let existing_size = lines.iter()
+            .filter_map(|l| re_any.captures(l))
+            .find(|caps| {
+                caps.get(1).and_then(|m| m.as_str().parse::<u64>().ok()) == Some(depot_id)
+            })
+            .and_then(|caps| caps.get(3))
+            .and_then(|m| m.as_str().parse::<u64>().ok());
+
+        let size = size_override.or(existing_size).unwrap_or(0);
+        let new_line = format!("setManifestid({}, \"{}\", {})", depot_id, manifest_id, size);
         update_manifest_line(&mut lines, depot_id, &new_line);
     } else {
         // Comment out active setManifestid lines for this depot
@@ -155,15 +296,16 @@ pub fn set_manifest_pin(
 /// Writes/updates `setManifestid` lines for each depot_id -> manifest_id mapping.
 pub fn update_all_manifest_pins(
     lua_path: &Path,
-    pins: &[(u64, String)],
+    pins: &[(u64, String, Option<u64>)],
 ) -> Result<(), String> {
     let content = fs::read_to_string(lua_path)
         .map_err(|e| format!("Failed to read lua file: {e}"))?;
 
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
-    for (depot_id, manifest_id) in pins {
-        let new_line = format!("setManifestid({},\"{}\",0)", depot_id, manifest_id);
+    for (depot_id, manifest_id, size_on_disk) in pins {
+        let size = size_on_disk.unwrap_or(0);
+        let new_line = format!("setManifestid({},\"{}\",{})", depot_id, manifest_id, size);
         update_manifest_line(&mut lines, *depot_id, &new_line);
     }
 
@@ -261,8 +403,8 @@ pub fn lua_file_exists(lua_dir: &Path, app_id: u64) -> bool {
 }
 
 /// Parse existing manifest pins from a .lua file.
-/// Returns a map of depot_id -> manifest_id for active setManifestid lines.
-pub fn parse_manifest_pins(lua_path: &Path) -> Result<HashMap<u64, String>, String> {
+/// Returns a map of depot_id -> (manifest_id, size_on_disk) for active setManifestid lines.
+pub fn parse_manifest_pins(lua_path: &Path) -> Result<HashMap<u64, (String, Option<u64>)>, String> {
     let content = fs::read_to_string(lua_path)
         .map_err(|e| format!("Failed to read lua file: {e}"))?;
 
@@ -274,7 +416,10 @@ pub fn parse_manifest_pins(lua_path: &Path) -> Result<HashMap<u64, String>, Stri
             if let Some(id_match) = caps.get(1) {
                 if let Some(manifest_match) = caps.get(2) {
                     if let Ok(depot_id) = id_match.as_str().parse::<u64>() {
-                        pins.insert(depot_id, manifest_match.as_str().to_string());
+                        // Try to parse size_on_disk from 3rd capture group
+                        let size = caps.get(3)
+                            .and_then(|s| s.as_str().parse::<u64>().ok());
+                        pins.insert(depot_id, (manifest_match.as_str().to_string(), size));
                     }
                 }
             }
@@ -387,13 +532,13 @@ mod tests {
     fn test_generate_lua_file() {
         let tmp = TempDir::new().unwrap();
         let depots = vec![
-            (730, Some("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".to_string())),
-            (2555350, Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string())),
+            LuaDepotEntry::new(730).with_key("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".to_string()),
+            LuaDepotEntry::new(2555350).with_key("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string()),
         ];
         let tokens = vec![(730, "f8e7d6c5b4a3f8e7d6c5b4a3f8e7d6c5b4a3f8e7d6c5b4a3f8e7d6c5b4a3f8e7".to_string())];
-        let pins = vec![(2555350, "1234567890123456789".to_string())];
+        let pins = vec![(2555350u64, "1234567890123456789".to_string(), None)];
 
-        let path = generate_lua_file(tmp.path(), 730, "Counter-Strike 2", &depots, &tokens, &pins).unwrap();
+        let path = generate_lua_file(tmp.path(), 730, "Counter-Strike 2", &depots, &[], &tokens, &pins).unwrap();
         assert!(path.exists());
 
         let content = fs::read_to_string(&path).unwrap();
@@ -401,18 +546,18 @@ mod tests {
         assert!(content.contains("Counter-Strike 2"));
         assert!(content.contains("addappid(2555350, 1, \"deadbeef"));
         assert!(content.contains("addtoken(730, \"f8e7d6"));
-        assert!(content.contains("setManifestid(2555350,\"1234567890123456789\",0)"));
+        assert!(content.contains("--setManifestid(2555350, \"1234567890123456789\", 0)"));
     }
 
     #[test]
     fn test_generate_lua_without_keys() {
         let tmp = TempDir::new().unwrap();
-        let depots = vec![(730, None)];
+        let depots = vec![LuaDepotEntry::new(730)];
         let tokens: Vec<(u64, String)> = vec![];
-        let pins: Vec<(u64, String)> = vec![];
+        let pins: Vec<(u64, String, Option<u64>)> = vec![];
 
         // Should succeed with bare addappid (reference behavior)
-        let path = generate_lua_file(tmp.path(), 730, "CS2", &depots, &tokens, &pins).unwrap();
+        let path = generate_lua_file(tmp.path(), 730, "CS2", &depots, &[], &tokens, &pins).unwrap();
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("addappid(730) -- CS2"));
         assert!(!content.contains("addappid(730, 1,"));
@@ -422,13 +567,13 @@ mod tests {
     fn test_generate_lua_skips_dlc_depots_without_key() {
         let tmp = TempDir::new().unwrap();
         let depots = vec![
-            (730, Some("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".to_string())),
-            (2555350, None),  // DLC depot without key — should be skipped
+            LuaDepotEntry::new(730).with_key("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".to_string()),
+            LuaDepotEntry::new(2555350),  // DLC depot without key — should be skipped
         ];
         let tokens: Vec<(u64, String)> = vec![];
-        let pins: Vec<(u64, String)> = vec![];
+        let pins: Vec<(u64, String, Option<u64>)> = vec![];
 
-        let path = generate_lua_file(tmp.path(), 730, "CS2", &depots, &tokens, &pins).unwrap();
+        let path = generate_lua_file(tmp.path(), 730, "CS2", &depots, &[], &tokens, &pins).unwrap();
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("addappid(730, 1, \"a1b2c3"));
         assert!(!content.contains("addappid(2555350)"));
@@ -440,20 +585,48 @@ mod tests {
         let lua_content = "addappid(730, 1, \"abc123\")\naddappid(2555350, 1, \"def456\")\n";
         let path = create_test_lua(tmp.path(), 730, lua_content);
 
-        set_manifest_pin(&path, 2555350, "9876543210987654321", true).unwrap();
+        set_manifest_pin(&path, 2555350, "9876543210987654321", true, None).unwrap();
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("setManifestid(2555350,\"9876543210987654321\",0)"));
+        assert!(content.contains("setManifestid(2555350, \"9876543210987654321\", 0)"));
+    }
+
+    #[test]
+    fn test_set_manifest_pin_preserves_size_from_commented() {
+        let tmp = TempDir::new().unwrap();
+        // Commented line with real size
+        let lua_content = "addappid(730, 1, \"abc123\")\n--setManifestid(730, \"11111111111111111\", 610379640)\n";
+        let path = create_test_lua(tmp.path(), 730, lua_content);
+
+        set_manifest_pin(&path, 730, "11111111111111111", true, None).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        // Should preserve the real size, not 0
+        assert!(content.contains("setManifestid(730, \"11111111111111111\", 610379640)"));
+        assert!(!content.contains("--setManifestid(730"));
+    }
+
+    #[test]
+    fn test_set_manifest_pin_preserves_size_from_active() {
+        let tmp = TempDir::new().unwrap();
+        // Active line with real size
+        let lua_content = "addappid(730, 1, \"abc123\")\nsetManifestid(730, \"11111111111111111\", 610379640)\n";
+        let path = create_test_lua(tmp.path(), 730, lua_content);
+
+        // Replace with new manifest id, should preserve size
+        set_manifest_pin(&path, 730, "22222222222222222", true, None).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("setManifestid(730, \"22222222222222222\", 610379640)"));
+        assert!(!content.contains("11111111111111111"));
     }
 
     #[test]
     fn test_set_manifest_pin_update_existing() {
         let tmp = TempDir::new().unwrap();
-        let lua_content = "addappid(730, 1, \"abc123\")\nsetManifestid(730,\"11111111111111111\",0)\n";
+        let lua_content = "addappid(730, 1, \"abc123\")\nsetManifestid(730, \"11111111111111111\", 0)\n";
         let path = create_test_lua(tmp.path(), 730, lua_content);
 
-        set_manifest_pin(&path, 730, "22222222222222222", true).unwrap();
+        set_manifest_pin(&path, 730, "22222222222222222", true, None).unwrap();
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("setManifestid(730,\"22222222222222222\",0)"));
+        assert!(content.contains("setManifestid(730, \"22222222222222222\", 0)"));
         assert!(!content.contains("11111111111111111"));
     }
 
@@ -463,9 +636,22 @@ mod tests {
         let lua_content = "addappid(730, 1, \"abc123\")\nsetManifestid(730,\"11111111111111111\",0)\n";
         let path = create_test_lua(tmp.path(), 730, lua_content);
 
-        set_manifest_pin(&path, 730, "11111111111111111", false).unwrap();
+        set_manifest_pin(&path, 730, "11111111111111111", false, None).unwrap();
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("--setManifestid(730,\"11111111111111111\",0)"));
+    }
+
+    #[test]
+    fn test_set_manifest_pin_size_override() {
+        let tmp = TempDir::new().unwrap();
+        let lua_content = "addappid(730, 1, \"abc123\")\n--setManifestid(730, \"11111111111111111\", 610379640)\n";
+        let path = create_test_lua(tmp.path(), 730, lua_content);
+
+        // Override size to a different value
+        set_manifest_pin(&path, 730, "22222222222222222", true, Some(9999999999)).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("setManifestid(730, \"22222222222222222\", 9999999999)"));
+        assert!(!content.contains("610379640"));
     }
 
     #[test]
@@ -498,8 +684,8 @@ mod tests {
 
         let pins = parse_manifest_pins(&path).unwrap();
         assert_eq!(pins.len(), 2);
-        assert_eq!(pins.get(&730).unwrap(), "11111111111111111");
-        assert_eq!(pins.get(&2555350).unwrap(), "22222222222222222");
+        assert_eq!(pins.get(&730).unwrap().0, "11111111111111111");
+        assert_eq!(pins.get(&2555350).unwrap().0, "22222222222222222");
     }
 
     #[test]
@@ -515,13 +701,13 @@ mod tests {
         let path = create_test_lua(tmp.path(), 730, lua_content);
 
         let pins = vec![
-            (730, "22222222222222222".to_string()),
-            (2555350, "33333333333333333".to_string()),
+            (730, "22222222222222222".to_string(), Some(12345u64)),
+            (2555350, "33333333333333333".to_string(), None),
         ];
         update_all_manifest_pins(&path, &pins).unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("setManifestid(730,\"22222222222222222\",0)"));
+        assert!(content.contains("setManifestid(730,\"22222222222222222\",12345)"));
         assert!(content.contains("setManifestid(2555350,\"33333333333333333\",0)"));
         assert!(!content.contains("11111111111111111"));
     }
@@ -588,34 +774,44 @@ mod tests {
         // Main app depots, shared depots, and DLC depots with keys
         let depots = vec![
             // Main app — no key (bare addappid)
-            (1971870u64, None),
+            LuaDepotEntry::new(1971870),
             // Main app depots (with keys)
-            (1971872, Some("2fb68660ef98508853b7901a8c4758d2811c558bc23eb52105126af40209be9c".to_string())),
-            (1971873, Some("1721fcefd622e29779c2aaf9b3c0b7fbad0d149f94d00e611b8185720bd65afb".to_string())),
-            (1971874, Some("d7c65f47842d7fe05e6489fd6f86355ebfb7a3f1261c503cdbeebaba66849d82".to_string())),
-            (1971875, Some("020f4d21f49e187c5ee0dc181a3d10cdc166bc935868f83e5add726947973b51".to_string())),
+            LuaDepotEntry::new(1971872).with_key("2fb68660ef98508853b7901a8c4758d2811c558bc23eb52105126af40209be9c".to_string()),
+            LuaDepotEntry::new(1971873).with_key("1721fcefd622e29779c2aaf9b3c0b7fbad0d149f94d00e611b8185720bd65afb".to_string()),
+            LuaDepotEntry::new(1971874).with_key("d7c65f47842d7fe05e6489fd6f86355ebfb7a3f1261c503cdbeebaba66849d82".to_string()),
+            LuaDepotEntry::new(1971875).with_key("020f4d21f49e187c5ee0dc181a3d10cdc166bc935868f83e5add726947973b51".to_string()),
             // Shared depots (from App 228980)
-            (228989, Some("ad69276eb476cf06c40312df7376d63deac0c838b9a2767005be8bb306ffb853".to_string())),
-            (228990, Some("44d8c45ce229a11c4f231a3d2a350eaf80b0d69a8af938ec7ccca720f694b0e8".to_string())),
+            LuaDepotEntry::new(228989).with_key("ad69276eb476cf06c40312df7376d63deac0c838b9a2767005be8bb306ffb853".to_string()).with_shared(228980),
+            LuaDepotEntry::new(228990).with_key("44d8c45ce229a11c4f231a3d2a350eaf80b0d69a8af938ec7ccca720f694b0e8".to_string()).with_shared(228980),
             // DLC depots with keys
-            (2615191, Some("881b5265b81aaa6e34ba005510561510c74dca7c4ddf56e688110dc4708702f7".to_string())),
-            (3168021, Some("30cb9e85c44a2e1796c48b863ad72b03f0c8c8944fc32e93af78420d958df89e".to_string())),
-            (3233541, Some("202206a238ab830b8c5dc5506ae41300989cd12ceadff8bb3c6d554bf3feb56b".to_string())),
+            LuaDepotEntry::new(2615191).with_key("881b5265b81aaa6e34ba005510561510c74dca7c4ddf56e688110dc4708702f7".to_string()).with_dlc(2615190),
+            LuaDepotEntry::new(3168021).with_key("30cb9e85c44a2e1796c48b863ad72b03f0c8c8944fc32e93af78420d958df89e".to_string()).with_dlc(3168020),
+            LuaDepotEntry::new(3233541).with_key("202206a238ab830b8c5dc5506ae41300989cd12ceadff8bb3c6d554bf3feb56b".to_string()).with_dlc(3233540),
         ];
         let tokens: Vec<(u64, String)> = vec![];
-        let pins: Vec<(u64, String)> = vec![];
+        let pins: Vec<(u64, String, Option<u64>)> = vec![];
+        // DLC IDs (3 with dedicated depots, matching the depots list)
+        let dlc_ids = vec![2615190u64, 3168020, 3233540];
 
         let path = generate_lua_file(
             tmp.path(),
             1971870,
             "Mortal Kombat 1",
             &depots,
+            &dlc_ids,
             &tokens,
             &pins,
         )
         .unwrap();
         let content = fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.lines().collect();
+
+        // --- Verify section comments ---
+        assert!(content.contains("-- lua by LumaForge"));
+        assert!(content.contains("-- MAIN APPLICATION"));
+        assert!(content.contains("-- MAIN APP DEPOTS"));
+        assert!(content.contains("-- SHARED DEPOTS (from other apps)"));
+        assert!(content.contains("-- DLCS WITH DEDICATED DEPOTS"));
 
         // --- Verify main app ---
         // Main app (1971870) has no key → bare addappid
@@ -643,13 +839,13 @@ mod tests {
 
         // --- Verify shared depots (with keys) ---
         assert!(
-            lines.iter().any(|l| l.contains("addappid(228989, 1, \"ad69276e")),
-            "Shared depot 228989 (VC 2022 Redist) should be present with key. Got:\n{}",
+            lines.iter().any(|l| l.contains("addappid(228989, 1, \"ad69276e") && l.contains("Shared")),
+            "Shared depot 228989 (VC 2022 Redist) should be present with key and Shared comment. Got:\n{}",
             content
         );
         assert!(
-            lines.iter().any(|l| l.contains("addappid(228990, 1, \"44d8c45c")),
-            "Shared depot 228990 (DirectX Jun 2010 Redist) should be present with key. Got:\n{}",
+            lines.iter().any(|l| l.contains("addappid(228990, 1, \"44d8c45c") && l.contains("Shared")),
+            "Shared depot 228990 (DirectX Jun 2010 Redist) should be present with key and Shared comment. Got:\n{}",
             content
         );
 
@@ -668,19 +864,22 @@ mod tests {
             );
         }
 
+        // --- Verify DLC app bare addappid entries ---
+        assert!(content.contains("addappid(2615190)"), "DLC 2615190 should have bare addappid. Got:\n{}", content);
+        assert!(content.contains("addappid(3168020)"), "DLC 3168020 should have bare addappid. Got:\n{}", content);
+        assert!(content.contains("addappid(3233540)"), "DLC 3233540 should have bare addappid. Got:\n{}", content);
+
         // --- CRITICAL: No depots without keys ---
-        // Every addappid line should either be bare (no key) for the main app only,
-        // or have a key. No depot should appear as addappid(id) without key.
+        // Bare addappid (no key) only allowed for main app and DLC app IDs with dedicated depots
+        let allowed_bare: std::collections::HashSet<u64> = [1971870u64, 2615190, 3168020, 3233540].into();
         for line in &lines {
             if let Some(l) = line.strip_prefix("addappid(") {
-                // Check if it's a bare addappid (no key)
                 if !l.contains(", 1, \"") {
-                    // Bare addappid — only allowed for main app 1971870
                     let id_str = l.trim_end_matches(')');
                     if let Ok(id) = id_str.parse::<u64>() {
-                        assert_eq!(
-                            id, 1971870,
-                            "Bare addappid (no key) only allowed for main app 1971870, found for {}. Line: {}",
+                        assert!(
+                            allowed_bare.contains(&id),
+                            "Bare addappid (no key) only allowed for main app/DLC app IDs, found for {}. Line: {}",
                             id, line
                         );
                     }
@@ -688,8 +887,7 @@ mod tests {
             }
         }
 
-        // --- Verify no depots without keys leaked ---
-        // Count total addappid lines (excluding bare main app)
+        // --- Verify keyed addappid count ---
         let keyed_count = lines.iter()
             .filter(|l| l.starts_with("addappid(") && l.contains(", 1, \""))
             .count();
@@ -700,10 +898,6 @@ mod tests {
             keyed_count,
             content
         );
-
-        // --- Verify structure matches Hubcap ---
-        assert!(content.starts_with("-- lua by LumaForge"));
-        assert!(content.contains("Mortal Kombat 1"));
     }
 
     /// Verify that depots without keys are never included in output.
@@ -713,13 +907,13 @@ mod tests {
 
         // Simulate a game with multiple depots, some without keys
         let depots = vec![
-            (100000u64, None),   // main app — no key
-            (100001, Some("aaaa".to_string())),  // depot with key
-            (100002, None),     // DLC depot WITHOUT key — should be excluded
-            (100003, Some("bbbb".to_string())),  // DLC depot with key
+            LuaDepotEntry::new(100000),   // main app — no key
+            LuaDepotEntry::new(100001).with_key("aaaa".to_string()),  // depot with key
+            LuaDepotEntry::new(100002),   // DLC depot WITHOUT key — should be excluded
+            LuaDepotEntry::new(100003).with_key("bbbb".to_string()),  // DLC depot with key
         ];
 
-        let path = generate_lua_file(tmp.path(), 100000, "Test Game", &depots, &[], &[]).unwrap();
+        let path = generate_lua_file(tmp.path(), 100000, "Test Game", &depots, &[], &[], &[]).unwrap();
         let content = fs::read_to_string(&path).unwrap();
 
         // Main app should be bare

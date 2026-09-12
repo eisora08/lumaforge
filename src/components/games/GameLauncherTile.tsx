@@ -1081,24 +1081,44 @@ function GameLauncherTileInner({
                                   }
                                 },
                               }]
-                            : [{
-                                label: t("context_menu.pin_to_current", "Pin to Current Version"),
-                                icon: <Pin className="h-3.5 w-3.5" />,
-                                onClick: async () => {
-                                  setMenuOpen(false);
-                                  try {
-                                    const { steamKeysPinToCurrent } = await import("../../services/steamKeysService");
-                                    const result = await steamKeysPinToCurrent({ app_id: Number(game.appId) });
-                                    if (result.success) {
-                                      showSuccess(result.message);
-                                    } else {
-                                      showError(result.message);
+                            : [
+                                {
+                                  label: t("context_menu.pin_to_latest", "Pin to Latest Version"),
+                                  icon: <Pin className="h-3.5 w-3.5" />,
+                                  onClick: async () => {
+                                    setMenuOpen(false);
+                                    try {
+                                      const { steamKeysPinToLatest } = await import("../../services/steamKeysService");
+                                      const result = await steamKeysPinToLatest({ app_id: Number(game.appId) });
+                                      if (result.success) {
+                                        showSuccess(result.message);
+                                      } else {
+                                        showError(result.message);
+                                      }
+                                    } catch (err) {
+                                      showError(`${t("context_menu.pin_error", "Error pinning manifests")}: ${err}`);
                                     }
-                                  } catch (err) {
-                                    showError(`${t("context_menu.pin_error", "Error pinning manifests")}: ${err}`);
-                                  }
+                                  },
                                 },
-                              }]
+                                {
+                                  label: t("context_menu.pin_to_current", "Pin to Current Version"),
+                                  icon: <Pin className="h-3.5 w-3.5" />,
+                                  onClick: async () => {
+                                    setMenuOpen(false);
+                                    try {
+                                      const { steamKeysPinToCurrent } = await import("../../services/steamKeysService");
+                                      const result = await steamKeysPinToCurrent({ app_id: Number(game.appId) });
+                                      if (result.success) {
+                                        showSuccess(result.message);
+                                      } else {
+                                        showError(result.message);
+                                      }
+                                    } catch (err) {
+                                      showError(`${t("context_menu.pin_error", "Error pinning manifests")}: ${err}`);
+                                    }
+                                  },
+                                },
+                              ]
                           ),
                         ],
                       }]

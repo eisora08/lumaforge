@@ -58,3 +58,7 @@ export interface SteamKeysUnpinAllRequest {
 export interface SteamKeysPinToCurrentRequest {
   app_id: number;
 }
+
+export interface SteamKeysPinToLatestRequest {
+  app_id: number;
+}

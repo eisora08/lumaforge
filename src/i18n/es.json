@@ -1675,6 +1675,7 @@
     "no_dlcs": "No se encontraron DLCs",
     "depot_download": "Descargar Depot",
     "pin_to_current": "Fijar a Versión Actual",
+    "pin_to_latest": "Fijar a Última Versión",
     "unpin": "Desfijar",
     "pin_error": "Error al fijar manifests",
     "unpin_error": "Error al desfijar manifests",

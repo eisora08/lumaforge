@@ -139,23 +139,45 @@ pub async fn steam_keys_generate_lua(
             .ok_or("Steam installation not found")?;
         let lua_dir = std::path::Path::new(&paths.lua_path);
 
-        // Build depot list: base game depots + DLC depots that have a key
-        let depots: Vec<(u64, Option<String>)> = app_info
-            .depots
-            .iter()
-            .filter(|d| {
-                // Always include base game depots
-                if d.dlc_app_id.is_none() || d.dlc_app_id == Some(app_id) {
-                    return true;
-                }
-                // DLC depots: only include if we have a key
-                depot_keys.contains_key(&d.depot_id)
-            })
-            .map(|d| {
+        // Build depot list with metadata for Hubcap-style section comments
+        let mut depots: Vec<lua_writer::LuaDepotEntry> = Vec::new();
+
+        // Main app's own key (the app itself is a "depot" in Steam's key system)
+        if let Some(app_key) = depot_keys.get(&app_id).cloned() {
+            depots.push(lua_writer::LuaDepotEntry::new(app_id).with_key(app_key));
+        }
+
+        // Sub-depots (base game + DLC depots that have a key)
+        for d in &app_info.depots {
+            // Skip if this depot is the main app itself (already added above)
+            if d.depot_id == app_id {
+                continue;
+            }
+            // Always include base game depots
+            if d.dlc_app_id.is_none() || d.dlc_app_id == Some(app_id) {
                 let key = depot_keys.get(&d.depot_id).cloned();
-                (d.depot_id, key)
-            })
-            .collect();
+                let mut entry = lua_writer::LuaDepotEntry::new(d.depot_id);
+                if let Some(k) = key {
+                    entry = entry.with_key(k);
+                }
+                if d.is_shared {
+                    if let Some(from) = d.from_app_id {
+                        entry = entry.with_shared(from);
+                    }
+                }
+                depots.push(entry);
+                continue;
+            }
+            // DLC depots: only include if we have a key
+            if let Some(key) = depot_keys.get(&d.depot_id).cloned() {
+                let mut entry = lua_writer::LuaDepotEntry::new(d.depot_id)
+                    .with_key(key);
+                if let Some(dlc_id) = d.dlc_app_id {
+                    entry = entry.with_dlc(dlc_id);
+                }
+                depots.push(entry);
+            }
+        }
 
         // Filter tokens: only for this app and its DLCs
         let mut relevant_ids = std::collections::HashSet::new();
@@ -168,7 +190,19 @@ pub async fn steam_keys_generate_lua(
             .filter(|(id, _)| relevant_ids.contains(id))
             .collect();
 
-        lua_writer::generate_lua_file(lua_dir, app_id, &game_name, &depots, &tokens, &[])?;
+        // Build manifest pins from depot info (public_manifest_id + size)
+        let manifest_pins: Vec<(u64, String, Option<u64>)> = app_info
+            .depots
+            .iter()
+            .filter_map(|d| {
+                d.public_manifest_id.as_ref().map(|mid| {
+                    let size = if d.size > 0 { Some(d.size) } else { None };
+                    (d.depot_id, mid.clone(), size)
+                })
+            })
+            .collect();
+
+        lua_writer::generate_lua_file(lua_dir, app_id, &game_name, &depots, &app_info.dlc_ids, &tokens, &manifest_pins)?;
 
         Ok(CommandResult {
             success: true,
@@ -195,7 +229,7 @@ pub async fn steam_keys_pin_manifest(
             return Err(format!("No Lua file found for app {}", request.app_id));
         }
 
-        lua_writer::set_manifest_pin(&lua_path, request.depot_id, &request.manifest_id, request.pinned)?;
+        lua_writer::set_manifest_pin(&lua_path, request.depot_id, &request.manifest_id, request.pinned, None)?;
 
         let action = if request.pinned { "Pinned" } else { "Unpinned" };
         Ok(CommandResult {
@@ -263,7 +297,10 @@ pub async fn steam_keys_update_all_pins(
         let existing_pins = lua_writer::parse_manifest_pins(&lua_path)?;
 
         // Convert to vec for update_all_manifest_pins
-        let pins: Vec<(u64, String)> = existing_pins.into_iter().collect();
+        let pins: Vec<(u64, String, Option<u64>)> = existing_pins
+            .into_iter()
+            .map(|(depot_id, (manifest_id, size))| (depot_id, manifest_id, size))
+            .collect();
 
         lua_writer::update_all_manifest_pins(&lua_path, &pins)?;
 
@@ -442,13 +479,51 @@ pub async fn steam_keys_pin_to_current(app_id: u64) -> Result<CommandResult, Str
         // Pin each depot
         let mut count = 0u32;
         for (depot_id, manifest_id) in &mounted {
-            lua_writer::set_manifest_pin(&lua_path, *depot_id, manifest_id, true)?;
+            lua_writer::set_manifest_pin(&lua_path, *depot_id, manifest_id, true, None)?;
             count += 1;
         }
 
         Ok(CommandResult {
             success: true,
             message: format!("Pinned {} depot(s) to current version for app {}", count, app_id),
+        })
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+/// Pin all manifests to the latest version available on Steam (fetches from SteamCMD).
+#[command]
+pub async fn steam_keys_pin_to_latest(app_id: u64) -> Result<CommandResult, String> {
+    tokio::task::spawn_blocking(move || {
+        let paths = crate::utils::path_utils::detect_steam_paths()
+            .ok_or("Steam installation not found")?;
+        let lua_dir = std::path::Path::new(&paths.lua_path);
+        let lua_path = lua_dir.join(format!("{}.lua", app_id));
+
+        if !lua_path.exists() {
+            return Err(format!("No Lua file found for app {}. Generate Lua first.", app_id));
+        }
+
+        let app_info = steamcmd_api::fetch_app_depot_info(app_id)?;
+
+        let mut count = 0u32;
+        for depot in &app_info.depots {
+            if let Some(ref manifest_id) = depot.public_manifest_id {
+                lua_writer::set_manifest_pin(
+                    &lua_path,
+                    depot.depot_id,
+                    manifest_id,
+                    true,
+                    Some(depot.size),
+                )?;
+                count += 1;
+            }
+        }
+
+        Ok(CommandResult {
+            success: true,
+            message: format!("Pinned {} depot(s) to latest version for app {}", count, app_id),
         })
     })
     .await

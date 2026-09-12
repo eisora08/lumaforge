@@ -369,6 +369,7 @@ pub fn run() {
             commands::steam_keys::steam_keys_has_pins,
             commands::steam_keys::steam_keys_unpin_all,
             commands::steam_keys::steam_keys_pin_to_current,
+            commands::steam_keys::steam_keys_pin_to_latest,
 
             commands::cloud::cloud_get_status,
             commands::cloud::cloud_get_providers,

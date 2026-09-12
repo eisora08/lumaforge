@@ -1675,6 +1675,7 @@
     "no_dlcs": "No DLCs found",
     "depot_download": "Depot Download",
     "pin_to_current": "Pin to Current Version",
+    "pin_to_latest": "Pin to Latest Version",
     "unpin": "Unpin",
     "pin_error": "Error pinning manifests",
     "unpin_error": "Error unpinning manifests",
