@@ -1328,7 +1328,7 @@ export async function buildStartupSnapshotFromCurrentState(
       appId: game.appId,
       provider: "steam",
       title,
-      installed: game.steamInstalled,
+      installed: game.steamInstalled ?? game.isInstalled,
       playable: game.isPlayable,
       favorite: game.isFavorite ?? false,
       hidden: false,

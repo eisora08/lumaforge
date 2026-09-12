@@ -154,7 +154,7 @@ export default function ActivityStats() {
           computeMasteryTiers(games),
           computeWeeklyComparison(games),
           computeAvgSessionLength(games),
-          computeTimeOfDay(games),
+          computeTimeOfDay(games, timeFilter),
         ]);
         if (!cancelled) {
           setStats(s);

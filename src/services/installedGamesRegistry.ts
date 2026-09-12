@@ -142,7 +142,7 @@ async function syncToDb(entry: InstalledGameEntry): Promise<void> {
       appId,
       providerGameId: targetExisting?.providerGameId || appId,
       libraryId: targetExisting?.libraryId || targetId,
-      isInstalled: targetExisting?.isInstalled ?? (entry.provider === "steam"),
+      isInstalled: targetExisting?.isInstalled ?? true,
       lastPlayedAt: targetExisting?.lastPlayedAt,
       playtimeSeconds: targetExisting?.playtimeSeconds ?? 0,
       playCount: targetExisting?.playCount ?? 0,

@@ -532,6 +532,7 @@ pub fn run() {
             commands::sqlite_cache::get_games_v2_by_source,
             commands::sqlite_cache::search_games_v2,
             commands::sqlite_cache::delete_game_v2,
+            commands::sqlite_cache::delete_stale_games_v2,
             commands::sqlite_cache::get_game_v2_count,
             commands::sqlite_cache::update_playtime_v2,
             commands::sqlite_cache::update_completion_status_v2,

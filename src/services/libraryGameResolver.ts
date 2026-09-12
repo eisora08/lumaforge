@@ -106,7 +106,7 @@ function buildFromLua(
     isInstalled: steamInstalled || hasDepotFiles,
     isPlayable: scripts.some((s) => !s.is_disabled) || hasDepotFiles,
     isInstallable: false,
-    steamInstalled: false,
+    steamInstalled: steamInstalled,
     installDir: depotInfo?.destDir,
     executablePath: depotInfo?.executablePath,
     linkedSteamAppId: hasDepotFiles ? appId : undefined,
@@ -221,7 +221,6 @@ export async function resolveLibraryGames(
   }
 
   // 1. Steam installed scan — this provides the PRIMARY game list
-  markSteamScanComplete();
   onProgress?.("steam", "scanning-steam-installed");
   let steamGames: SteamInstalledGame[] = [];
   try {
@@ -232,6 +231,8 @@ export async function resolveLibraryGames(
       gameScanFolders: settings.gameScanFolders.length > 0 ? settings.gameScanFolders : undefined,
     });
     onProgress?.("steam", "scanning-steam-installed", { itemsFound: steamGames.length });
+    // Mark scan complete only AFTER success so failures don't block retries for 10 minutes
+    markSteamScanComplete();
   } catch (error) {
     warnings.push(`Steam scan failed: ${error instanceof Error ? error.message : String(error)}`);
   }

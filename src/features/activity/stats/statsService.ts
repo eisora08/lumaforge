@@ -158,30 +158,33 @@ export async function computeFilteredPlaytime(games: LibraryGame[], filter: Stat
       if (!s.durationSeconds || s.durationSeconds <= 0) continue;
       const sessionEnd = s.endedAt ?? s.startedAt;
       if (sessionEnd >= cutoffSec) {
-        gameTotal += s.durationSeconds;
-        sessions.push({
-          gameTitle: game.title,
-          appId: s.gameId,
-          source: s.source as SessionHistoryEntry["source"],
-          exitReason: s.exitReason ?? undefined,
-          startedAt: s.startedAt * 1000, // convert to ms for display
-          endedAt: (s.endedAt ?? s.startedAt) * 1000,
-          durationSeconds: s.durationSeconds,
-        });
+        // Only count the portion of the session within the filter period.
+        // This handles sessions that span across the cutoff boundary
+        // and auto-closed stale sessions (endedAt set to "now" by record_play_session_start).
+        const effectiveStart = Math.max(s.startedAt, cutoffSec);
+        const effectiveDuration = Math.max(0, sessionEnd - effectiveStart);
+        if (effectiveDuration > 0) {
+          gameTotal += effectiveDuration;
+          sessions.push({
+            gameTitle: game.title,
+            appId: s.gameId,
+            source: s.source as SessionHistoryEntry["source"],
+            exitReason: s.exitReason ?? undefined,
+            startedAt: s.startedAt * 1000, // convert to ms for display
+            endedAt: (s.endedAt ?? s.startedAt) * 1000,
+            durationSeconds: effectiveDuration,
+          });
+        }
       }
     }
 
-    // Fallback: if no sessions found for this game, use playtime store total
-    // Check last_played_at to determine if game was played within the filter period
-    if (gameTotal === 0 && store) {
+    // Fallback: for "all" filter only, use playtime store total when no sessions exist
+    // For time-bounded filters (today/week/month/etc), only count actual sessions
+    // to avoid inflating the period with total accumulated playtime
+    if (gameTotal === 0 && filter === "all" && store) {
       const entry = store.games[ptKey];
       if (entry && entry.totalPlaytimeSeconds > 0) {
-        // Use lastPlayedAt from playtime store (seconds) to check if game was active in this filter period
-        if (entry.lastPlayedAt && entry.lastPlayedAt >= cutoffSec) {
-          gameTotal = entry.totalPlaytimeSeconds;
-        } else if (filter === "all") {
-          gameTotal = entry.totalPlaytimeSeconds;
-        }
+        gameTotal = entry.totalPlaytimeSeconds;
       }
     }
 
@@ -583,10 +586,24 @@ export async function buildEvalContext(games: LibraryGame[], folderAchievements?
 
   // Provider count — distinct source values across played games
   const providersSeen = new Set<string>();
-  const playedPtKeys = new Set(Object.keys(sessionsByPtKey));
+  // Build a set of ALL session-matching keys so games are found regardless of key format
+  // (sessions use "app-{id}" for Steam, but resolvePlaytimeKey returns "steam-{id}")
+  const playedSessionKeys = new Set<string>();
+  for (const [key, sessions] of sessionsByPtKey) {
+    if (sessions.length > 0) {
+      playedSessionKeys.add(key);
+      // Also add app-{appId} variant for Steam games whose ptKey is "steam-{id}"
+      if (key.startsWith("steam-")) {
+        playedSessionKeys.add(`app-${key.slice(6)}`);
+      }
+    }
+  }
   for (const game of games) {
     const ptKey = resolvePlaytimeKey(game);
-    if (ptKey && playedPtKeys.has(ptKey) && game.source) {
+    if (!ptKey || !game.source) continue;
+    // Check direct match, app-{appId} fallback, or any session key that matches
+    const appKey = game.appId ? `app-${game.appId}` : undefined;
+    if (playedSessionKeys.has(ptKey) || (appKey && playedSessionKeys.has(appKey))) {
       providersSeen.add(game.source);
     }
   }
@@ -693,9 +710,10 @@ export type TimeOfDayBucket = {
   percent: number;
 };
 
-export async function computeTimeOfDay(games: LibraryGame[]): Promise<TimeOfDayBucket[]> {
+export async function computeTimeOfDay(games: LibraryGame[], filter?: StatsTimeFilter): Promise<TimeOfDayBucket[]> {
   const allSessions = await getAllGameSessions();
   const gameKeys = buildSessionMatchKeys(games);
+  const cutoffSec = filter ? Math.floor((Date.now() - getTimeFilterMs(filter)) / 1000) : 0;
 
   const buckets = [
     { label: "Morning", hours: "6am–12pm", start: 6, end: 12, seconds: 0 },
@@ -710,8 +728,13 @@ export async function computeTimeOfDay(games: LibraryGame[]): Promise<TimeOfDayB
     const normId = normalizeSessionGameId(s.gameId);
     if (!gameKeys.has(normId) && !gameKeys.has(s.gameId)) continue;
     if (!s.durationSeconds || s.durationSeconds <= 0) continue;
+    // Apply time filter: only count sessions that overlap with the period
+    const sessionEnd = s.endedAt ?? s.startedAt;
+    if (cutoffSec > 0 && sessionEnd < cutoffSec) continue;
+    const effectiveStart = cutoffSec > 0 ? Math.max(s.startedAt, cutoffSec) : s.startedAt;
+    const durSec = cutoffSec > 0 ? Math.max(0, sessionEnd - effectiveStart) : s.durationSeconds;
+    if (durSec <= 0) continue;
     const hour = new Date(s.startedAt * 1000).getHours();
-    const durSec = s.durationSeconds;
     totalSeconds += durSec;
     for (const b of buckets) {
       if (b.start <= b.end) {

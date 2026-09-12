@@ -1556,6 +1556,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       const realInstalled: LibraryGame = {
         ...existing,
         // Real installed fields from Steam appmanifest
+        isInstalled: true,
         steamInstalled: true,
         isInstallable: false,
         isPlayable: installStatus.isInstalled,
@@ -1577,6 +1578,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
       // Phase 3: Update React in-memory state via updateGame (sync)
       updateGame(appId, {
+        isInstalled: true,
         steamInstalled: true,
         isInstallable: false,
         isPlayable: true,
@@ -1643,7 +1645,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         const { scanSteamInstalledGames: doScan } = await import("../services/tauri");
         const scanResult = await doScan({ steamPath: steamRoot });
         const installedAppIds = new Set<string>(
-          scanResult.map((g) => String(g.appId))
+          scanResult.filter((g) => g.isInstalled).map((g) => String(g.appId))
         );
 
         // â”€â”€ Check for pending uninstall that timed out (user cancelled Steam modal) â”€â”€
@@ -1703,6 +1705,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           return {
             ...g,
             steamInstalled: false,
+            isInstalled: false,
             isInstallable: true,
             isPlayable: false,
             installDir: undefined,
@@ -1719,6 +1722,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           if (game?.source === "lua" && game?.installDir) continue;
           updateGame(appId, {
             steamInstalled: false,
+            isInstalled: false,
             isInstallable: true,
             isPlayable: false,
             installDir: undefined,

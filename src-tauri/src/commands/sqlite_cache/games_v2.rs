@@ -978,3 +978,59 @@ pub fn update_completion_status_v2(
     crate::utils::progress_utils::emit_data_changed(&app, "games-upserted", "1");
     Ok(())
 }
+
+pub fn delete_stale_games_v2_inner(db: &Mutex<Connection>, active_ids: &[String]) -> Result<u64, String> {
+    if active_ids.is_empty() {
+        return Ok(0);
+    }
+    let conn = db.lock().unwrap();
+
+    // Collect all current steam/lua row IDs
+    let mut existing_ids: Vec<String> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT id FROM games_v2 WHERE id LIKE 'steam-%' OR id LIKE 'lua-%'")
+            .map_err(|e| format!("Failed to prepare stale query: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Failed to query stale rows: {}", e))?;
+        for row in rows.flatten() {
+            existing_ids.push(row);
+        }
+    }
+
+    let active_set: std::collections::HashSet<&str> = active_ids.iter().map(|s| s.as_str()).collect();
+    let stale: Vec<String> = existing_ids
+        .into_iter()
+        .filter(|id| !active_set.contains(id.as_str()))
+        .collect();
+
+    if stale.is_empty() {
+        return Ok(0);
+    }
+
+    let count = stale.len();
+    let placeholders: Vec<String> = (0..stale.len()).map(|i| format!("?{}", i + 1)).collect();
+    let sql = format!(
+        "DELETE FROM games_v2 WHERE id IN ({})",
+        placeholders.join(",")
+    );
+    let params: Vec<&dyn rusqlite::ToSql> = stale.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+    conn.execute(&sql, params.as_slice())
+        .map_err(|e| format!("Failed to delete stale games_v2: {}", e))?;
+
+    eprintln!("[GAMES_V2][RUST] deleted {} stale orphaned rows (steam/lua not in active batch)", count);
+    Ok(count as u64)
+}
+
+#[tauri::command]
+pub fn delete_stale_games_v2(
+    state: tauri::State<'_, SqliteCoreDb>,
+    active_ids: Vec<String>,
+) -> Result<u64, String> {
+    let db = state.0.as_ref();
+    let Some(db) = db else {
+        return Ok(0);
+    };
+    delete_stale_games_v2_inner(db, &active_ids)
+}

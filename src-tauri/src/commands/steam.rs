@@ -453,7 +453,10 @@ pub fn parse_appmanifest(
         .map(|p| Path::new(p).exists())
         .unwrap_or(false);
 
-    let is_installed = install_dir_exists || (state_flags.unwrap_or(0) & 4 != 0);
+    let is_installed = match state_flags {
+        Some(flags) => flags & 4 != 0,
+        None => install_dir_exists,
+    };
 
     Some(SteamInstalledGame {
         app_id,

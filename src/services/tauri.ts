@@ -2827,6 +2827,14 @@ export async function deleteGameV2(gameId: string): Promise<void> {
   }
 }
 
+export async function deleteStaleGamesV2(activeIds: string[]): Promise<number> {
+  try {
+    return await invoke<number>("delete_stale_games_v2", { activeIds });
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Unified game deletion.
  * 1. Deletes from games_v2 (CASCADE removes all child table rows)

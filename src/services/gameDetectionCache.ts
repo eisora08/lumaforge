@@ -90,7 +90,7 @@ export async function loadCachedGamesFromV2(): Promise<DetectedGamesCache | null
  */
 async function seedGamesV2FromLibraryCache(games: LibraryGame[]): Promise<void> {
   try {
-    const { batchUpsertGamesV2 } = await import("./tauri");
+    const { batchUpsertGamesV2, deleteStaleGamesV2 } = await import("./tauri");
     const { libraryGameToGameV2 } = await import("./gameV2Mapper");
 
     const entries = games
@@ -98,6 +98,12 @@ async function seedGamesV2FromLibraryCache(games: LibraryGame[]): Promise<void> 
       .map((g) => libraryGameToGameV2(g));
 
     if (entries.length === 0) return;
+
+    const activeIds = entries.map((e) => e.id).filter((id): id is string => !!id);
+    const deleted = await deleteStaleGamesV2(activeIds);
+    if (deleted > 0) {
+      console.log(`[GAMES_V2] cleaned ${deleted} orphaned steam/lua rows before upsert`);
+    }
 
     await batchUpsertGamesV2(entries);
     console.log(`[GAMES_V2] seeded ${entries.length} games into games_v2 from library_cache`);

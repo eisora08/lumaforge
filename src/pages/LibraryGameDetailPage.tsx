@@ -103,6 +103,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   if (_detailKeyRef.current !== detailKey) {
     if (DEBUG_META_TRACE) console.log(`[META_TRACE][RESET] prevKey=${_detailKeyRef.current} newKey=${detailKey} appId=${selectedGame?.appId} source=${selectedGame?.source} hasResolvedMeta=${!!resolvedGame?.metadata} resetGen=${resetGeneration}`);
     _detailKeyRef.current = detailKey;
+    // Reset running-state tracking to prevent cross-game false triggers.
+    // Without this, navigating from a running Game A to Game B's detail page
+    // would fire recordSessionEnd with stale launchInfo, marking Game B as "played".
+    prevRunningRef.current = false;
     setMetadataLoading(true);
     setMediaEntry(null);
     setCanonicalAppInfo(null);

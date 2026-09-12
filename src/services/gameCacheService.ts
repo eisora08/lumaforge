@@ -482,7 +482,9 @@ export function hasActiveInstalledLuaScript(game: LibraryGame): boolean {
 export function isSidebarInstalledGame(game: LibraryGame): boolean {
   if ((game as any).hidden === true) return false;
 
-  const steamInstalled = game.steamInstalled === true;
+  // Accept steamInstalled OR source=steam with isInstalled (covers Lua+Steam hybrids
+  // where steamInstalled might be undefined but isInstalled is set from the DB)
+  const steamInstalled = game.steamInstalled === true || (game.source === "steam" && game.isInstalled === true);
 
   const localInstalled =
     (game.source === "local" || game.source === "manual" || game.source === "emulator") &&

@@ -42,7 +42,7 @@ export function schedulePostSnapshotSteamReconciliation(
       const { scanSteamInstalledGames: doScan } = await import("./tauri");
       const scanResult = await doScan({ steamPath: steamRoot });
       markSteamScanComplete();
-      const installedAppIds = new Set(scanResult.map((g) => String(g.appId)));
+      const installedAppIds = new Set(scanResult.filter((g) => g.isInstalled).map((g) => String(g.appId)));
 
       let updatedCount = 0;
       const seen = new Set<string>();
@@ -123,15 +123,16 @@ export async function refreshSingleGameSteamStatus(
     }
 
     // Check TTL — if we recently did a full scan, skip this single-app scan
+    // (unless force is set, which bypasses all TTL guards)
     const { checkSteamScanAllowed } = await import("./libraryGameResolver");
-    if (!checkSteamScanAllowed()) {
+    if (!options.force && !checkSteamScanAllowed()) {
       console.log(`[PROVIDER][REFRESH_SKIP] appid=${appId} reason=ttl-valid`);
       return null;
     }
 
     const { scanSteamInstalledGames: doScan } = await import("./tauri");
     const scanResult = await doScan({ steamPath: steamRoot });
-    const isInstalled = scanResult.some((g) => String(g.appId) === appId);
+    const isInstalled = scanResult.some((g) => String(g.appId) === appId && g.isInstalled);
 
     _reconciledTimestamps.set(appId, now);
 
