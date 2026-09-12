@@ -3,9 +3,20 @@
 //! Implements the Authorization Code flow using the Epic Games Launcher's
 //! client credentials. Tokens are stored in an AES-256-GCM encrypted file.
 
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager};
+
+// ─── Global AppHandle ──────────────────────────────────────────────────────
+
+/// Set once during `setup()` so token functions can resolve `app_data_dir()`.
+static EPIC_AUTH_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+pub fn init_app_handle(handle: AppHandle) {
+    let _ = EPIC_AUTH_HANDLE.set(handle);
+}
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -177,7 +188,7 @@ pub struct CatalogFetchResult {
 // ─── Token storage (AES-256-GCM encrypted file) ───────────────────────────
 //
 // Matches the Achievements reference approach: tokens are stored in an
-// encrypted file at {data_local_dir}/lumaforge/epic_tokens.enc.
+// encrypted file at app_data_dir()/epic_tokens.enc.
 // Encryption uses AES-256-GCM with a scrypt-derived key.
 
 use aes_gcm::{
@@ -213,10 +224,16 @@ fn derive_key(passphrase: &[u8], salt: &[u8]) -> [u8; 32] {
 }
 
 /// Resolve the path to the encrypted token file.
+///
+/// Lives in `app_data_dir()` (`%APPDATA%/com.einey.lumaforge/`) alongside
+/// every other piece of app state.
 fn resolve_token_file() -> std::path::PathBuf {
-    let base = dirs::data_local_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    base.join("lumaforge").join(TOKEN_FILE_NAME)
+    let handle = EPIC_AUTH_HANDLE.get().expect("app handle not initialized");
+    handle
+        .path()
+        .app_data_dir()
+        .map(|d| d.join(TOKEN_FILE_NAME))
+        .unwrap_or_else(|_| std::path::PathBuf::from(".").join(TOKEN_FILE_NAME))
 }
 
 /// Encrypt a JSON string using AES-256-GCM.
