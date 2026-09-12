@@ -11,6 +11,8 @@ use crate::utils::lua_parser;
 use crate::utils::manifest_parser;
 use crate::utils::progress_utils::emit_installer_progress;
 
+const DEBUG_DEPOT_DOWNLOADER: bool = false;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -85,10 +87,12 @@ fn kill_by_job_id(job_id: &str) -> bool {
         }
     };
 
-    println!(
-        "[DEPOT_DOWNLOADER] Killing process {} for job {}",
-        pid, job_id
-    );
+    if DEBUG_DEPOT_DOWNLOADER {
+        println!(
+            "[DEPOT_DOWNLOADER] Killing process {} for job {}",
+            pid, job_id
+        );
+    }
 
     // Kill the process on Windows
     #[cfg(target_os = "windows")]
@@ -100,14 +104,16 @@ fn kill_by_job_id(job_id: &str) -> bool {
         {
             Ok(out) if !out.status.success() => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                println!(
-                    "[DEPOT_DOWNLOADER] taskkill for PID {} returned non-zero: {}",
-                    pid,
-                    stderr.trim()
-                );
+                if DEBUG_DEPOT_DOWNLOADER {
+                    println!(
+                        "[DEPOT_DOWNLOADER] taskkill for PID {} returned non-zero: {}",
+                        pid,
+                        stderr.trim()
+                    );
+                }
             }
             Err(e) => {
-                println!("[DEPOT_DOWNLOADER] taskkill failed for PID {}: {}", pid, e);
+                if DEBUG_DEPOT_DOWNLOADER { println!("[DEPOT_DOWNLOADER] taskkill failed for PID {}: {}", pid, e); }
             }
             _ => {}
         }
@@ -287,10 +293,12 @@ async fn spawn_depot_download(
         args.push("-validate".to_string());
     }
 
-    println!(
-        "[DEPOT_DOWNLOADER] Spawning for depot {}: {:?}",
-        depot_id, args
-    );
+    if DEBUG_DEPOT_DOWNLOADER {
+        println!(
+            "[DEPOT_DOWNLOADER] Spawning for depot {}: {:?}",
+            depot_id, args
+        );
+    }
 
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(&args)
@@ -418,7 +426,7 @@ async fn spawn_depot_download(
             // Log meaningful lines
             let trimmed = line.trim();
             if !trimmed.is_empty() && !trimmed.starts_with("at ") {
-                println!("[DEPOT_DOWNLOADER][depot={}] {}", depot_id, trimmed);
+                if DEBUG_DEPOT_DOWNLOADER { println!("[DEPOT_DOWNLOADER][depot={}] {}", depot_id, trimmed); }
             }
         }
     });
@@ -480,7 +488,7 @@ async fn spawn_depot_download(
             Err(_) => {
                 // Timeout - check silence
                 if start.elapsed() > silence_timeout {
-                    println!("[DEPOT_DOWNLOADER] Silence timeout, killing process");
+                    if DEBUG_DEPOT_DOWNLOADER { println!("[DEPOT_DOWNLOADER] Silence timeout, killing process"); }
                     let _ = child.kill().await;
                     let _ = stdout_handle.await;
                     unregister_pid(&job_id);
@@ -677,10 +685,12 @@ pub async fn depot_downloader_start(
         let manifest_path = PathBuf::from(&depot.manifest_path);
 
         if !manifest_path.exists() {
-            println!(
-                "[DEPOT_DOWNLOADER] Manifest not found for depot {}, skipping",
-                depot.depot_id
-            );
+            if DEBUG_DEPOT_DOWNLOADER {
+                println!(
+                    "[DEPOT_DOWNLOADER] Manifest not found for depot {}, skipping",
+                    depot.depot_id
+                );
+            }
             continue;
         }
 
@@ -778,7 +788,7 @@ pub fn depot_downloader_cancel(
     app_handle: AppHandle,
     job_id: String,
 ) -> Result<(), String> {
-    println!("[DEPOT_DOWNLOADER] Cancel requested for job {}", job_id);
+    if DEBUG_DEPOT_DOWNLOADER { println!("[DEPOT_DOWNLOADER] Cancel requested for job {}", job_id); }
     mark_cancelled(&job_id);
     let killed = kill_by_job_id(&job_id);
     if killed {
@@ -802,7 +812,7 @@ pub fn depot_downloader_pause(
     app_handle: AppHandle,
     job_id: String,
 ) -> Result<(), String> {
-    println!("[DEPOT_DOWNLOADER] Pause requested for job {}", job_id);
+    if DEBUG_DEPOT_DOWNLOADER { println!("[DEPOT_DOWNLOADER] Pause requested for job {}", job_id); }
     mark_cancelled(&job_id);
     let killed = kill_by_job_id(&job_id);
     if killed {

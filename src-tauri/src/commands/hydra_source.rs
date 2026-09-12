@@ -11,6 +11,8 @@ use tokio::sync::oneshot;
 use crate::commands::repack_catalog::RepackCatalogArtifact;
 use crate::commands::sqlite_cache::SqliteStoreDb;
 
+const DEBUG_HYDRA: bool = false;
+
 // ── Types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -909,7 +911,7 @@ pub(crate) async fn fetch_url_via_webview_impl(
     let window = match app_handle.get_webview_window(label) {
         Some(w) => w,
         None => {
-            eprintln!("[WEBVIEW_FETCH] creating hidden webview");
+            if DEBUG_HYDRA { eprintln!("[WEBVIEW_FETCH] creating hidden webview"); }
             tauri::WebviewWindowBuilder::new(
                 app_handle,
                 label,
@@ -967,12 +969,14 @@ pub(crate) async fn fetch_url_via_webview_impl(
         );
         let _ = window.eval(&invoke_js);
 
-        eprintln!(
-            "[WEBVIEW_FETCH] attempt={}/{} url={}",
-            attempt,
-            max_attempts,
-            if url.len() > 100 { &url[..100] } else { url },
-        );
+        if DEBUG_HYDRA {
+            eprintln!(
+                "[WEBVIEW_FETCH] attempt={}/{} url={}",
+                attempt,
+                max_attempts,
+                if url.len() > 100 { &url[..100] } else { url },
+            );
+        }
 
         // Wait for callback with 3s timeout
         tokio::select! {
@@ -980,23 +984,23 @@ pub(crate) async fn fetch_url_via_webview_impl(
                 let _ = PENDING_FETCHES.lock().map(|mut m| m.remove(&callback_id));
                 match result {
                     Ok(content) if !content.is_empty() && content.len() > 50 => {
-                        eprintln!("[WEBVIEW_FETCH] success attempt={} len={}", attempt, content.len());
+                        if DEBUG_HYDRA { eprintln!("[WEBVIEW_FETCH] success attempt={} len={}", attempt, content.len()); }
                         return Ok(content);
                     }
                     Ok(c) => {
-                        eprintln!("[WEBVIEW_FETCH] empty/short content attempt={} len={}", attempt, c.len());
+                        if DEBUG_HYDRA { eprintln!("[WEBVIEW_FETCH] empty/short content attempt={} len={}", attempt, c.len()); }
                         // Navigate back to target URL for retry — Cloudflare restarts
                         let _ = window.navigate(target.clone());
                     }
                     Err(_) => {
-                        eprintln!("[WEBVIEW_FETCH] rx cancelled attempt={}", attempt);
+                        if DEBUG_HYDRA { eprintln!("[WEBVIEW_FETCH] rx cancelled attempt={}", attempt); }
                         let _ = window.navigate(target.clone());
                     }
                 }
             }
             _ = tokio::time::sleep(Duration::from_secs(3)) => {
                 let _ = PENDING_FETCHES.lock().map(|mut m| m.remove(&callback_id));
-                eprintln!("[WEBVIEW_FETCH] timeout attempt={}", attempt);
+                if DEBUG_HYDRA { eprintln!("[WEBVIEW_FETCH] timeout attempt={}", attempt); }
                 let _ = window.navigate(target.clone());
             }
         }

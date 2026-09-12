@@ -552,14 +552,14 @@ fn kv_extract_schema(data: &serde_json::Value) -> Vec<SteamAppcacheSchemaEntry> 
 
   // Pre-build stat definitions map for progress metadata resolution
   let stat_defs = extract_stat_definitions(data);
-  eprintln!("[KV][SCHEMA] stat_defs count={}", stat_defs.len());
+  if DEBUG_ACH_SCHEMA { eprintln!("[KV][SCHEMA] stat_defs count={}", stat_defs.len()); }
 
   fn walk(obj: &Value, path: &[&str], result: &mut Vec<SteamAppcacheSchemaEntry>, seen: &mut std::collections::HashSet<String>, stat_defs: &std::collections::HashMap<String, (u32, Option<f64>, Option<f64>)>) {
     if let Value::Object(map) = obj {
       // PATH 1 (modern): Any node with a `bits` object — no type gate
       if let Some(Value::Object(bits)) = map.get("bits") {
         let stat_id = path.last().and_then(|s| s.parse::<u32>().ok());
-        eprintln!("[KV][SCHEMA] Found bits node at path {:?} stat_id={:?}", path, stat_id);
+        if DEBUG_ACH_SCHEMA { eprintln!("[KV][SCHEMA] Found bits node at path {:?} stat_id={:?}", path, stat_id); }
         for (bit_key, bit_val) in bits {
           let bit = bit_val.get("bit")
             .and_then(|v| v.as_u64())
@@ -646,7 +646,7 @@ fn kv_extract_schema(data: &serde_json::Value) -> Vec<SteamAppcacheSchemaEntry> 
 
           if stat_id.is_some() && bit.is_some() {
             seen.insert(api_name.clone());
-            eprintln!("[KV][SCHEMA] Pushing entry: api_name={} stat_id={:?} bit={:?} progress_stat_id={:?}", api_name, stat_id, bit, progress_stat_id);
+            if DEBUG_ACH_SCHEMA { eprintln!("[KV][SCHEMA] Pushing entry: api_name={} stat_id={:?} bit={:?} progress_stat_id={:?}", api_name, stat_id, bit, progress_stat_id); }
             result.push(SteamAppcacheSchemaEntry {
               api_name,
               display_name,
@@ -661,7 +661,7 @@ fn kv_extract_schema(data: &serde_json::Value) -> Vec<SteamAppcacheSchemaEntry> 
               progress_max,
             });
           } else {
-            eprintln!("[KV][SCHEMA] Skipping entry: api_name={} stat_id={:?} bit={:?} (missing required fields)", api_name, stat_id, bit);
+            if DEBUG_ACH_SCHEMA { eprintln!("[KV][SCHEMA] Skipping entry: api_name={} stat_id={:?} bit={:?} (missing required fields)", api_name, stat_id, bit); }
           }
         }
       }
@@ -743,7 +743,7 @@ fn kv_extract_schema(data: &serde_json::Value) -> Vec<SteamAppcacheSchemaEntry> 
   let with_stat_id = result.iter().filter(|e| e.stat_id.is_some()).count();
   let with_bit = result.iter().filter(|e| e.bit.is_some()).count();
   let with_progress = result.iter().filter(|e| e.progress_stat_id.is_some()).count();
-  eprintln!("[KV][SCHEMA] Walk complete: total={} with_stat_id={} with_bit={} with_progress={}", result.len(), with_stat_id, with_bit, with_progress);
+  if DEBUG_ACH_SCHEMA { eprintln!("[KV][SCHEMA] Walk complete: total={} with_stat_id={} with_bit={} with_progress={}", result.len(), with_stat_id, with_bit, with_progress); }
   result
 }
 

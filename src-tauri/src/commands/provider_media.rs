@@ -5,6 +5,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::utils::image_utils;
 
+const DEBUG_PROVIDER_MEDIA: bool = false;
+
 // ---------------------------------------------------------------------------
 // Provider-aware media file operations.
 // Path convention: games/<provider>/<providerGameId>/media/<role>.<ext>
@@ -201,10 +203,12 @@ pub fn save_provider_media_from_path(
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 if stem == role && path != dest_path {
                     if fs::remove_file(&path).is_ok() {
-                        println!(
-                            "[PROVIDER_MEDIA][CLEANUP_OLD] provider={} game={} role={} deleted={:?}",
-                            provider, provider_game_id, role, path
-                        );
+                        if DEBUG_PROVIDER_MEDIA {
+                            println!(
+                                "[PROVIDER_MEDIA][CLEANUP_OLD] provider={} game={} role={} deleted={:?}",
+                                provider, provider_game_id, role, path
+                            );
+                        }
                     }
                 }
             }
@@ -244,10 +248,12 @@ pub fn save_provider_media_from_path(
     }
 
     let rel = relative_media_path(&provider, &provider_game_id, &role, &ext)?;
-    println!(
-        "[PROVIDER_MEDIA][SAVED] provider={} game={} role={} path={}",
-        provider, provider_game_id, role, rel
-    );
+    if DEBUG_PROVIDER_MEDIA {
+        println!(
+            "[PROVIDER_MEDIA][SAVED] provider={} game={} role={} path={}",
+            provider, provider_game_id, role, rel
+        );
+    }
     Ok(rel)
 }
 
@@ -286,10 +292,12 @@ pub async fn download_provider_media_from_url(
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     if stem == role {
                         if fs::remove_file(&path).is_ok() {
-                            println!(
-                                "[PROVIDER_MEDIA][FORCE_DELETE] provider={} game={} role={} path={:?}",
-                                provider, provider_game_id, role, path
-                            );
+                            if DEBUG_PROVIDER_MEDIA {
+                                println!(
+                                    "[PROVIDER_MEDIA][FORCE_DELETE] provider={} game={} role={} path={:?}",
+                                    provider, provider_game_id, role, path
+                                );
+                            }
                         }
                     }
                 }
@@ -392,14 +400,16 @@ pub async fn download_provider_media_from_url(
     }
 
     let rel = relative_media_path(&provider, &provider_game_id, &role, &ext)?;
-    println!(
-        "[PROVIDER_MEDIA][DOWNLOADED] provider={} game={} role={} path={} bytes={}",
-        provider,
-        provider_game_id,
-        role,
-        rel,
-        bytes.len()
-    );
+    if DEBUG_PROVIDER_MEDIA {
+        println!(
+            "[PROVIDER_MEDIA][DOWNLOADED] provider={} game={} role={} path={} bytes={}",
+            provider,
+            provider_game_id,
+            role,
+            rel,
+            bytes.len()
+        );
+    }
     Ok(rel)
 }
 
@@ -430,10 +440,12 @@ pub fn delete_provider_media_file(
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 if stem == role {
                     if fs::remove_file(&path).is_ok() {
-                        println!(
-                            "[PROVIDER_MEDIA][DELETED] provider={} game={} role={} path={:?}",
-                            provider, provider_game_id, role, path
-                        );
+                        if DEBUG_PROVIDER_MEDIA {
+                            println!(
+                                "[PROVIDER_MEDIA][DELETED] provider={} game={} role={} path={:?}",
+                                provider, provider_game_id, role, path
+                            );
+                        }
                         deleted = true;
                     }
                 }
@@ -442,10 +454,12 @@ pub fn delete_provider_media_file(
     }
 
     if !deleted {
-        println!(
-            "[PROVIDER_MEDIA][DELETE_SKIP] provider={} game={} role={} reason=not-found",
-            provider, provider_game_id, role
-        );
+        if DEBUG_PROVIDER_MEDIA {
+            println!(
+                "[PROVIDER_MEDIA][DELETE_SKIP] provider={} game={} role={} reason=not-found",
+                provider, provider_game_id, role
+            );
+        }
     }
 
     Ok(())
@@ -513,10 +527,12 @@ pub fn save_provider_media_from_base64(
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 if stem == role && path != dest_path {
                     if fs::remove_file(&path).is_ok() {
-                        println!(
-                            "[PROVIDER_MEDIA][CLEANUP_OLD] provider={} game={} role={} deleted={:?}",
-                            provider, provider_game_id, role, path
-                        );
+                        if DEBUG_PROVIDER_MEDIA {
+                            println!(
+                                "[PROVIDER_MEDIA][CLEANUP_OLD] provider={} game={} role={} deleted={:?}",
+                                provider, provider_game_id, role, path
+                            );
+                        }
                     }
                 }
             }
@@ -542,10 +558,12 @@ pub fn save_provider_media_from_base64(
     }
 
     let rel = relative_media_path(&provider, &provider_game_id, &role, &safe_ext)?;
-    println!(
-        "[PROVIDER_MEDIA][SAVED_BASE64] provider={} game={} role={} path={} bytes={}",
-        provider, provider_game_id, role, rel, decoded.len()
-    );
+    if DEBUG_PROVIDER_MEDIA {
+        println!(
+            "[PROVIDER_MEDIA][SAVED_BASE64] provider={} game={} role={} path={} bytes={}",
+            provider, provider_game_id, role, rel, decoded.len()
+        );
+    }
     Ok(rel)
 }
 
@@ -670,10 +688,12 @@ pub fn list_provider_media_files(
         }
     }
 
-    println!(
-        "[PROVIDER_MEDIA][LIST] provider={} game={} files={}",
-        safe_provider, safe_id, results.len()
-    );
+    if DEBUG_PROVIDER_MEDIA {
+        println!(
+            "[PROVIDER_MEDIA][LIST] provider={} game={} files={}",
+            safe_provider, safe_id, results.len()
+        );
+    }
     Ok(results)
 }
 

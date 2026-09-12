@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::SqliteCoreDb;
 
+// Disable verbose games_v2 debug logs by default
+const DEBUG_GAMES_V2_VERBOSE: bool = false;
+
 // ---------------------------------------------------------------------------
 // games_v2 — unified game table (migration v5+)
 // ---------------------------------------------------------------------------
@@ -406,14 +409,16 @@ pub fn batch_upsert_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> 
     tx.commit()
         .map_err(|e| format!("Failed to commit transaction: {}", e))?;
 
-    let after_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM games_v2", [], |row| row.get(0))
-        .unwrap_or(-1);
-    println!(
-        "[GAMES_V2][RUST] batch_upsert committed {} games, total in DB now: {}",
-        games.len(),
-        after_count
-    );
+    if DEBUG_GAMES_V2_VERBOSE {
+        let after_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM games_v2", [], |row| row.get(0))
+            .unwrap_or(-1);
+        println!(
+            "[GAMES_V2][RUST] batch_upsert committed {} games, total in DB now: {}",
+            games.len(),
+            after_count
+        );
+    }
     Ok(())
 }
 
@@ -522,7 +527,9 @@ pub fn get_all_games_v2_inner(db: &Mutex<Connection>) -> Result<Vec<GameV2>, Str
     for row in rows {
         games.push(row.map_err(|e| format!("Failed to map game_v2 row: {}", e))?);
     }
-    println!("[GAMES_V2][RUST] get_all_games_v2: total_rows={} returned={}", total, games.len());
+    if DEBUG_GAMES_V2_VERBOSE {
+        println!("[GAMES_V2][RUST] get_all_games_v2: total_rows={} returned={}", total, games.len());
+    }
     Ok(games)
 }
 
@@ -559,7 +566,9 @@ pub fn get_games_v2_by_source_inner(
     for row in rows {
         games.push(row.map_err(|e| format!("Failed to map game_v2 row: {}", e))?);
     }
-    println!("[GAMES_V2][RUST] get_by_source '{}' total_in_db={} source_count={} returned={}", source, total, source_count, games.len());
+    if DEBUG_GAMES_V2_VERBOSE {
+        println!("[GAMES_V2][RUST] get_by_source '{}' total_in_db={} source_count={} returned={}", source, total, source_count, games.len());
+    }
     Ok(games)
 }
 

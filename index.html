@@ -9,6 +9,10 @@
 
   <body style="background: #181114; margin: 0; overflow: hidden;">
     <div id="root"></div>
+    <script>
+      // Silence diagnostic console.log (set window.__LUMAFORGE_DEBUG=true in devtools to re-enable)
+      if (!window.__LUMAFORGE_DEBUG) { console.log = function(){}; }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

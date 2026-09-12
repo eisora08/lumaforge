@@ -3,8 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use serde::Serialize;
 
+const DEBUG_STEAM_SCAN: bool = false;
+
 fn debug_log(msg: impl std::fmt::Display) {
-    eprintln!("[steam-scan] {}", msg);
+    if DEBUG_STEAM_SCAN { eprintln!("[steam-scan] {}", msg); }
 }
 
 use crate::models::steam_installed_game::SteamInstalledGame;

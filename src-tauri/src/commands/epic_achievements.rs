@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use super::epic_auth;
 
+const DEBUG_EPIC_ACH: bool = false;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -212,7 +214,7 @@ pub async fn epic_fetch_achievement_schema(
     if !product_id.is_empty() && product_id != namespace_id {
         ids_to_try.push(&product_id);
     }
-    eprintln!("[EPIC_ACH] schema_fetch product_id={product_id} namespace_id={namespace_id} ids_to_try={ids_to_try:?}");
+    if DEBUG_EPIC_ACH { eprintln!("[EPIC_ACH] schema_fetch product_id={product_id} namespace_id={namespace_id} ids_to_try={ids_to_try:?}"); }
     // If both empty, nothing to try
     if ids_to_try.is_empty() {
         return Ok(EpicAchievementSchema {
@@ -225,7 +227,7 @@ pub async fn epic_fetch_achievement_schema(
     // Try REST API (public, no auth needed) with each ID
     for id in &ids_to_try {
         let schema = fetch_schema_rest(id).await?;
-        eprintln!("[EPIC_ACH] REST try id={id} achievements={} discovered_product_id={}", schema.achievements.len(), schema.product_id);
+        if DEBUG_EPIC_ACH { eprintln!("[EPIC_ACH] REST try id={id} achievements={} discovered_product_id={}", schema.achievements.len(), schema.product_id); }
         if !schema.achievements.is_empty() {
             return Ok(EpicAchievementSchema {
                 product_id: schema.product_id,
@@ -336,7 +338,7 @@ pub async fn epic_fetch_player_achievements(
 
     // Log raw response for debugging (truncate to 2000 chars)
     let preview = if text.len() > 2000 { &text[..2000] } else { &text };
-    eprintln!("[EPIC_ACH] GraphQL player progress response ({} chars): {}", text.len(), preview);
+    if DEBUG_EPIC_ACH { eprintln!("[EPIC_ACH] GraphQL player progress response ({} chars): {}", text.len(), preview); }
 
     if !status.is_success() {
         return Err(format!("Epic GraphQL error ({status}): {text}"));
@@ -375,7 +377,7 @@ pub async fn epic_fetch_player_achievements(
         let pa_debug = profile.product_achievements.as_ref().map(|pa| {
             format!("productAchievements={{ data=None }}")
         }).unwrap_or_else(|| "productAchievements=None".to_string());
-        eprintln!("[EPIC_ACH] player progress: {} — returning empty", pa_debug);
+        if DEBUG_EPIC_ACH { eprintln!("[EPIC_ACH] player progress: {} — returning empty", pa_debug); }
         return Ok(Vec::new());
     }
 
@@ -395,7 +397,7 @@ pub async fn epic_fetch_player_achievements(
         }
     }
 
-    eprintln!("[EPIC_ACH] player progress: got {} achievements", result.len());
+    if DEBUG_EPIC_ACH { eprintln!("[EPIC_ACH] player progress: got {} achievements", result.len()); }
     Ok(result)
 }
 

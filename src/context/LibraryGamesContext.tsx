@@ -1073,7 +1073,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     if (isIntegrationScanOnStartup("debrid")) {
       refreshDebridGames()
         .then(syncDebridTitlesNow)
-        .catch((err) => console.warn("[DEBRID] initial refresh:", err));
+        .catch((err) => { if (import.meta.env.DEV && false) console.warn("[DEBRID] initial refresh:", err); });
     }
 
     return subscribeDebridGames(() => {

@@ -9,8 +9,10 @@ use crate::models::steam_installed_game::SteamInstalledGame;
 
 const BATCH_SIZE: usize = 10;
 
+const DEBUG_STEAM_INDEX: bool = false;
+
 fn debug_log(msg: impl std::fmt::Display) {
-    eprintln!("[steam-index] {}", msg);
+    if DEBUG_STEAM_INDEX { eprintln!("[steam-index] {}", msg); }
 }
 
 fn collect_all_steamapps_dirs(

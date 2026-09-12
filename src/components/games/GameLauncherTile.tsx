@@ -532,7 +532,7 @@ function GameLauncherTileInner({
       console.log(`[PACKAGE][CARD_UPDATE_SUCCESS] appid=${game.appId} provider=${providerId}`);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      console.error(`[PACKAGE][CARD_UPDATE_FAILED] appid=${game.appId} provider=${providerId} error=${errMsg}`);
+      if (import.meta.env.DEV && false) console.error(`[PACKAGE][CARD_UPDATE_FAILED] appid=${game.appId} provider=${providerId} error=${errMsg}`);
 
       // Parse HTTP status from error message for auth/rate-limit handling
       const statusMatch = errMsg.match(/Status:\s*(\d{3})/);

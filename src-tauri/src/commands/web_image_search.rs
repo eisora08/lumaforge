@@ -11,6 +11,8 @@ type ImageCache = StdMutex<HashMap<String, (Instant, Vec<ImageResult>)>>;
 static IMAGE_QUERY_CACHE: LazyLock<ImageCache> = LazyLock::new(|| StdMutex::new(HashMap::new()));
 const IMAGE_CACHE_TTL_SECS: u64 = 60;
 
+const DEBUG_DDG: bool = false;
+
 /// Serializes all WebView-based fetches to prevent concurrent window manipulation.
 static WEBVIEW_IMAGE_FETCH_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
@@ -175,7 +177,7 @@ async fn search_duckduckgo_via_webview(
         let cache = IMAGE_QUERY_CACHE.lock().unwrap();
         if let Some((ts, cached)) = cache.get(&cache_key) {
             if ts.elapsed().as_secs() < IMAGE_CACHE_TTL_SECS && !cached.is_empty() {
-                eprintln!("[DDG] cache hit '{}' ({} images)", query, cached.len());
+                if DEBUG_DDG { eprintln!("[DDG] cache hit '{}' ({} images)", query, cached.len()); }
                 return Ok(cached.clone());
             }
         }
@@ -186,15 +188,17 @@ async fn search_duckduckgo_via_webview(
 
     // Step 2: Parse the i.js JSON response
     let images = parse_ddg_json(&json_str);
-    eprintln!(
-        "[DDG] i.js parse: {} images from {} bytes JSON",
-        images.len(),
-        json_str.len()
-    );
+    if DEBUG_DDG {
+        eprintln!(
+            "[DDG] i.js parse: {} images from {} bytes JSON",
+            images.len(),
+            json_str.len()
+        );
+    }
 
     if images.is_empty() {
         // Fallback: try parsing HTML in case i.js returned empty/malformed
-        eprintln!("[DDG] i.js returned no images, falling back to HTML parse");
+        if DEBUG_DDG { eprintln!("[DDG] i.js returned no images, falling back to HTML parse"); }
         let html = fetch_html_via_webview(app_handle, &ddg_url, "ddg-image-search", 5).await?;
         let images = parse_ddg_html(&html);
         if images.is_empty() {
@@ -319,24 +323,26 @@ async fn fetch_ddg_ivals_via_webview(
 
         match tokio::time::timeout(tokio::time::Duration::from_secs(15), rx).await {
             Ok(Ok(content)) if content.contains("\"results\"") && !content.contains("\"results\":[]") => {
-                eprintln!(
-                    "[DDG_WV] success attempt={} len={}",
-                    attempt,
-                    content.len()
-                );
+                if DEBUG_DDG {
+                    eprintln!(
+                        "[DDG_WV] success attempt={} len={}",
+                        attempt,
+                        content.len()
+                    );
+                }
                 return Ok(content);
             }
             Ok(Ok(c)) => {
-                eprintln!("[DDG_WV] empty/error results attempt={} preview={}", attempt, &c[..c.len().min(200)]);
+                if DEBUG_DDG { eprintln!("[DDG_WV] empty/error results attempt={} preview={}", attempt, &c[..c.len().min(200)]); }
                 // Re-navigate and retry
                 let _ = window.navigate(target.clone());
             }
             Ok(Err(_)) => {
-                eprintln!("[DDG_WV] rx cancelled attempt={}", attempt);
+                if DEBUG_DDG { eprintln!("[DDG_WV] rx cancelled attempt={}", attempt); }
                 let _ = window.navigate(target.clone());
             }
             Err(_) => {
-                eprintln!("[DDG_WV] timeout attempt={}", attempt);
+                if DEBUG_DDG { eprintln!("[DDG_WV] timeout attempt={}", attempt); }
                 let _ = window.navigate(target.clone());
             }
         }
