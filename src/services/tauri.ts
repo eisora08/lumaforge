@@ -2353,10 +2353,11 @@ export type BackupManifestJson = {
 };
 
 export async function writeBackupArchive(
-  backupJson: string,
+  manifestJson: string,
+  filesJson: string,
   filename: string,
 ): Promise<string> {
-  return await invoke<string>("write_backup_archive", { backupJson, filename });
+  return await invoke<string>("write_backup_archive", { manifestJson, filesJson, filename });
 }
 
 export async function readBackupArchive(filename: string): Promise<string> {
@@ -2830,6 +2831,22 @@ export async function deleteGameV2(gameId: string): Promise<void> {
 export async function deleteStaleGamesV2(activeIds: string[]): Promise<number> {
   try {
     return await invoke<number>("delete_stale_games_v2", { activeIds });
+  } catch {
+    return 0;
+  }
+}
+
+export async function exportGamesV2(): Promise<GameV2[]> {
+  try {
+    return await invoke<GameV2[]>("export_games_v2");
+  } catch {
+    return [];
+  }
+}
+
+export async function importGamesV2(games: GameV2[]): Promise<number> {
+  try {
+    return await invoke<number>("import_games_v2", { games });
   } catch {
     return 0;
   }

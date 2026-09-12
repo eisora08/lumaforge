@@ -94,9 +94,9 @@ const AUDIT_STATUS_STYLES: Record<SectionAuditStatus, { badge: string; labelKey:
 
 export default function BackupSection() {
   const { t } = useTranslation();
-  const [selectedPreset, setSelectedPreset] = useState<string>("essentials");
+  const [selectedPreset, setSelectedPreset] = useState<string>("quick");
   const [customSections, setCustomSections] = useState<Set<BackupSectionType>>(
-    new Set(["settings", "integrations", "favorites", "profile"])
+    new Set(["settings", "gameLibrary"])
   );
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<{
@@ -115,6 +115,7 @@ export default function BackupSection() {
   const [previewLegacyData, setPreviewLegacyData] = useState<Record<string, unknown> | null>(null);
   const [previewing, setPreviewing] = useState<string | null>(null);
   const [selectedRestoreSections, setSelectedRestoreSections] = useState<Set<string> | null>(null);
+  const [selectedRestoreFiles, setSelectedRestoreFiles] = useState<Set<string> | null>(null);
   const [restoreWriteSet, setRestoreWriteSet] = useState<BackupWriteSet | null>(null);
   const [restoreResult, setRestoreResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
   const previewPanelRef = useRef<HTMLDivElement>(null);
@@ -160,19 +161,23 @@ export default function BackupSection() {
     try {
       const { manifest, files } = await collectBackupData(activeSections);
 
+      const manifestJson = JSON.stringify(manifest);
+      const filesJson = JSON.stringify(
+        Object.fromEntries(files.map((f) => [f.relativePath, f.data])),
+      );
+
+      const filename = `lumaforge-backup-${manifest.backupId}.zip`;
+      await writeBackupArchive(manifestJson, filesJson, filename);
+
       const exportData = JSON.stringify({
         manifest,
         data: Object.fromEntries(files.map((f) => [f.relativePath, f.data])),
       }, null, 2);
-
-      const filename = `lumaforge-backup-${manifest.backupId}.json`;
-      await writeBackupArchive(exportData, filename);
-
       const blob = new Blob([exportData], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = filename;
+      a.download = filename.replace(".zip", ".json");
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -275,6 +280,7 @@ export default function BackupSection() {
         writeSet,
       });
       setSelectedRestoreSections(restoreableSections);
+      setSelectedRestoreFiles(new Set(manifest.files.map((f) => f.relativePath)));
       setRestoreWriteSet(writeSet);
       setPreviewLegacyData(null);
       setRestoreResult(null);
@@ -325,7 +331,7 @@ export default function BackupSection() {
 
           setRestoreStage("refreshing-runtime");
           setStageDetail("Applying theme changes");
-          dispatchRestoreRefreshForSections(["uiPreferences"]);
+          dispatchRestoreRefreshForSections(["settings"]);
 
           setRestoreStage("complete");
           setRestoreResult({ success: true, message: "Legacy theme and surface mode restored. Full settings were not overwritten." });
@@ -357,12 +363,13 @@ export default function BackupSection() {
       // Stage 2: Prepare sections
       setRestoreStage("preparing-sections");
       const sectionsToRestore = selectedRestoreSections ?? new Set(manifest.files.map((f) => f.section));
-      setStageDetail(`Preparing ${sectionsToRestore.size} section(s)`);
+      const filesToRestore = selectedRestoreFiles ?? new Set(manifest.files.map((f) => f.relativePath));
+      setStageDetail(`Preparing ${sectionsToRestore.size} section(s), ${filesToRestore.size} file(s)`);
 
       // Stage 2.5: Restore external files (Lua scripts + achievement data) to disk via Rust
       // Lua files
       const luaPaths = manifest.files
-        .filter((f) => sectionsToRestore.has(f.section) && f.relativePath.startsWith("steam/lua/"))
+        .filter((f) => sectionsToRestore.has(f.section) && filesToRestore.has(f.relativePath) && f.relativePath.startsWith("steam/lua/"))
         .map((f) => f.relativePath);
 
       if (luaPaths.length > 0) {
@@ -393,7 +400,7 @@ export default function BackupSection() {
 
       // Achievement data files
       const achievementPaths = manifest.files
-        .filter((f) => sectionsToRestore.has(f.section) && f.relativePath.startsWith("steam/achievements/"))
+        .filter((f) => sectionsToRestore.has(f.section) && filesToRestore.has(f.relativePath) && f.relativePath.startsWith("steam/achievements/"))
         .map((f) => f.relativePath);
 
       if (achievementPaths.length > 0) {
@@ -411,10 +418,47 @@ export default function BackupSection() {
         }
       }
 
+      // Filter fileData to only selected files (used by all restore paths below)
+      const filteredFileData: Record<string, string> = {};
+      for (const [key, value] of Object.entries(fileData)) {
+        if (filesToRestore.has(key)) filteredFileData[key] = value;
+      }
+
+      // Achievement source files (.bin → steamRoot/appcache/stats/)
+      const achSourcePaths = manifest.files
+        .filter((f) =>
+          sectionsToRestore.has(f.section) &&
+          filesToRestore.has(f.relativePath) &&
+          f.relativePath.startsWith("steam/achievement-sources/"),
+        )
+        .map((f) => f.relativePath);
+
+      if (achSourcePaths.length > 0) {
+        setStageDetail(`Restoring ${achSourcePaths.length} achievement source file(s) to disk`);
+        try {
+          const { restoreSteamAchievementSourcesFromBackup } = await import("../../services/steamAchievementSources/backupService");
+          const lfSettings = JSON.parse(localStorage.getItem("lumaforge-settings") || "{}");
+          const srcResult = await restoreSteamAchievementSourcesFromBackup(
+            filteredFileData,
+            achSourcePaths,
+            lfSettings.steamRoot || "",
+            lfSettings.steamAccountId || "",
+          );
+          if (srcResult.failed > 0) {
+            console.warn("[BACKUP][RESTORE] Achievement source restore warnings:", srcResult.errors);
+          }
+          if (DEBUG_BACKUP_RESTORE) {
+            console.log("[BACKUP][RESTORE] achievement source files", srcResult);
+          }
+        } catch (srcErr) {
+          console.error("[BACKUP][RESTORE] Achievement source restore failed:", srcErr);
+        }
+      }
+
       // Stage 3: Apply changes
       setRestoreStage("applying-changes");
       setStageDetail("Writing data to storage");
-      const result = restoreSectionsSafe(manifest, fileData, sectionsToRestore);
+      const result = await restoreSectionsSafe(manifest, filteredFileData, sectionsToRestore);
 
       if (DEBUG_BACKUP_RESTORE) console.log("[BACKUP][RESTORE] result", result);
 
@@ -442,7 +486,7 @@ export default function BackupSection() {
       // Stage 5: Detect restart requirement
       setRestoreStage("validating-state");
       setStageDetail("Checking if restart is needed");
-      const requiresRestart = detectRestartRequired(manifest, fileData, sectionsToRestore);
+      const requiresRestart = detectRestartRequired(manifest, filteredFileData, sectionsToRestore);
       setNeedsRestart(requiresRestart);
 
       // Stage 6: Complete
@@ -810,8 +854,9 @@ export default function BackupSection() {
             <div className="space-y-2">
               <p className="text-xs font-medium text-(--color-text)">{t("backup.sections_to_restore", "Sections to restore:")}</p>
               <div className="grid grid-cols-2 gap-1.5">
-                {[...new Set(previewResult.manifest.files.map((f) => f.section))].map((section) => {
+                {[...new Set(previewResult.manifest!.files.map((f) => f.section))].map((section) => {
                   const isSelected = selectedRestoreSections.has(section);
+                  const sectionFiles = previewResult.manifest!.files.filter((f) => f.section === section);
                   const display = t(SECTION_DISPLAY_NAME_KEYS[section as BackupSectionType] ?? section, SECTION_DISPLAY_NAMES[section as BackupSectionType] ?? section);
                   return (
                     <button
@@ -821,8 +866,22 @@ export default function BackupSection() {
                         setSelectedRestoreSections((prev) => {
                           if (!prev) return prev;
                           const next = new Set(prev);
-                          if (next.has(section)) next.delete(section);
-                          else next.add(section);
+                          if (next.has(section)) {
+                            next.delete(section);
+                            setSelectedRestoreFiles((prevFiles) => {
+                              if (!prevFiles) return prevFiles;
+                              const nextFiles = new Set(prevFiles);
+                              for (const f of sectionFiles) nextFiles.delete(f.relativePath);
+                              return nextFiles;
+                            });
+                          } else {
+                            next.add(section);
+                            setSelectedRestoreFiles((prevFiles) => {
+                              const nextFiles = new Set(prevFiles ?? []);
+                              for (const f of sectionFiles) nextFiles.add(f.relativePath);
+                              return nextFiles;
+                            });
+                          }
                           return next;
                         });
                       }}
@@ -924,9 +983,134 @@ export default function BackupSection() {
                         />
                       );
                     })}
-                  </div>
+              </div>
+            </div>
+          )}
+
+          {/* Per-file selection */}
+          {previewResult.manifest && selectedRestoreSections && selectedRestoreFiles && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-(--color-text)">{t("backup.files_to_restore", "Files to restore:")}</p>
+                <div className="flex items-center gap-1">
+                  {(() => {
+                    const viewFiles = previewResult.manifest!.files.filter((f) => selectedRestoreSections.has(f.section));
+                    const luaFiles = viewFiles.filter((f) => f.relativePath.endsWith(".lua"));
+                    const binFiles = viewFiles.filter((f) => f.relativePath.endsWith(".bin"));
+                    const allLuaSelected = luaFiles.length > 0 && luaFiles.every((f) => selectedRestoreFiles.has(f.relativePath));
+                    const allBinSelected = binFiles.length > 0 && binFiles.every((f) => selectedRestoreFiles.has(f.relativePath));
+                    const allFilesSelected = viewFiles.every((f) => selectedRestoreFiles.has(f.relativePath));
+
+                    const toggleGroup = (paths: string[], allSelected: boolean) => {
+                      setSelectedRestoreFiles((prev) => {
+                        if (!prev) return prev;
+                        const next = new Set(prev);
+                        if (allSelected) for (const p of paths) next.delete(p);
+                        else for (const p of paths) next.add(p);
+                        return next;
+                      });
+                    };
+
+                    return (
+                      <>
+                        {luaFiles.length > 0 && (
+                          <button type="button" onClick={() => toggleGroup(luaFiles.map((f) => f.relativePath), allLuaSelected)}
+                            className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] transition ${
+                              allLuaSelected
+                                ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
+                                : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-violet-400"
+                            }`}>
+                            {allLuaSelected ? <CheckCircle2 className="h-2.5 w-2.5" /> : <div className="h-2.5 w-2.5 rounded-full border border-(--surface-active-border)" />}
+                            <span>All .lua ({luaFiles.length})</span>
+                          </button>
+                        )}
+                        {binFiles.length > 0 && (
+                          <button type="button" onClick={() => toggleGroup(binFiles.map((f) => f.relativePath), allBinSelected)}
+                            className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] transition ${
+                              allBinSelected
+                                ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-400"
+                                : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-cyan-400"
+                            }`}>
+                            {allBinSelected ? <CheckCircle2 className="h-2.5 w-2.5" /> : <div className="h-2.5 w-2.5 rounded-full border border-(--surface-active-border)" />}
+                            <span>All .bin ({binFiles.length})</span>
+                          </button>
+                        )}
+                        <button type="button" onClick={() => toggleGroup(viewFiles.map((f) => f.relativePath), allFilesSelected)}
+                          className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] transition ${
+                            allFilesSelected
+                              ? "border-(--color-accent)/30 bg-(--color-accent)/10 text-(--color-accent)"
+                              : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                          }`}>
+                          {allFilesSelected ? <CheckCircle2 className="h-2.5 w-2.5" /> : <div className="h-2.5 w-2.5 rounded-full border border-(--surface-active-border)" />}
+                          <span>All ({viewFiles.length})</span>
+                        </button>
+                        <button type="button" onClick={() => setSelectedRestoreFiles(new Set())}
+                          className="flex items-center gap-1 rounded-md border border-(--surface-active-border) bg-white/5 px-1.5 py-0.5 text-[9px] text-(--color-muted) hover:text-red-400 transition">
+                          <span>None</span>
+                        </button>
+                      </>
+                    );
+                  })()}
                 </div>
-              )}
+              </div>
+              <div className="max-h-60 overflow-y-auto space-y-1">
+                {[...new Set(previewResult.manifest!.files
+                  .filter((f) => selectedRestoreSections.has(f.section))
+                  .map((f) => f.relativePath))]
+                  .map((filePath) => {
+                    const fileEntry = previewResult.manifest!.files.find((f) => f.relativePath === filePath);
+                    const isFileSelected = selectedRestoreFiles.has(filePath);
+                    const ext = filePath.split(".").pop() ?? "";
+                    const isBin = ext === "bin";
+                    const isLua = ext === "lua";
+                    const isJson = ext === "json";
+                    return (
+                      <button
+                        key={filePath}
+                        type="button"
+                        onClick={() => {
+                          setSelectedRestoreFiles((prev) => {
+                            if (!prev) return prev;
+                            const next = new Set(prev);
+                            if (next.has(filePath)) next.delete(filePath);
+                            else next.add(filePath);
+                            return next;
+                          });
+                        }}
+                        className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[11px] transition w-full text-left ${
+                          isFileSelected
+                            ? "border-(--color-accent)/30 bg-(--color-accent)/10 text-(--color-accent)"
+                            : "border-(--surface-active-border) bg-white/5 text-(--color-muted)"
+                        }`}
+                      >
+                        {isFileSelected ? (
+                          <CheckCircle2 className="h-3 w-3 shrink-0" />
+                        ) : (
+                          <div className="h-3 w-3 shrink-0 rounded-full border border-(--surface-active-border)" />
+                        )}
+                        <span className="font-mono truncate flex-1">{filePath.replace("steam/", "")}</span>
+                        <span className={`text-[9px] px-1 py-0.5 rounded ${
+                          isBin ? "bg-cyan-500/15 text-cyan-400" :
+                          isLua ? "bg-violet-500/15 text-violet-400" :
+                          isJson ? "bg-amber-500/15 text-amber-400" :
+                          "bg-white/10 text-(--color-muted)"
+                        }`}>
+                          {isBin ? ".bin" : isLua ? ".lua" : isJson ? ".json" : `.${ext}`}
+                        </span>
+                        {fileEntry && (
+                          <span className="text-[9px] text-(--color-muted)">{formatBytes(fileEntry.size)}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+              </div>
+              <p className="text-[10px] text-(--color-muted)">
+                {selectedRestoreFiles.size} of {
+                  previewResult.manifest.files.filter((f) => selectedRestoreSections.has(f.section)).length
+                } files selected
+              </p>
+            </div>
+          )}
 
               {restoreResult && (
                 <div className={`rounded-xl border px-3 py-2 text-xs ${
@@ -1175,7 +1359,7 @@ export default function BackupSection() {
             try {
               if (themeStr) localStorage.setItem("lumaforge-theme", themeStr);
               if (surfaceStr) localStorage.setItem("lumaforge-surface-mode", surfaceStr);
-              dispatchRestoreRefreshForSections(["uiPreferences"]);
+              dispatchRestoreRefreshForSections(["settings"]);
               setRestoreResult({ success: true, message: t("backup.theme_restored", "Legacy theme and surface mode restored.") });
               setShowPreview(false);
               setPreviewLegacyData(null);

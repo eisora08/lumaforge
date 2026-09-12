@@ -142,16 +142,12 @@ export async function exportSteamAchievementSourcesToArchive(
       fileEntries,
     );
 
-    const exportData = JSON.stringify(
-      {
-        manifest,
-        data: Object.fromEntries(allFiles.map((f) => [f.relativePath, f.data])),
-      },
-      null,
-      2,
+    const manifestJson = JSON.stringify(manifest);
+    const filesJson = JSON.stringify(
+      Object.fromEntries(allFiles.map((f) => [f.relativePath, f.data])),
     );
-    const filename = `lumaforge-backup-${manifest.backupId}.json`;
-    await writeBackupArchive(exportData, filename);
+    const filename = `lumaforge-backup-${manifest.backupId}.zip`;
+    await writeBackupArchive(manifestJson, filesJson, filename);
 
     return {
       success: true,

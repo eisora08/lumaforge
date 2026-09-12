@@ -55,9 +55,9 @@ pub use game_appinfo::{
 };
 pub use games_v2::{
     GameV2, add_playtime_v2, batch_upsert_games_v2, delete_game_v2, delete_stale_games_v2,
-    get_all_games_v2, get_game_v2,
+    export_games_v2, get_all_games_v2, get_game_v2,
     get_game_v2_by_app_id, get_game_v2_count, get_games_v2_by_app_id, get_games_v2_by_source,
-    increment_play_count_v2, search_games_v2,
+    import_games_v2, increment_play_count_v2, search_games_v2,
     update_completion_status_v2, update_playtime_v2, upsert_game_v2,
 };
 pub use play_queue::{
@@ -194,6 +194,10 @@ pub use games_v2::__tauri_command_name_update_playtime_v2;
 pub use games_v2::__tauri_command_name_update_completion_status_v2;
 pub use games_v2::__tauri_command_name_increment_play_count_v2;
 pub use games_v2::__tauri_command_name_add_playtime_v2;
+pub use games_v2::__cmd__export_games_v2;
+pub use games_v2::__cmd__import_games_v2;
+pub use games_v2::__tauri_command_name_export_games_v2;
+pub use games_v2::__tauri_command_name_import_games_v2;
 pub use play_queue::__tauri_command_name_get_play_queue;
 pub use play_queue::__tauri_command_name_add_to_play_queue;
 pub use play_queue::__tauri_command_name_remove_from_play_queue;

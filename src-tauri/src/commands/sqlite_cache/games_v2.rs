@@ -1034,3 +1034,214 @@ pub fn delete_stale_games_v2(
     };
     delete_stale_games_v2_inner(db, &active_ids)
 }
+
+// ---------------------------------------------------------------------------
+// Backup: export / import entire games_v2 table
+// ---------------------------------------------------------------------------
+
+pub fn export_games_v2_inner(db: &Mutex<Connection>) -> Result<Vec<GameV2>, String> {
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, title, source, app_id, provider_game_id, library_id,
+                    is_installed, install_dir, install_size, exe_path, exe_name, working_directory, launch_arguments,
+                    playtime_seconds, play_count, last_played_at,
+                    cover_path, landscape_path, background_path, logo_path, icon_path,
+                    release_date, description, short_description, genres, developers, publishers, categories, features, tags,
+                    user_score, critic_score, community_score, review_summary, review_count,
+                    linked_app_id, linked_igdb_id,
+                    is_favorite, is_hidden, standalone, sorting_name,
+                    series, age_rating, region, completion_status,
+                    has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
+             FROM games_v2 ORDER BY id",
+        )
+        .map_err(|e| format!("Failed to prepare export query: {}", e))?;
+
+    let games = stmt
+        .query_map([], |row| {
+            Ok(GameV2 {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                source: row.get(2)?,
+                app_id: row.get(3)?,
+                provider_game_id: row.get(4)?,
+                library_id: row.get(5)?,
+                is_installed: row.get(6)?,
+                install_dir: row.get(7)?,
+                install_size: row.get(8)?,
+                exe_path: row.get(9)?,
+                exe_name: row.get(10)?,
+                working_directory: row.get(11)?,
+                launch_arguments: row.get(12)?,
+                playtime_seconds: row.get(13)?,
+                play_count: row.get(14)?,
+                last_played_at: row.get(15)?,
+                cover_path: row.get(16)?,
+                landscape_path: row.get(17)?,
+                background_path: row.get(18)?,
+                logo_path: row.get(19)?,
+                icon_path: row.get(20)?,
+                release_date: row.get(21)?,
+                description: row.get(22)?,
+                short_description: row.get(23)?,
+                genres: row.get(24)?,
+                developers: row.get(25)?,
+                publishers: row.get(26)?,
+                categories: row.get(27)?,
+                features: row.get(28)?,
+                tags: row.get(29)?,
+                user_score: row.get(30)?,
+                critic_score: row.get(31)?,
+                community_score: row.get(32)?,
+                review_summary: row.get(33)?,
+                review_count: row.get(34)?,
+                linked_app_id: row.get(35)?,
+                linked_igdb_id: row.get(36)?,
+                is_favorite: row.get(37)?,
+                is_hidden: row.get(38)?,
+                standalone: row.get(39)?,
+                sorting_name: row.get(40)?,
+                series: row.get(41)?,
+                age_rating: row.get(42)?,
+                region: row.get(43)?,
+                completion_status: row.get(44)?,
+                has_lua: row.get(45)?,
+                lua_scripts_json: row.get(46)?,
+                provider_metadata: row.get(47)?,
+                created_at: row.get(48)?,
+                updated_at: row.get(49)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query games_v2: {}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to collect games_v2: {}", e))?;
+
+    eprintln!("[GAMES_V2][RUST] exported {} games for backup", games.len());
+    Ok(games)
+}
+
+pub fn import_games_v2_inner(db: &Mutex<Connection>, games: &[GameV2]) -> Result<u64, String> {
+    if games.is_empty() {
+        return Ok(0);
+    }
+    let conn = db.lock().unwrap();
+    let mut count: u64 = 0;
+
+    for game in games {
+        conn.execute(
+            "INSERT INTO games_v2 (
+                id, title, source, app_id, provider_game_id, library_id,
+                is_installed, install_dir, install_size, exe_path, exe_name, working_directory, launch_arguments,
+                playtime_seconds, play_count, last_played_at,
+                cover_path, landscape_path, background_path, logo_path, icon_path,
+                release_date, description, short_description, genres, developers, publishers, categories, features, tags,
+                user_score, critic_score, community_score, review_summary, review_count,
+                linked_app_id, linked_igdb_id,
+                is_favorite, is_hidden, standalone, sorting_name,
+                series, age_rating, region, completion_status,
+                has_lua, lua_scripts_json, provider_metadata, created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6,
+                ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                ?14, ?15, ?16,
+                ?17, ?18, ?19, ?20, ?21,
+                ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30,
+                ?31, ?32, ?33, ?34, ?35,
+                ?36, ?37,
+                ?38, ?39, ?40, ?41,
+                ?42, ?43, ?44, ?45,
+                ?46, ?47, ?48, ?49, ?50
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                title = COALESCE(NULLIF(excluded.title, ''), games_v2.title),
+                source = excluded.source,
+                app_id = COALESCE(excluded.app_id, games_v2.app_id),
+                provider_game_id = COALESCE(excluded.provider_game_id, games_v2.provider_game_id),
+                library_id = COALESCE(excluded.library_id, games_v2.library_id),
+                is_installed = excluded.is_installed,
+                install_dir = COALESCE(excluded.install_dir, games_v2.install_dir),
+                install_size = COALESCE(excluded.install_size, games_v2.install_size),
+                exe_path = COALESCE(excluded.exe_path, games_v2.exe_path),
+                exe_name = COALESCE(excluded.exe_name, games_v2.exe_name),
+                working_directory = COALESCE(excluded.working_directory, games_v2.working_directory),
+                launch_arguments = COALESCE(excluded.launch_arguments, games_v2.launch_arguments),
+                playtime_seconds = CASE WHEN excluded.playtime_seconds IS NULL OR excluded.playtime_seconds = 0 THEN games_v2.playtime_seconds ELSE excluded.playtime_seconds END,
+                play_count = CASE WHEN excluded.play_count IS NULL OR excluded.play_count = 0 THEN games_v2.play_count ELSE excluded.play_count END,
+                last_played_at = COALESCE(NULLIF(excluded.last_played_at, 0), games_v2.last_played_at),
+                cover_path = COALESCE(excluded.cover_path, games_v2.cover_path),
+                landscape_path = COALESCE(excluded.landscape_path, games_v2.landscape_path),
+                background_path = COALESCE(excluded.background_path, games_v2.background_path),
+                logo_path = COALESCE(excluded.logo_path, games_v2.logo_path),
+                icon_path = COALESCE(excluded.icon_path, games_v2.icon_path),
+                release_date = COALESCE(excluded.release_date, games_v2.release_date),
+                description = COALESCE(excluded.description, games_v2.description),
+                short_description = COALESCE(excluded.short_description, games_v2.short_description),
+                genres = COALESCE(excluded.genres, games_v2.genres),
+                developers = COALESCE(excluded.developers, games_v2.developers),
+                publishers = COALESCE(excluded.publishers, games_v2.publishers),
+                categories = COALESCE(excluded.categories, games_v2.categories),
+                features = COALESCE(excluded.features, games_v2.features),
+                tags = COALESCE(excluded.tags, games_v2.tags),
+                user_score = COALESCE(excluded.user_score, games_v2.user_score),
+                critic_score = COALESCE(excluded.critic_score, games_v2.critic_score),
+                community_score = COALESCE(excluded.community_score, games_v2.community_score),
+                review_summary = COALESCE(excluded.review_summary, games_v2.review_summary),
+                review_count = COALESCE(excluded.review_count, games_v2.review_count),
+                linked_app_id = COALESCE(excluded.linked_app_id, games_v2.linked_app_id),
+                linked_igdb_id = COALESCE(excluded.linked_igdb_id, games_v2.linked_igdb_id),
+                is_favorite = excluded.is_favorite,
+                is_hidden = excluded.is_hidden,
+                standalone = excluded.standalone,
+                sorting_name = COALESCE(excluded.sorting_name, games_v2.sorting_name),
+                series = COALESCE(excluded.series, games_v2.series),
+                age_rating = COALESCE(excluded.age_rating, games_v2.age_rating),
+                region = COALESCE(excluded.region, games_v2.region),
+                completion_status = COALESCE(excluded.completion_status, games_v2.completion_status),
+                has_lua = excluded.has_lua,
+                lua_scripts_json = COALESCE(excluded.lua_scripts_json, games_v2.lua_scripts_json),
+                provider_metadata = COALESCE(excluded.provider_metadata, games_v2.provider_metadata),
+                updated_at = excluded.updated_at
+            ",
+            rusqlite::params![
+                game.id, game.title, game.source, game.app_id, game.provider_game_id, game.library_id,
+                game.is_installed, game.install_dir, game.install_size, game.exe_path, game.exe_name, game.working_directory, game.launch_arguments,
+                game.playtime_seconds, game.play_count, game.last_played_at,
+                game.cover_path, game.landscape_path, game.background_path, game.logo_path, game.icon_path,
+                game.release_date, game.description, game.short_description, game.genres, game.developers, game.publishers, game.categories, game.features, game.tags,
+                game.user_score, game.critic_score, game.community_score, game.review_summary, game.review_count,
+                game.linked_app_id, game.linked_igdb_id,
+                game.is_favorite, game.is_hidden, game.standalone, game.sorting_name,
+                game.series, game.age_rating, game.region, game.completion_status,
+                game.has_lua, game.lua_scripts_json, game.provider_metadata, game.created_at, game.updated_at
+            ],
+        )
+        .map_err(|e| format!("Failed to import game {}: {}", game.id, e))?;
+        count += 1;
+    }
+
+    eprintln!("[GAMES_V2][RUST] imported {} games from backup", count);
+    Ok(count)
+}
+
+#[tauri::command]
+pub fn export_games_v2(
+    state: tauri::State<'_, SqliteCoreDb>,
+) -> Result<Vec<GameV2>, String> {
+    let db = state.0.as_ref();
+    let Some(db) = db else {
+        return Ok(Vec::new());
+    };
+    export_games_v2_inner(db)
+}
+
+#[tauri::command]
+pub fn import_games_v2(
+    state: tauri::State<'_, SqliteCoreDb>,
+    games: Vec<GameV2>,
+) -> Result<u64, String> {
+    let db = state.0.as_ref();
+    let Some(db) = db else {
+        return Ok(0);
+    };
+    import_games_v2_inner(db, &games)
+}

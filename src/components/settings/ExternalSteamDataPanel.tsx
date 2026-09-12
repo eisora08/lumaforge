@@ -1,12 +1,12 @@
 /**
  * ExternalSteamDataPanel — Settings UI for auditing, reviewing, and exporting
- * Steam Lua scripts, LumaForge achievement data, and depotcache status.
+ * Steam Lua scripts, LumaForge achievement data, and verified Steam achievement sources.
  *
  * Placed in Cloud & Backup below Stored Backups, above Advanced Backup Details.
  *
  *   - Steam Lua Scripts:  audit → review → export → Stored Backups
  *   - LumaForge Achievement Data: audit → review → export → Stored Backups
- *   - Depot Cache: informational only, no actions
+ *   - Verified Steam Achievement Sources: audit → review → export → Stored Backups
  *
  * Restore is NOT provided here — it goes through the existing
  * Stored Backups → Preview → ConfirmModal → restore pipeline.
@@ -16,13 +16,9 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Code,
   Trophy,
-  HardDrive,
-  ChevronDown,
-  ChevronRight,
   Loader2,
   FileArchive,
   FolderOpen,
-  Info,
   FileCode,
   Eye,
   ShieldCheck,
@@ -145,9 +141,6 @@ export default function ExternalSteamDataPanel() {
     gameSummaries: [],
     selected: new Set(),
   });
-
-  // ── Depotcache state (informational) ──
-  const [depotcacheExpanded, setDepotcacheExpanded] = useState(false);
 
   // ── Verified Steam Achievement Sources state ──
   const [achSourceManifest, setAchSourceManifest] = useState<VerifiedSourcesManifest | null>(null);
@@ -286,8 +279,8 @@ export default function ExternalSteamDataPanel() {
         const size = dataBytes.length;
         const checksum = await sha256(data);
 
-        allFiles.push({ relativePath: archivePath, section: "steamLua", data });
-        fileEntries.push({ relativePath: archivePath, section: "steamLua", size, checksum });
+        allFiles.push({ relativePath: archivePath, section: "steamExternal", data });
+        fileEntries.push({ relativePath: archivePath, section: "steamExternal", size, checksum });
         totalSize += size;
       }
 
@@ -297,13 +290,14 @@ export default function ExternalSteamDataPanel() {
       }
 
       const manifest = await buildBackupManifest(
-        ["steamLua"],
+        ["steamExternal"],
         fileEntries,
       );
 
-      const exportData = JSON.stringify({ manifest, data: Object.fromEntries(allFiles.map((f) => [f.relativePath, f.data])) }, null, 2);
-      const filename = `lumaforge-backup-${manifest.backupId}.json`;
-      await writeBackupArchive(exportData, filename);
+      const manifestJson = JSON.stringify(manifest);
+      const filesJson = JSON.stringify(Object.fromEntries(allFiles.map((f) => [f.relativePath, f.data])));
+      const filename = `lumaforge-backup-${manifest.backupId}.zip`;
+      await writeBackupArchive(manifestJson, filesJson, filename);
 
       setLuaExportResult({ success: true, fileCount: allFiles.length, totalSize });
 
@@ -431,8 +425,8 @@ export default function ExternalSteamDataPanel() {
         const size = dataBytes.length;
         const checksum = await sha256(data);
 
-        allFiles.push({ relativePath: archivePath, section: "steamAchievementInputs", data });
-        fileEntries.push({ relativePath: archivePath, section: "steamAchievementInputs", size, checksum });
+        allFiles.push({ relativePath: archivePath, section: "steamExternal", data });
+        fileEntries.push({ relativePath: archivePath, section: "steamExternal", size, checksum });
         totalSize += size;
       }
 
@@ -442,13 +436,14 @@ export default function ExternalSteamDataPanel() {
       }
 
       const manifest = await buildBackupManifest(
-        ["steamAchievementInputs"],
+        ["steamExternal"],
         fileEntries,
       );
 
-      const exportData = JSON.stringify({ manifest, data: Object.fromEntries(allFiles.map((f) => [f.relativePath, f.data])) }, null, 2);
-      const filename = `lumaforge-backup-${manifest.backupId}.json`;
-      await writeBackupArchive(exportData, filename);
+      const manifestJson = JSON.stringify(manifest);
+      const filesJson = JSON.stringify(Object.fromEntries(allFiles.map((f) => [f.relativePath, f.data])));
+      const filename = `lumaforge-backup-${manifest.backupId}.zip`;
+      await writeBackupArchive(manifestJson, filesJson, filename);
 
       setAchExportResult({ success: true, gameCount: selectedAppIds.length, fileCount: allFiles.length, totalSize });
 
@@ -1293,53 +1288,6 @@ export default function ExternalSteamDataPanel() {
             Only three verified file types are included: UserGameStats .bin, UserGameStatsSchema .bin, and librarycache .json.
             Account IDs are never exposed in logs or exports. Steam must be closed before restoring.
           </span>
-        </div>
-      </div>
-
-      {/* ═══════════════════════════════════════════
-          CARD 3 — Depot Cache (informational)
-          ═══════════════════════════════════════════ */}
-      <div className="lf-surface rounded-2xl border p-5 space-y-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-500/15 text-zinc-500">
-            <HardDrive className="h-5 w-5" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-bold text-(--color-text)">Depot Cache</h4>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-500/15 text-zinc-500">Not Backed Up</span>
-            </div>
-            <p className="text-[10px] text-(--color-muted)">
-              Steam can regenerate depot cache data. LumaForge does not export or restore the complete depotcache directory because stale manifests may be unsafe across installations.
-            </p>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setDepotcacheExpanded(!depotcacheExpanded)}
-          className="flex items-center gap-2 text-[10px] text-(--color-muted) hover:text-(--color-text) transition"
-        >
-          {depotcacheExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          {depotcacheExpanded ? "Hide details" : "Why is this not backed up?"}
-        </button>
-
-        {depotcacheExpanded && (
-          <div className="rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-3 py-2 space-y-1">
-            <p className="text-[10px] text-(--color-muted)">
-              The depotcache contains Steam download manifests and partial game files. These are managed by Steam
-              and can be regenerated by re-downloading the game. Stale manifests from a different installation
-              may reference incorrect depot keys or file paths, making them unsafe to restore.
-            </p>
-            <p className="text-[10px] text-(--color-muted)">
-              The depotcache path setting is protected and will never be overwritten during backup restore.
-            </p>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 text-[10px] text-(--color-muted)">
-          <Info className="h-3 w-3 shrink-0" />
-          <span>No audit, export, or restore actions available. Depotcache is excluded from all backup presets.</span>
         </div>
       </div>
     </div>

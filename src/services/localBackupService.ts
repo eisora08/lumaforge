@@ -176,140 +176,52 @@ export function validateSecrets(before: Record<string, string | null>): {
 
 // ── Section types ──
 
-export type BackupSection =
-  | "settings"
-  | "integrations"
-  | "favorites"
-  | "manualGames"
-  | "playtime"
-  | "sessionHistory"
-  | "providerOverrides"
-  | "profile"
-  | "steamAchievementInputs"
-  | "customArtwork"
-  | "steamLua"
-  | "uiPreferences";
+export type BackupSection = "settings" | "gameLibrary" | "steamExternal";
 
-export const ALL_BACKUP_SECTIONS: BackupSection[] = [
-  "settings",
-  "integrations",
-  "favorites",
-  "manualGames",
-  "playtime",
-  "sessionHistory",
-  "providerOverrides",
-  "profile",
-  "steamAchievementInputs",
-  "customArtwork",
-  "steamLua",
-  "uiPreferences",
-];
+export const ALL_BACKUP_SECTIONS: BackupSection[] = ["settings", "gameLibrary", "steamExternal"];
 
 export const SECTION_DISPLAY_NAMES: Record<BackupSection, string> = {
-  settings: "Settings",
-  integrations: "Integration Settings",
-  favorites: "Favorites",
-  manualGames: "Manual Games",
-  playtime: "Playtime",
-  sessionHistory: "Session History",
-  providerOverrides: "Provider Overrides",
-  profile: "User Profile",
-  steamAchievementInputs: "Achievement Inputs",
-  customArtwork: "Custom Artwork",
-  steamLua: "Steam Lua Scripts",
-  uiPreferences: "UI Preferences",
+  settings: "Settings & Config",
+  gameLibrary: "Game Library",
+  steamExternal: "Steam External",
 };
 
 export const SECTION_DISPLAY_NAME_KEYS: Record<BackupSection, string> = {
   settings: "backup.section_settings",
-  integrations: "backup.section_integrations",
-  favorites: "backup.section_favorites",
-  manualGames: "backup.section_manual_games",
-  playtime: "backup.section_playtime",
-  sessionHistory: "backup.section_session_history",
-  providerOverrides: "backup.section_provider_overrides",
-  profile: "backup.section_profile",
-  steamAchievementInputs: "backup.section_achievement_inputs",
-  customArtwork: "backup.section_custom_artwork",
-  steamLua: "backup.section_steam_lua",
-  uiPreferences: "backup.section_ui_preferences",
+  gameLibrary: "backup.section_game_library",
+  steamExternal: "backup.section_steam_external",
 };
 
 export const SECTION_DESCRIPTIONS: Record<BackupSection, string> = {
-  settings: "Full app settings (paths, API keys, all fields) — secrets/credentials stripped from export",
-  integrations: "Provider enable/disable and surface visibility",
-  favorites: "Favorited games list",
-  manualGames: "Manually added game entries and metadata",
-  playtime: "Game session durations and totals",
-  sessionHistory: "Historical session records",
-  providerOverrides: "Epic and provider-specific overrides",
-  profile: "User profile (avatar, banner, display name)",
-  steamAchievementInputs: "Launcher achievement input configuration (progress and source files not included)",
-  customArtwork: "Planned — custom artwork files are not included yet",
-  steamLua: "Planned — Steam Lua files are not included until a validated file allowlist and safe restore flow are available",
-  uiPreferences: "Theme, surface mode, and visual settings only — safe, never touches paths or keys",
+  settings: "All app settings, integrations, favorites, profile, manual games, UI preferences, and activity data — secrets stripped from export",
+  gameLibrary: "Complete games_v2 database — playtime, sessions, completion status, install state, media paths, and metadata",
+  steamExternal: "Lua scripts and achievement input .bin files from Steam",
 };
 
 export const SECTION_DESCRIPTION_KEYS: Record<BackupSection, string> = {
   settings: "backup.section_desc_settings",
-  integrations: "backup.section_desc_integrations",
-  favorites: "backup.section_desc_favorites",
-  manualGames: "backup.section_desc_manual_games",
-  playtime: "backup.section_desc_playtime",
-  sessionHistory: "backup.section_desc_session_history",
-  providerOverrides: "backup.section_desc_provider_overrides",
-  profile: "backup.section_desc_profile",
-  steamAchievementInputs: "backup.section_desc_achievement_inputs",
-  customArtwork: "backup.section_desc_custom_artwork",
-  steamLua: "backup.section_desc_steam_lua",
-  uiPreferences: "backup.section_desc_ui_preferences",
+  gameLibrary: "backup.section_desc_game_library",
+  steamExternal: "backup.section_desc_steam_external",
 };
 
 export type SectionAuditStatus = "implemented" | "partial" | "placeholder";
 
 export const SECTION_AUDIT_STATUS: Record<BackupSection, SectionAuditStatus> = {
   settings: "implemented",
-  integrations: "implemented",
-  favorites: "implemented",
-  manualGames: "implemented",
-  playtime: "implemented",
-  sessionHistory: "implemented",
-  providerOverrides: "implemented",
-  profile: "implemented",
-  steamAchievementInputs: "partial",
-  customArtwork: "placeholder",
-  steamLua: "partial",
-  uiPreferences: "implemented",
+  gameLibrary: "implemented",
+  steamExternal: "implemented",
 };
 
 export const SECTION_AUDIT_NOTES: Record<BackupSection, string> = {
-  settings: "Exports lumaforge-settings (secrets/credentials stripped), lumaforge-theme, and lumaforge-surface-mode. Restore merges non-secret fields and preserves all existing secrets.",
-  integrations: "Exports integration settings (provider enables + surface toggles)",
-  favorites: "Exports favorited game IDs",
-  manualGames: "Exports manually added game entries from manualGameStore",
-  playtime: "Exports session durations, totals, and lastPlayedAt",
-  sessionHistory: "Exports session history records",
-  providerOverrides: "Exports Epic provider overrides",
-  profile: "Exports user profile (avatar, banner, display name)",
-  steamAchievementInputs: "Partial. Collector reads LumaForge-owned achievement JSONs (achievements.json, achievementpercentages.json, image_sources.json, summary.json) from disk via Rust with SHA-256 checksums. Export reads content via Rust and writes backup archive. Restore writes via Rust safety backup + checksummed write. Verified: directory resolution (Tauri), collector, export, restore. Missing: runtime re-scan of achievement data after restore, full rollback on partial failure.",
-  customArtwork: "Planned — reads game-activities, not real artwork files. No usable payload. Not selectable for backup.",
-  steamLua: "Partial. Settings accessor wired at boot (Stage 1). Collector reads .lua/.lua.disabled files from disk via Rust with SHA-256 checksums. Export reads content via Rust and writes backup archive. Restore writes via Rust safety backup + checksummed write + Lua re-scan. Verified: settings accessor, collector, export, restore, post-restore re-scan. Missing: full rollback on partial restore failure.",
-  uiPreferences: "Exports only visual fields from lumaforge-settings (28 keys) plus lumaforge-theme and lumaforge-surface-mode. Never touches steamRoot, API keys, or providers.",
+  settings: "Exports lumaforge-settings (secrets stripped), integrations, favorites, manual games, profile, provider overrides, UI preferences, launcher achievements, game activities, and session history. Restore merges non-secret fields and preserves all existing secrets.",
+  gameLibrary: "Exports complete games_v2 table from SQLite via Rust command. Contains playtime, sessions, completion status, install state, media paths, and all metadata. Import upserts by game ID with merge logic.",
+  steamExternal: "Exports Lua scripts from disk via Rust and achievement input .bin files (UserGameStats.bin, UserGameStatsSchema.bin). Does not include librarycache.json (Steam regenerates it).",
 };
 
 export const SECTION_AUDIT_NOTE_KEYS: Record<BackupSection, string> = {
   settings: "backup.audit_settings",
-  integrations: "backup.audit_integrations",
-  favorites: "backup.audit_favorites",
-  manualGames: "backup.audit_manual_games",
-  playtime: "backup.audit_playtime",
-  sessionHistory: "backup.audit_session_history",
-  providerOverrides: "backup.audit_provider_overrides",
-  profile: "backup.audit_profile",
-  steamAchievementInputs: "backup.audit_achievement_inputs",
-  customArtwork: "backup.audit_custom_artwork",
-  steamLua: "backup.audit_steam_lua",
-  uiPreferences: "backup.audit_ui_preferences",
+  gameLibrary: "backup.audit_game_library",
+  steamExternal: "backup.audit_steam_external",
 };
 
 export const SECTION_READY_COUNT = ALL_BACKUP_SECTIONS.filter((s) => SECTION_AUDIT_STATUS[s] === "implemented").length;
@@ -372,50 +284,34 @@ export type BackupPreset = {
 
 export const BACKUP_PRESETS: BackupPreset[] = [
   {
-    id: "essentials",
-    name: "Essentials",
-    description: "Settings, integrations, favorites, profile, manual games, provider overrides",
-    sections: ["settings", "integrations", "favorites", "profile", "manualGames", "providerOverrides"],
-  },
-  {
-    id: "game-activity",
-    name: "Game Activity",
-    description: "Playtime, session history, and favorites",
-    sections: ["playtime", "sessionHistory", "favorites"],
-  },
-  {
-    id: "customization",
-    name: "Customization",
-    description: "User profile, theme, and visual settings — never touches paths or keys",
-    sections: ["profile", "uiPreferences"],
-  },
-  {
     id: "full",
-    name: "Full LumaForge Backup",
-    description: `${READY_BACKUP_SECTIONS.length} verified sections. Partial sections excluded until they provide complete data.`,
-    sections: [...READY_BACKUP_SECTIONS],
+    name: "Full Backup",
+    description: "Everything: settings, game library, and external Steam files",
+    sections: ["settings", "gameLibrary", "steamExternal"],
+  },
+  {
+    id: "quick",
+    name: "Quick Backup",
+    description: "Settings and game library — no external files from disk",
+    sections: ["settings", "gameLibrary"],
   },
   {
     id: "custom",
     name: "Custom",
-    description: "Select specific sections to include",
+    description: "Select specific categories to include",
     sections: [],
   },
 ];
 
 export const BACKUP_PRESET_NAME_KEYS: Record<string, string> = {
-  essentials: "backup.preset_essentials",
-  "game-activity": "backup.preset_game_activity",
-  customization: "backup.preset_customization",
   full: "backup.preset_full",
+  quick: "backup.preset_quick",
   custom: "backup.preset_custom",
 };
 
 export const BACKUP_PRESET_DESC_KEYS: Record<string, string> = {
-  essentials: "backup.preset_essentials_desc",
-  "game-activity": "backup.preset_game_activity_desc",
-  customization: "backup.preset_customization_desc",
   full: "backup.preset_full_desc",
+  quick: "backup.preset_quick_desc",
   custom: "backup.preset_custom_desc",
 };
 
@@ -539,9 +435,10 @@ const SECTION_COLLECTORS: SectionCollector[] = [
     section: "settings",
     collect: async () => {
       const files: Array<{ path: string; data: string }> = [];
+
+      // Main settings (secrets stripped)
       const settingsData = collectLocalStorage("lumaforge-settings");
       if (settingsData) {
-        // Strip secret/credential fields — they must never be exported
         try {
           const parsed = JSON.parse(settingsData) as Record<string, unknown>;
           const safe = stripSecrets(parsed);
@@ -550,65 +447,80 @@ const SECTION_COLLECTORS: SectionCollector[] = [
           files.push({ path: "lumaforge/settings.json", data: settingsData });
         }
       }
+
+      // Theme + surface mode
       const themeData = collectLocalStorage("lumaforge-theme");
       if (themeData) files.push({ path: "lumaforge/theme.json", data: themeData });
       const surfaceData = collectLocalStorage("lumaforge-surface-mode");
       if (surfaceData) files.push({ path: "lumaforge/surface-mode.json", data: surfaceData });
+
+      // Integration settings
+      const integrationsData = collectLocalStorage("lumaforge-integration-settings");
+      if (integrationsData) files.push({ path: "lumaforge/integrations.json", data: integrationsData });
+
+      // Favorites
+      const favoritesData = collectLocalStorage("lumaforge-favorites-v1");
+      if (favoritesData) files.push({ path: "lumaforge/favorites.json", data: favoritesData });
+
+      // Manual games
+      const manualGamesData = collectLocalStorage("lumaforge-manual-games-v1");
+      if (manualGamesData) files.push({ path: "lumaforge/manual-games.json", data: manualGamesData });
+
+      // Provider overrides
+      const providerOverridesData = collectLocalStorage("lumaforge-epic-overrides-v1");
+      if (providerOverridesData) files.push({ path: "lumaforge/provider-overrides.json", data: providerOverridesData });
+
+      // User profile
+      const profileData = collectLocalStorage("lumaforge-user-profile-v1");
+      if (profileData) files.push({ path: "lumaforge/profile.json", data: profileData });
+
+      // Launcher achievements state
+      const launcherAchievementsData = collectLocalStorage("lumaforge-launcher-achievements-v1");
+      if (launcherAchievementsData) files.push({ path: "lumaforge/launcher-achievements.json", data: launcherAchievementsData });
+
+      // Game activities
+      const gameActivitiesData = collectLocalStorage("lumaforge-game-activities");
+      if (gameActivitiesData) files.push({ path: "lumaforge/game-activities.json", data: gameActivitiesData });
+
+      // Session history
+      const sessionHistoryData = collectLocalStorage("lumaforge-session-history-v1");
+      if (sessionHistoryData) files.push({ path: "lumaforge/session-history.json", data: sessionHistoryData });
+
+      // Playtime (legacy JSON store)
+      const playtimeData = collectLocalStorage("lumaforge-playtime-v1");
+      if (playtimeData) files.push({ path: "lumaforge/playtime.json", data: playtimeData });
+
       return files;
     },
   },
   {
-    section: "integrations",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-integration-settings");
-      return data ? [{ path: "lumaforge/integrations.json", data }] : [];
-    },
-  },
-  {
-    section: "favorites",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-favorites-v1");
-      return data ? [{ path: "lumaforge/favorites.json", data }] : [];
-    },
-  },
-  {
-    section: "manualGames",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-manual-games-v1");
-      return data ? [{ path: "lumaforge/manual-games.json", data }] : [];
-    },
-  },
-  {
-    section: "providerOverrides",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-epic-overrides-v1");
-      return data ? [{ path: "lumaforge/provider-overrides.json", data }] : [];
-    },
-  },
-  {
-    section: "profile",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-user-profile-v1");
-      return data ? [{ path: "lumaforge/profile.json", data }] : [];
-    },
-  },
-  {
-    section: "customArtwork",
-    collect: async () => {
-      const data = collectLocalStorage("lumaforge-game-activities");
-      return data ? [{ path: "lumaforge/custom-artwork-manifest.json", data }] : [];
-    },
-  },
-  {
-    section: "steamLua",
+    section: "gameLibrary",
     collect: async () => {
       const files: Array<{ path: string; data: string }> = [];
-      // Include the Lua scan notified hash from localStorage
+      try {
+        const { exportGamesV2 } = await import("./tauri");
+        const games = await exportGamesV2();
+        if (games.length > 0) {
+          files.push({ path: "games_v2/games.json", data: JSON.stringify(games) });
+        }
+      } catch (e) {
+        debugLog("[BACKUP][GAME_LIBRARY] export failed:", e);
+      }
+      return files;
+    },
+  },
+  {
+    section: "steamExternal",
+    collect: async () => {
+      const files: Array<{ path: string; data: string }> = [];
+
+      // Lua scan notified hash
       const hashData = collectLocalStorage("lumaforge_lua_scan_notified_hash");
       if (hashData) {
         files.push({ path: "steam/lua/manifest.json", data: JSON.stringify({ notifiedHash: hashData }) });
       }
-      // Include actual Lua script files from disk via Rust
+
+      // Lua scripts from disk via Rust
       try {
         const { collectSteamLuaBackupData } = await import("./steamLuaBackupService");
         const luaFiles = await collectSteamLuaBackupData();
@@ -616,52 +528,27 @@ const SECTION_COLLECTORS: SectionCollector[] = [
       } catch (e) {
         debugLog("[BACKUP][LUA] disk collection failed:", e);
       }
-      return files;
-    },
-  },
-  {
-    section: "steamAchievementInputs",
-    collect: async () => {
-      const files: Array<{ path: string; data: string }> = [];
-      // Include achievement launcher state from localStorage
-      const launcherData = collectLocalStorage("lumaforge-launcher-achievements-v1");
-      if (launcherData) {
-        files.push({ path: "steam/achievement-inputs/manifest.json", data: launcherData });
-      }
-      // Include actual achievement data files from disk via Rust
+
+      // .bin files (UserGameStats, UserGameStatsSchema) from appcache/stats via Rust
       try {
-        const { collectSteamAchievementBackupData } = await import("./steamAchievementBackupService");
-        const achievementFiles = await collectSteamAchievementBackupData();
-        files.push(...achievementFiles);
-      } catch (e) {
-        debugLog("[BACKUP][ACHIEVEMENT] disk collection failed:", e);
-      }
-      return files;
-    },
-  },
-  {
-    section: "uiPreferences",
-    collect: async () => {
-      const files: Array<{ path: string; data: string }> = [];
-      // Extract ONLY appearance fields from lumaforge-settings
-      const settingsRaw = collectLocalStorage("lumaforge-settings");
-      if (settingsRaw) {
-        try {
-          const full = JSON.parse(settingsRaw) as Record<string, unknown>;
-          const appearanceOnly: Record<string, unknown> = {};
-          for (const key of APPEARANCE_SETTINGS_KEYS) {
-            if (key in full) appearanceOnly[key] = full[key];
+        const { auditSteamAchievementSources, exportSteamAchievementSources } = await import("./steamAchievementSources/auditor");
+        const lfSettings = JSON.parse(localStorage.getItem("lumaforge-settings") || "{}");
+        const steamPath = lfSettings.steamRoot || undefined;
+        const steamAccountId = lfSettings.steamAccountId || "";
+        const manifest = await auditSteamAchievementSources(steamPath, steamAccountId);
+        if (manifest.games.length > 0) {
+          const appIds = manifest.games.map((g) => g.appId);
+          const exports = await exportSteamAchievementSources(appIds, steamPath, steamAccountId);
+          for (const exp of exports) {
+            for (const file of exp.files) {
+              files.push({ path: file.logicalPath, data: file.base64Content });
+            }
           }
-          appearanceOnly._exportedAt = Date.now();
-          files.push({ path: "uiPreferences/appearance.json", data: JSON.stringify(appearanceOnly) });
-        } catch {
-          // skip malformed settings
         }
+      } catch (e) {
+        debugLog("[BACKUP][ACHIEVEMENT_SOURCES] disk collection failed:", e);
       }
-      const themeData = collectLocalStorage("lumaforge-theme");
-      if (themeData) files.push({ path: "uiPreferences/theme.json", data: themeData });
-      const surfaceData = collectLocalStorage("lumaforge-surface-mode");
-      if (surfaceData) files.push({ path: "uiPreferences/surface-mode.json", data: surfaceData });
+
       return files;
     },
   },
@@ -797,82 +684,6 @@ function mergeSettings(existing: string, backup: string): string {
   }
 }
 
-function mergeFavorites(existing: string, backup: string): string {
-  try {
-    const a: string[] = JSON.parse(existing);
-    const b: string[] = JSON.parse(backup);
-    const merged = [...new Set([...a, ...b])];
-    return JSON.stringify(merged);
-  } catch {
-    return backup;
-  }
-}
-
-function mergeManualGames(existing: string, backup: string): string {
-  try {
-    const a = JSON.parse(existing);
-    const b = JSON.parse(backup);
-    const entriesA = a.entries ?? a;
-    const entriesB = b.entries ?? b;
-    const byId = new Map<string, unknown>();
-    for (const e of entriesA) byId.set(e.id, e);
-    for (const e of entriesB) {
-      const existing = byId.get(e.id) as { updatedAt?: number } | undefined;
-      if (!existing || (e.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
-        byId.set(e.id, e);
-      }
-    }
-    return JSON.stringify({ version: 1, entries: Array.from(byId.values()) });
-  } catch {
-    return backup;
-  }
-}
-
-function mergePlaytime(existing: string, backup: string): string {
-  try {
-    const a = JSON.parse(existing);
-    const b = JSON.parse(backup);
-    const merged = { ...a };
-    for (const [key, val] of Object.entries(b.games ?? {})) {
-      const existEntry = merged.games?.[key];
-      if (!existEntry) {
-        merged.games = merged.games ?? {};
-        merged.games[key] = val;
-      }
-    }
-    return JSON.stringify(merged);
-  } catch {
-    return backup;
-  }
-}
-
-function mergeSessionHistory(existing: string, backup: string): string {
-  try {
-    const a = JSON.parse(existing);
-    const b = JSON.parse(backup);
-    const byId = new Map<string, unknown>();
-    for (const s of a.sessions ?? []) byId.set(s.sessionId ?? s.id, s);
-    for (const s of b.sessions ?? []) {
-      if (!byId.has(s.sessionId ?? s.id)) {
-        byId.set(s.sessionId ?? s.id, s);
-      }
-    }
-    return JSON.stringify({ sessions: Array.from(byId.values()) });
-  } catch {
-    return backup;
-  }
-}
-
-function mergeByField(existing: string, backup: string): string {
-  try {
-    const a = JSON.parse(existing);
-    const b = JSON.parse(backup);
-    return JSON.stringify({ ...a, ...b, updatedAt: Math.max(a.updatedAt ?? 0, b.updatedAt ?? 0) });
-  } catch {
-    return backup;
-  }
-}
-
 /**
  * Field-level merge for uiPreferences: applies ONLY appearance fields from backup to existing settings.
  * Non-appearance fields (steamRoot, API keys, providers, etc.) are NEVER touched.
@@ -994,12 +805,11 @@ const FILE_PATH_TO_STORAGE_KEY: Record<string, string> = {
   "lumaforge/manual-games.json": "lumaforge-manual-games-v1",
   "lumaforge/provider-overrides.json": "lumaforge-epic-overrides-v1",
   "lumaforge/profile.json": "lumaforge-user-profile-v1",
-  "lumaforge/custom-artwork-manifest.json": "lumaforge-game-activities",
+  "lumaforge/launcher-achievements.json": "lumaforge-launcher-achievements-v1",
+  "lumaforge/game-activities.json": "lumaforge-game-activities",
+  "lumaforge/session-history.json": "lumaforge-session-history-v1",
+  "lumaforge/playtime.json": "lumaforge-playtime-v1",
   "steam/lua/manifest.json": "lumaforge_lua_scan_notified_hash",
-  "steam/achievement-inputs/manifest.json": "lumaforge-launcher-achievements-v1",
-  "uiPreferences/appearance.json": "lumaforge-settings",
-  "uiPreferences/theme.json": "lumaforge-theme",
-  "uiPreferences/surface-mode.json": "lumaforge-surface-mode",
 };
 
 /**
@@ -1010,7 +820,14 @@ const FILE_PATH_TO_STORAGE_KEY: Record<string, string> = {
  */
 export function resolveStorageKeyForFilePath(relativePath: string, section: string): string | null {
   // External file paths are restored via Rust — skip localStorage mapping
-  if (relativePath.startsWith("steam/lua/") || relativePath.startsWith("steam/achievements/")) {
+  if (relativePath.startsWith("steam/lua/") && relativePath !== "steam/lua/manifest.json") {
+    return null;
+  }
+  if (relativePath.startsWith("steam/achievements/")) {
+    return null;
+  }
+  // games_v2 is restored via SQLite import, not localStorage
+  if (relativePath.startsWith("games_v2/")) {
     return null;
   }
 
@@ -1037,28 +854,7 @@ export function restoreFileToStorage(
     return;
   }
 
-  if (section === "uiPreferences" && relativePath === "uiPreferences/appearance.json") {
-    // Field-level merge: read current settings, apply only appearance fields
-    const current = localStorage.getItem(storageKey);
-    if (current) {
-      const merged = mergeUiPreferences(current, backupData);
-      localStorage.setItem(storageKey, merged);
-      debugLog("field-merged appearance into", storageKey);
-    } else {
-      // No existing settings — create minimal object from appearance fields only
-      try {
-        const appearance = JSON.parse(backupData) as Record<string, unknown>;
-        const minimal: Record<string, unknown> = {};
-        for (const key of APPEARANCE_SETTINGS_KEYS) {
-          if (key in appearance) minimal[key] = appearance[key];
-        }
-        localStorage.setItem(storageKey, JSON.stringify(minimal));
-        debugLog("created minimal settings from appearance", storageKey);
-      } catch {
-        // skip malformed
-      }
-    }
-  } else if (
+  if (
     relativePath.includes("theme.json") ||
     relativePath.includes("surface-mode.json")
   ) {
@@ -1074,7 +870,7 @@ export function restoreFileToStorage(
       debugLog("merged-section", section, "into", storageKey);
     } else {
       // No existing data — strip secrets from backup before writing
-      if (section === "settings" && relativePath === "lumaforge/settings.json") {
+      if (relativePath === "lumaforge/settings.json") {
         try {
           const parsed = JSON.parse(backupData) as Record<string, unknown>;
           const safe = stripSecrets(parsed);
@@ -1109,17 +905,8 @@ export function isLegacyV1WithFullSettings(manifest: BackupManifest): boolean {
 
 export const SECTION_MERGE_POLICIES: Record<string, "merge" | "replace" | "union" | "dedup" | "custom" | "field-merge"> = {
   settings: "merge",
-  integrations: "merge",
-  favorites: "union",
-  manualGames: "custom",
-  playtime: "custom",
-  sessionHistory: "custom",
-  providerOverrides: "merge",
-  profile: "merge",
-  customArtwork: "merge",
-  steamLua: "replace",
-  steamAchievementInputs: "replace",
-  uiPreferences: "field-merge",
+  gameLibrary: "custom", // SQLite upsert by ID
+  steamExternal: "replace",
 };
 
 export const MERGE_POLICY_LABELS: Record<string, string> = {
@@ -1141,21 +928,8 @@ export function mergeSectionData(
   switch (section) {
     case "settings":
       return mergeSettings(existingData, backupData);
-    case "favorites":
-      return mergeFavorites(existingData, backupData);
-    case "manualGames":
-      return mergeManualGames(existingData, backupData);
-    case "playtime":
-      return mergePlaytime(existingData, backupData);
-    case "sessionHistory":
-      return mergeSessionHistory(existingData, backupData);
-    case "providerOverrides":
-    case "profile":
-    case "customArtwork":
-      return mergeByField(existingData, backupData);
-    case "uiPreferences":
-      // Should only be called for non-appearance files; appearance uses mergeUiPreferences
-      return mergeByField(existingData, backupData);
+    case "steamExternal":
+      return backupData; // replace
     default:
       return backupData;
   }
@@ -1166,30 +940,40 @@ export function mergeSectionData(
 export function getLocalStorageKeyForSection(section: string): string {
   const keyMap: Record<string, string> = {
     settings: "lumaforge-settings",
-    integrations: "lumaforge-integration-settings",
-    favorites: "lumaforge-favorites-v1",
-    manualGames: "lumaforge-manual-games-v1",
-    providerOverrides: "lumaforge-epic-overrides-v1",
-    profile: "lumaforge-user-profile-v1",
-    customArtwork: "lumaforge-game-activities",
-    steamLua: "lumaforge_lua_scan_notified_hash",
-    steamAchievementInputs: "lumaforge-launcher-achievements-v1",
-    uiPreferences: "lumaforge-settings",
+    gameLibrary: "", // games_v2 uses SQLite, not localStorage
+    steamExternal: "lumaforge_lua_scan_notified_hash",
   };
   return keyMap[section] ?? "";
 }
 
 /**
  * Returns all localStorage keys that belong to a backup section.
- * "settings" → [lumaforge-settings, lumaforge-theme, lumaforge-surface-mode]
- * "uiPreferences" → [lumaforge-settings, lumaforge-theme, lumaforge-surface-mode]
+ * "settings" → all localStorage keys (settings, integrations, favorites, etc.)
+ * "gameLibrary" → [] (uses SQLite, not localStorage)
+ * "steamExternal" → [lumaforge_lua_scan_notified_hash]
  */
 export function getAllLocalStorageKeysForSection(section: string): string[] {
-  if (section === "settings" || section === "uiPreferences") {
-    return ["lumaforge-settings", "lumaforge-theme", "lumaforge-surface-mode"];
+  if (section === "settings") {
+    return [
+      "lumaforge-settings",
+      "lumaforge-theme",
+      "lumaforge-surface-mode",
+      "lumaforge-integration-settings",
+      "lumaforge-favorites-v1",
+      "lumaforge-manual-games-v1",
+      "lumaforge-epic-overrides-v1",
+      "lumaforge-user-profile-v1",
+      "lumaforge-launcher-achievements-v1",
+      "lumaforge-game-activities",
+      "lumaforge-session-history-v1",
+      "lumaforge-playtime-v1",
+    ];
   }
-  const key = getLocalStorageKeyForSection(section);
-  return key ? [key] : [];
+  if (section === "steamExternal") {
+    return ["lumaforge_lua_scan_notified_hash"];
+  }
+  // gameLibrary uses SQLite, not localStorage
+  return [];
 }
 
 /**
@@ -1275,11 +1059,11 @@ export function snapshotProtectedFields(): Record<string, string | null> {
  * 5. Secret field validation after writes (credentials/API keys preserved exactly)
  * 6. Rollback on any validation failure
  */
-export function restoreSectionsSafe(
+export async function restoreSectionsSafe(
   manifest: BackupManifest,
   fileData: Record<string, string>,
   selectedSections: Set<string>,
-): BackupRestoreResult {
+): Promise<BackupRestoreResult> {
   const restoredSections: string[] = [];
   const conflicts: string[] = [];
 
@@ -1305,6 +1089,25 @@ export function restoreSectionsSafe(
       if (!selectedSections.has(file.section)) continue;
       const backupData = fileData[file.relativePath];
       if (!backupData) continue;
+
+      // Special handling for gameLibrary: import games_v2 via SQLite
+      if (file.section === "gameLibrary" && file.relativePath === "games_v2/games.json") {
+        try {
+          const { importGamesV2 } = await import("./tauri");
+          const games = JSON.parse(backupData);
+          if (Array.isArray(games) && games.length > 0) {
+            await importGamesV2(games);
+            debugLog("imported games_v2 from backup:", games.length, "games");
+          }
+        } catch (e) {
+          debugLog("[RESTORE][GAME_LIBRARY] import failed:", e);
+          conflicts.push(`Failed to import games_v2: ${e}`);
+        }
+        if (!restoredSections.includes(file.section)) {
+          restoredSections.push(file.section);
+        }
+        continue;
+      }
 
       restoreFileToStorage(file.relativePath, file.section, backupData);
 
@@ -1468,15 +1271,22 @@ export function dispatchRestoreRefresh(storageKey: string): void {
  * Map BackupSection → localStorage keys that need refresh notification.
  */
 export const SECTION_STORAGE_KEYS: Record<string, string[]> = {
-  settings: ["lumaforge-settings"],
-  uiPreferences: ["lumaforge-theme", "lumaforge-surface-mode", "lumaforge-settings"],
-  favorites: ["lumaforge-favorites-v1"],
-  manualGames: ["lumaforge-manual-games-v1", "lumaforge-manual-games-json-migrated-v1"],
-  integrations: ["lumaforge-integration-settings"],
-  profile: ["lumaforge-user-profile-v1"],
-  providerOverrides: ["lumaforge-epic-overrides-v1"],
-  steamLua: ["lumaforge_lua_scan_notified_hash"],
-  steamAchievementInputs: ["lumaforge-launcher-achievements-v1"],
+  settings: [
+    "lumaforge-settings",
+    "lumaforge-theme",
+    "lumaforge-surface-mode",
+    "lumaforge-integration-settings",
+    "lumaforge-favorites-v1",
+    "lumaforge-manual-games-v1",
+    "lumaforge-epic-overrides-v1",
+    "lumaforge-user-profile-v1",
+    "lumaforge-launcher-achievements-v1",
+    "lumaforge-game-activities",
+    "lumaforge-session-history-v1",
+    "lumaforge-playtime-v1",
+  ],
+  gameLibrary: [], // games_v2 uses SQLite, not localStorage
+  steamExternal: ["lumaforge_lua_scan_notified_hash"],
 };
 
 /**
