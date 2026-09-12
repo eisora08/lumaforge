@@ -154,6 +154,9 @@ pub fn run() {
             // ── Single-instance lock ──────────────────────────────────────
             let startup_cfg = read_startup_config(app.handle());
 
+            // ── Epic Auth: global AppHandle for token path resolution ────
+            commands::epic_auth::init_app_handle(app.handle().clone());
+
             // ── Achievement file watcher state ─────────────────────────────
             app.manage(AchievementWatcherState(Mutex::new(AchievementWatcher::new())));
 
@@ -309,7 +312,7 @@ pub fn run() {
             // ── Failsafe: show main window after timeout ───────────────────
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(10));
+                std::thread::sleep(std::time::Duration::from_secs(20));
                 if let Some(main) = handle.get_webview_window("main") {
                     if !main.is_visible().unwrap_or(false) {
                         eprintln!("[Boot] Rust failsafe: showing main window after timeout");

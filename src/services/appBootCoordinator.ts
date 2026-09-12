@@ -271,14 +271,14 @@ export async function runBootTasks(): Promise<void> {
                 // it wakes up, so hydrate MUST complete before _snapshotResolve().
                 if (_snapshotResolve) _snapshotResolve();
                 setBootPhaseLabel("critical-done");
-                logBoot("snapshot-resolved: data ready, splash deferred to stage 4.5");
-                emitEarlyShow();
+                logBoot("snapshot-resolved: data ready, showing main window");
+                await closeSplashscreenAndShowMainOnce();
               } else {
                 if (DEBUG_BOOT) console.log(`[BOOT][CACHE] snapshotFresh=false (no snapshot file)`);
-                // No snapshot — resolve so LibraryGamesContext can proceed, splash deferred to stage 4.5
+                // No snapshot — resolve so LibraryGamesContext can proceed, showing main window
                 if (_snapshotResolve) _snapshotResolve();
                 setBootPhaseLabel("critical-done");
-                emitEarlyShow();
+                await closeSplashscreenAndShowMainOnce();
               }
             } catch {
               _snapshotLoaded = null;
@@ -286,7 +286,6 @@ export async function runBootTasks(): Promise<void> {
               if (_snapshotResolve) _snapshotResolve();
               setBootPhaseLabel("critical-done");
               await closeSplashscreenAndShowMainOnce();
-              emitEarlyShow();
             }
             logBoot("load snapshot end");
           });
@@ -761,8 +760,6 @@ export async function runBootTasks(): Promise<void> {
 
           // Show main window now that reconcile is done and games_v2 is populated
           await closeSplashscreenAndShowMainOnce();
-          emitEarlyShow();
-          logBoot("early-show: main window visible after reconcile");
 
           // Stage 4.6: Fetch Steam owned games (non-installed) on every boot
           await track("fetch-steam-owned-games", async () => {

@@ -112,10 +112,8 @@ export default function SplashScreen({ wizardActive = false }: SplashScreenProps
 
     const unsubEarly = subscribeEarlyShow(() => {
       if (hasClosedSplashRef.current) return;
-      hasClosedSplashRef.current = true;
       setProgress(90);
-      setFadeOut(true);
-      setTimeout(() => setVisible(false), 400);
+      setStatusText("Finalizing\u2026");
     });
 
     return () => {
