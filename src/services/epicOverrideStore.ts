@@ -245,6 +245,29 @@ export function hasEpicOverrides(providerGameId: string): boolean {
   return Object.values(rest).some((v) => v !== undefined && v !== null && v !== "");
 }
 
+const ROLE_PATH_KEYS: Array<[string, "coverPath" | "landscapePath" | "backgroundPath" | "logoPath" | "iconPath"]> = [
+  ["cover", "coverPath"],
+  ["landscape", "landscapePath"],
+  ["background", "backgroundPath"],
+  ["logo", "logoPath"],
+  ["icon", "iconPath"],
+];
+
+/**
+ * Media roles the user EXPLICITLY removed (override value === null).
+ * These must never be re-auto-discovered or re-fetched from a catalog —
+ * only an explicit user action can restore them.
+ */
+export function getExplicitlyClearedMediaRoles(providerGameId: string): Set<string> {
+  const overrides = readEpicOverrides(providerGameId);
+  const cleared = new Set<string>();
+  if (!overrides) return cleared;
+  for (const [role, key] of ROLE_PATH_KEYS) {
+    if (overrides[key] === null) cleared.add(role);
+  }
+  return cleared;
+}
+
 // Listen for external restore writes and reload all overrides from localStorage
 if (typeof window !== "undefined") {
   window.addEventListener("lumaforge-data-changed", (e: Event) => {

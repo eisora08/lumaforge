@@ -22,7 +22,7 @@ import {
   computeEpicFingerprint,
 } from "./epicGameLibraryMapper";
 import { EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LIBRARY } from "./epicFeatureFlag";
-import { mergeEpicOverrides } from "./epicOverrideStore";
+import { getExplicitlyClearedMediaRoles, mergeEpicOverrides } from "./epicOverrideStore";
 import type { MediaRole } from "./providerMediaPaths";
 import type { EpicMetadataResult } from "./tauri";
 
@@ -107,7 +107,9 @@ async function autoDiscoverMediaPaths(
     if (hasAllPaths) continue; // all roles already have paths — skip scan
 
     // Find what's missing
+    const clearedRoles = getExplicitlyClearedMediaRoles(game.providerGameId);
     const missingRoles = MEDIA_ROLES.filter((role) => {
+      if (clearedRoles.has(role)) return false; // explicitly removed — never auto-recover
       const pathKey = `${role}Path` as "coverPath" | "landscapePath" | "backgroundPath" | "logoPath" | "iconPath";
       return !(game as Record<string, string | undefined>)[pathKey];
     });
@@ -177,14 +179,20 @@ async function applyEpicMetadataToGame(
   game: LibraryGame,
   result: EpicMetadataResult,
 ): Promise<void> {
+  // Respect explicit removals — a role the user cleared in the edit dialog must
+  // never be silently restored by a catalog re-resolution. Only a new explicit
+  // set action can bring it back.
+  const clearedRoles = getExplicitlyClearedMediaRoles(game.providerGameId ?? "");
+  const canApply = (role: string) => !clearedRoles.has(role);
+
   const a = result.artwork ?? {};
   const patch: Record<string, string> = {};
 
-  if (a.cover) { game.coverPath = a.cover; patch.coverPath = a.cover; }
-  if (a.landscape) { game.landscapePath = a.landscape; patch.landscapePath = a.landscape; }
-  if (a.background) { game.backgroundPath = a.background; patch.backgroundPath = a.background; }
-  if (a.logo) { game.logoPath = a.logo; patch.logoPath = a.logo; }
-  if (a.icon) { game.iconPath = a.icon; patch.iconPath = a.icon; }
+  if (a.cover && canApply("cover")) { game.coverPath = a.cover; patch.coverPath = a.cover; }
+  if (a.landscape && canApply("landscape")) { game.landscapePath = a.landscape; patch.landscapePath = a.landscape; }
+  if (a.background && canApply("background")) { game.backgroundPath = a.background; patch.backgroundPath = a.background; }
+  if (a.logo && canApply("logo")) { game.logoPath = a.logo; patch.logoPath = a.logo; }
+  if (a.icon && canApply("icon")) { game.iconPath = a.icon; patch.iconPath = a.icon; }
 
   // Title correction: replace codename/hash with the real catalog title.
   // A name override is written so the corrected title is stable across restarts
@@ -336,10 +344,15 @@ async function enrichEpicGamesFromCatalog(games: LibraryGame[]): Promise<void> {
       const ns = parts[0];
       const catId = parts[1];
       // Catalog artwork/title pass — only run once per session, and only when
-      // the game still needs artwork or its title corrected.
+      // the game still needs artwork or its title corrected. A role explicitly
+      // cleaned by the user (override === null) is never a "missing" role here —
+      // only an explicit new set action restores it, so we don't re-download
+      // artwork the user deleted.
       if (ns && catId && !_metadataFetchedThisSession.has(providerGameId)) {
         const titleNeedsWork = isSuspiciousEpicTitle(game.title || "");
-        if (!game.coverPath || titleNeedsWork) {
+        const clearedRoles = getExplicitlyClearedMediaRoles(providerGameId);
+        const needsArtwork = !game.coverPath && !clearedRoles.has("cover");
+        if (needsArtwork || titleNeedsWork) {
           try {
             const result = await epicFetchAndSaveMetadata(providerGameId, ns, catId);
             _metadataFetchedThisSession.add(providerGameId);
@@ -911,7 +924,13 @@ async function persistEpicGamesToSqlite(games: LibraryGame[]): Promise<void> {
   try {
     const { batchUpsertGamesV2 } = await import("./tauri");
     const { epicGameToGameV2 } = await import("./gameV2Mapper");
-    
+
+    // An explicitly-cleared role is null after mergeEpicOverrides — persist it
+    // as an empty string so the upsert COALESCE clears the column instead of
+    // preserving the stale path (null/absent would keep the removed artwork).
+    const rolePath = (v: string | null | undefined): string | undefined =>
+      v === null ? "" : (v ?? undefined);
+
     // Write to games_v2 (single source of truth)
     const gamesV2 = games
       .filter((g) => g.id && g.providerGameId)
@@ -926,11 +945,11 @@ async function persistEpicGamesToSqlite(games: LibraryGame[]): Promise<void> {
           executablePath: g.executablePath,
           installSize: g.sizeOnDisk,
           // Media
-          coverPath: g.coverPath,
-          landscapePath: g.landscapePath,
-          backgroundPath: g.backgroundPath,
-          logoPath: g.logoPath,
-          iconPath: g.iconPath,
+          coverPath: rolePath(g.coverPath),
+          landscapePath: rolePath(g.landscapePath),
+          backgroundPath: rolePath(g.backgroundPath),
+          logoPath: rolePath(g.logoPath),
+          iconPath: rolePath(g.iconPath),
           // Metadata
           genres: Array.isArray(meta.genres) ? meta.genres as string[] : undefined,
           developers: Array.isArray(meta.developers) ? meta.developers as string[] : (meta.developer ? [String(meta.developer)] : undefined),

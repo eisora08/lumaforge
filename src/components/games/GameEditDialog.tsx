@@ -1901,18 +1901,33 @@ export default function GameEditDialog({
         // cleared value instead of resurrecting the stale cover from games_v2.
         try {
           const { getGameV2, upsertGameV2 } = await import("../../services/tauri");
+          // Clear the row UNCONDITIONALLY — a missing row (getGameV2 null) must
+          // not skip the write, or a later bulk ephemeral persist re-materializes
+          // the stale path. Empty string always wins the upsert COALESCE.
           const epicRow = await getGameV2(epicGameId);
-          if (epicRow) {
-            await upsertGameV2({
-              ...epicRow,
-              coverPath: updatedMedia.coverPath ?? "",
-              landscapePath: updatedMedia.landscapePath ?? "",
-              backgroundPath: updatedMedia.backgroundPath ?? "",
-              logoPath: updatedMedia.logoPath ?? "",
-              iconPath: updatedMedia.iconPath ?? "",
-              updatedAt: Date.now(),
-            });
-          }
+          await upsertGameV2({
+            ...(epicRow ?? {
+              id: epicGameId,
+              title: game?.title ?? "Unknown Epic Game",
+              source: "epic",
+              providerGameId: epicProviderGameId,
+              libraryId: epicGameId,
+              isInstalled: false,
+              playtimeSeconds: 0,
+              playCount: 0,
+              isFavorite: false,
+              isHidden: false,
+              standalone: false,
+              hasLua: false,
+              createdAt: Date.now(),
+            }),
+            coverPath: updatedMedia.coverPath ?? "",
+            landscapePath: updatedMedia.landscapePath ?? "",
+            backgroundPath: updatedMedia.backgroundPath ?? "",
+            logoPath: updatedMedia.logoPath ?? "",
+            iconPath: updatedMedia.iconPath ?? "",
+            updatedAt: Date.now(),
+          });
         } catch (err) {
           console.warn(`[GAME_EDIT_MEDIA][EPIC_GAMES_V2_CLEAR_FAIL] id=${epicGameId}`, err);
         }
@@ -1966,7 +1981,7 @@ export default function GameEditDialog({
       });
       onMediaChanged?.();
     },
-    [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, isEmulatorMode, emulatorProviderGameId, manualGameId, createdManualId, onMediaChanged],
+    [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, isEmulatorMode, emulatorProviderGameId, manualGameId, createdManualId, onMediaChanged, game],
   );
 
   // ── Re-read media after web image search download ──
