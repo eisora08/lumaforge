@@ -1398,6 +1398,20 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         }
       }
 
+      // Remove the deleted game from in-memory state immediately — the Rust
+      // delete_game_v2 command emits this event with the game id as detail.
+      if (type === "games-deleted" && typeof detail === "string") {
+        const before = gamesRef.current.length;
+        const after = gamesRef.current.filter(
+          (g) => g.id !== detail && g.libraryId !== detail && g.appId !== detail,
+        );
+        if (after.length !== before) {
+          applyGamesSafely(after, "sqlite-refresh");
+          invalidateGamesV2Cache();
+          console.log(`[LIBRARY_CONTEXT][GAME_DELETED] id=${detail} removed=${before - after.length}`);
+        }
+      }
+
       // Patch media paths when appinfo is updated (after download completes)
       if (type === "appinfo-changed") {
         const appId = detail;

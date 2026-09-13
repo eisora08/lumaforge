@@ -29,6 +29,7 @@ import { emulatorPlatforms } from "../../data/emulatorDefinitions/platforms";
 import { getAllEmulatorConfigs } from "../../services/emulatorConfigStore";
 import { scanForRoms, createEmulatorGameEntries } from "../../services/emulatorScanner";
 import { showError, showSuccess } from "../toast/GameToast";
+import { setPendingLibraryFocus, notifyPendingFocusReady } from "../../services/libraryNavigationService";
 import SourceDropdown from "../common/SourceDropdown";
 
 type ImportRomModalProps = {
@@ -235,6 +236,13 @@ export function ImportRomModal({ open, onClose, defaultEmulatorConfigId }: Impor
       saveEmulatorGames(entries);
       setImported(entries.length);
       showSuccess(t("rom.imported", "Imported {{count}} ROMs", { count: entries.length }));
+
+      // Auto-focus the last imported game in the library (mirrors manual import behavior)
+      if (entries.length > 0) {
+        const last = entries[entries.length - 1];
+        setPendingLibraryFocus(last.id, last.title);
+        notifyPendingFocusReady();
+      }
 
       setTimeout(() => {
         onClose();

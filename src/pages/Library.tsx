@@ -883,22 +883,6 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
                             : t("library_page.game_not_found", "Game not yet in library — try refreshing or installing.")}
                         </p>
                       </div>
-                      {displayGames.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFocusAppId(null);
-                            setFocusTitle(null);
-                            setSearchQuery("");
-                            setSearchOpen(false);
-                            console.log(`[LIBRARY_FOCUS][CLEAR] reason=user-dismiss`);
-                          }}
-                          className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                          {t("library_page.show_all", "Show all games")}
-                        </button>
-                      )}
                       {displayGames.length === 0 && (
                         <button
                           type="button"
@@ -913,6 +897,20 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
                           {t("library_page.refresh_library", "Refresh library")}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFocusAppId(null);
+                          setFocusTitle(null);
+                          setSearchQuery("");
+                          setSearchOpen(false);
+                          console.log(`[LIBRARY_FOCUS][CLEAR] reason=user-dismiss`);
+                        }}
+                        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        {t("library_page.show_all", "Show all games")}
+                      </button>
                     </div>
                   )}
                 </div>

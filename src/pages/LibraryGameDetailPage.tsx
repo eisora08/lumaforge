@@ -550,7 +550,14 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_DETAILS] appId=${appId} hasData=${!!entry?.data} keys=${entry?.data ? Object.keys(entry.data as any).join(",") : "none"}`);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [selectedGame?.appId, resetGeneration]);
+    // Re-run when the selected game's media changes (e.g. epic override
+    // re-merge lands ~150ms after the edit dialog commit, or games_v2 clears).
+    // Without these deps canonicalAppInfo/fallbackBundle keep stale resolved
+    // asset URLs for the whole page session (Steam updates synchronously so it
+    // was masked; epic updates async and went stale until remount).
+  }, [selectedGame?.appId, resetGeneration,
+    selectedGame?.backgroundPath, selectedGame?.landscapePath,
+    selectedGame?.coverPath, selectedGame?.logoPath, selectedGame?.iconPath]);
 
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
   useEffect(() => {

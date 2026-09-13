@@ -1,6 +1,6 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
-export type DataChangeType = "games-upserted" | "appinfo-changed" | "names-updated" | "manifest-changed" | "playtime-changed" | "play-queue-changed" | "collections-changed";
+export type DataChangeType = "games-upserted" | "games-deleted" | "appinfo-changed" | "names-updated" | "manifest-changed" | "playtime-changed" | "play-queue-changed" | "collections-changed";
 
 interface DataChangeEvent {
   change_type: string;
