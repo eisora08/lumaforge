@@ -5,6 +5,19 @@ All notable changes to LumaForge will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] — Released
+
+### Fixed
+- **Library refresh on game removal**: Deleted games now disappear immediately from the library without requiring a manual refresh (listens for `games-deleted` SQLite event).
+- **Focus banner stuck state**: "Show all games" clear button is always visible when a focus filter is active, preventing the user from being trapped when the focused game is deleted.
+- **Detail page hero refresh**: Game detail page hero/backdrop/logo now update live when media paths change asynchronously (e.g. Epic override re-merge, games_v2 clear).
+
+### Added
+- **Emulator ROM import auto-focus**: Importing ROMs now auto-focuses the last imported game in the library, matching the existing manual import behavior.
+- **DataChangeType**: Added `games-deleted` to the event bus type union.
+
+---
+
 ## [1.2.0] — Unreleased
 
 ### Added
