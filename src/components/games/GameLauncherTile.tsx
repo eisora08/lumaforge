@@ -126,8 +126,8 @@ function getCardImage(
   // Fallback: use local disk paths from games_v2 DB
   if (game) {
     const path = mode === "poster"
-      ? (game.coverPath || game.landscapePath)
-      : (game.landscapePath || game.coverPath);
+      ? (game.coverPath || game.landscapePath || game.backgroundPath)
+      : (game.landscapePath || game.coverPath || game.backgroundPath);
     if (path) return path;
   }
 
@@ -322,7 +322,7 @@ function GameLauncherTileInner({
     if (!game.appId || !displayImage) {
       // All games: resolve provider-relative path directly from game.coverPath/landscapePath
       const providerPath = game.imageUrl || (artworkMode === "poster" ? game.coverPath : game.landscapePath)
-        || game.coverPath || game.landscapePath;
+        || game.coverPath || game.landscapePath || game.backgroundPath;
       if (providerPath) {
         if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_INPUT] title=${game.title} source=${game.source} appId=${game.appId} providerPath=${providerPath} canonicalInfo=${!!canonicalInfo}`);
         let cancelled = false;
@@ -369,7 +369,7 @@ function GameLauncherTileInner({
   if (renderLogRef.current !== renderStateKey) {
     renderLogRef.current = renderStateKey;
     console.log(`[LIBRARY_CARD] title="${game.title}" source=${game.source} appId=${game.appId}`);
-    console.log(`  [DB] coverPath=${game.coverPath ?? "NULL"} landscapePath=${game.landscapePath ?? "NULL"} backgroundPath=${game.backgroundPath ?? "NULL"} logoPath=${game.logoPath ?? "NULL"}`);
+    console.log(`  [DB] coverPath=${game.coverPath ?? "NULL"} landscapePath=${game.landscapePath ?? "NULL"} backgroundPath=${game.backgroundPath ?? "NULL"} logoPath=${game.logoPath ?? "NULL"} iconPath=${game.iconPath ?? "NULL"}`);
     console.log(`  [DB] imageUrl=${game.imageUrl ?? "NULL"} isInstalled=${game.isInstalled}`);
     console.log(`  [appinfo] media=${JSON.stringify(canonicalInfo?.media ?? "NULL")}`);
     console.log(`  [result] artworkMode=${artworkMode} displayImage=${displayImage ?? "NULL"} resolvedSrc=${resolvedSrc ?? "NULL"}`);

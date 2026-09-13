@@ -18,7 +18,7 @@ import { useTranslation } from "react-i18next";
 import { showError, showSuccess } from "../toast/GameToast";
 import SourceDropdown from "../common/SourceDropdown";
 import { notifyMediaUpdated } from "../../services/startupSnapshotService";
-import { invalidateResolvedMediaCache, clearSessionAppInfoCache } from "../../services/gameCacheService";
+import { invalidateResolvedMediaCache, clearSessionAppInfoCache, persistMediaPathsToGamesV2 } from "../../services/gameCacheService";
 import { getGameAppInfo, updateGameAppinfoMedia } from "../../services/tauri";
 import type { GameMediaPaths } from "../../services/tauri";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -272,9 +272,9 @@ export default function GameImageSearchDialog({
         const relativePath = await downloadProviderMediaFromUrl("steam", appId, role, url, true);
         if (relativePath) {
           console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath}`);
+          const mediaKey = `${role}Path` as keyof GameMediaPaths;
           try {
             const currentInfo = await getGameAppInfo(appId);
-            const mediaKey = `${role}Path` as keyof GameMediaPaths;
             const mergedMedia: GameMediaPaths = {
               coverPath: currentInfo?.media?.coverPath ?? null,
               landscapePath: currentInfo?.media?.landscapePath ?? null,
@@ -287,6 +287,9 @@ export default function GameImageSearchDialog({
           } catch (e) {
             if (DEBUG_MEDIA_EDIT) console.log(`[WEB_IMAGE_SEARCH][APPINFO_WRITE_FAIL] error=${e}`);
           }
+          // Persist straight to games_v2 (the store the library reads). Without
+          // this the websearch download only touched the dead appinfo table.
+          await persistMediaPathsToGamesV2(appId, { [mediaKey]: relativePath }, "web-image-search");
           // Invalidate caches AFTER the appinfo write persists so re-resolving
           // tiles read the freshly-written cover path (fixes first-download null).
           invalidateResolvedMediaCache(appId);

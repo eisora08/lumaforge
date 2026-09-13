@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { ArrowDownToLine, ArrowUpCircle, Check, ExternalLink, Loader2 } from "lucide-react";
 import { useAppUpdate } from "../../hooks/useAppUpdate";
 import { openExternalUrl } from "../../services/externalLinks";
 import { checkForUpdate, downloadAndInstallUpdate, dismissUpdate } from "../../services/appUpdateStore";
 
 export default function AppUpdateIcon() {
+  const { t } = useTranslation();
   const snap = useAppUpdate();
   const [panelOpen, setPanelOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -20,10 +22,11 @@ export default function AppUpdateIcon() {
     }
   }, [panelOpen]);
 
-  // Click outside to close
+  // Click outside to close (ignore clicks on the toggle button itself)
   useEffect(() => {
     if (!panelOpen) return;
     function handleClick(e: MouseEvent) {
+      if (buttonRef.current && buttonRef.current.contains(e.target as Node)) return;
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         setPanelOpen(false);
       }
@@ -55,8 +58,10 @@ export default function AppUpdateIcon() {
   }, []);
 
   const handleViewChangelog = useCallback(() => {
-    openExternalUrl("https://github.com/eisora08/lumaforge/releases/tag/v1.2.1");
-  }, []);
+    const version = snap.updateVersion;
+    if (!version) return;
+    openExternalUrl(`https://github.com/eisora08/lumaforge/releases/tag/v${version}`);
+  }, [snap.updateVersion]);
 
   // Don't render when no update available and not checking
   if (!snap.updateAvailable && !snap.error) return null;
@@ -70,7 +75,7 @@ export default function AppUpdateIcon() {
         ref={buttonRef}
         onClick={handleToggle}
         className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-(--color-accent)/10 transition hover:bg-(--color-accent)/20"
-        title={snap.updateAvailable ? `Update available: ${versionLabel}` : "Checking for updates…"}
+        title={snap.updateAvailable ? t("app_update.available_title", "Update available: {{version}}", { version: versionLabel }) : t("app_update.checking_title", "Checking for updates…")}
       >
         {snap.downloading ? (
           <Loader2 className="h-4 w-4 animate-spin text-(--color-accent)" />
@@ -104,7 +109,7 @@ export default function AppUpdateIcon() {
           <div className="flex items-center justify-between border-b border-(--surface-active-border)/20 px-4 py-3">
             <div className="flex items-center gap-2">
               <ArrowUpCircle className="h-4 w-4 text-(--color-accent)" />
-              <span className="text-sm font-semibold text-(--color-text)">App Update</span>
+              <span className="text-sm font-semibold text-(--color-text)">{t("app_update.title", "App Update")}</span>
             </div>
             {snap.updateVersion && (
               <span className="rounded-full bg-(--color-accent)/10 px-2 py-0.5 text-xs font-medium text-(--color-accent)">
@@ -118,13 +123,13 @@ export default function AppUpdateIcon() {
             {snap.downloaded ? (
               <div className="flex items-center gap-2 text-sm text-emerald-400">
                 <Check className="h-4 w-4" />
-                <span>Updated to {versionLabel}. Restarting…</span>
+                <span>{t("app_update.updated_to", "Updated to {{version}}. Restarting…", { version: versionLabel })}</span>
               </div>
             ) : snap.downloading ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-sm text-(--color-text)">
                   <Loader2 className="h-4 w-4 animate-spin text-(--color-accent)" />
-                  <span>Downloading update…</span>
+                  <span>{t("app_update.downloading", "Downloading update…")}</span>
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
                   <div
@@ -140,13 +145,13 @@ export default function AppUpdateIcon() {
                   onClick={handleCheckNow}
                   className="text-xs text-(--color-muted) hover:text-(--color-text) transition"
                 >
-                  Try again
+                  {t("app_update.try_again", "Try again")}
                 </button>
               </div>
             ) : (
               <>
                 <p className="text-sm text-(--color-text)">
-                  A new version of LumaForge is available.
+                  {t("app_update.available", "A new version of LumaForge is available.")}
                 </p>
                 {currentLabel && (
                   <p className="text-xs text-(--color-muted)">
@@ -171,7 +176,7 @@ export default function AppUpdateIcon() {
                 onClick={handleDismiss}
                 className="text-xs text-(--color-muted) hover:text-(--color-text) transition"
               >
-                Later
+                {t("app_update.later", "Later")}
               </button>
               <div className="flex items-center gap-2">
                 <button
@@ -179,14 +184,14 @@ export default function AppUpdateIcon() {
                   className="flex items-center gap-1 text-xs text-(--color-muted) hover:text-(--color-text) transition"
                 >
                   <ExternalLink className="h-3 w-3" />
-                  Changelog
+{t("app_update.changelog", "Changelog")}
                 </button>
                 <button
                   onClick={handleUpdate}
                   className="flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-3 py-1.5 text-xs font-medium text-white transition hover:brightness-110"
                 >
                   <ArrowDownToLine className="h-3 w-3" />
-                  Update & Restart
+                  {t("app_update.update_restart", "Update & Restart")}
                 </button>
               </div>
             </div>

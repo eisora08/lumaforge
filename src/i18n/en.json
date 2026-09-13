@@ -95,6 +95,18 @@
     "maximize": "Maximize",
     "close": "Close"
   },
+  "app_update": {
+    "title": "App Update",
+    "available_title": "Update available: {{version}}",
+    "checking_title": "Checking for updates…",
+    "available": "A new version of LumaForge is available.",
+    "downloading": "Downloading update…",
+    "updated_to": "Updated to {{version}}. Restarting…",
+    "try_again": "Try again",
+    "later": "Later",
+    "changelog": "Changelog",
+    "update_restart": "Update & Restart"
+  },
   "settings": {
     "general": "General",
     "general_desc": "Steam paths, account and auto-detection",
@@ -165,6 +177,8 @@
     "layout_desc": "Dashboard, card layout and display mode",
     "notifications": "Notifications",
     "notifications_desc": "Achievement alerts and session overlay",
+    "emulators": "Emulators",
+    "emulators_desc": "Configure emulators for playing ROM games",
     "metadata": "Artwork & Metadata Providers",
     "metadata_desc": "Configure metadata sources to enrich your game information.",
     "extensions": "Extensions",
@@ -816,7 +830,10 @@
     "file_picker_failed": "File picker failed: {{error}}",
     "tracking_default": "Default (Emulator Default)",
     "tracking_process": "Process",
-    "tracking_folder_mode": "Folder"
+    "tracking_folder_mode": "Folder",
+    "pick_profile": "Select Profile",
+    "custom_profile": "Custom Profile",
+    "custom_profile_desc": "Create from scratch"
   },
   "rom": {
     "import_title": "Import ROMs",

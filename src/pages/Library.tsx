@@ -19,6 +19,7 @@ import {
 
 import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
+import GameRowThumb from "../components/games/GameRowThumb";
 import GameHoverPreview from "../components/games/GameHoverPreview";
 import GameEditDialog from "../components/games/GameEditDialog";
 import GameScannerModal from "../components/games/GameScannerModal";
@@ -977,15 +978,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
                             onClick={() => handleOpenGame(game)}
                             className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
                           >
-                            <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-white/5">
-                              {game.imageUrl ? (
-                                <img src={game.imageUrl} alt="" className="h-full w-full object-cover" />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center">
-                                  <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
-                                </div>
-                              )}
-                            </div>
+                            <GameRowThumb game={game} />
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-[13px] font-medium text-(--color-text)">{game.title}</p>
                               <p className="truncate text-[11px] text-(--color-muted)">

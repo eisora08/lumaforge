@@ -172,7 +172,21 @@ pub fn set_autostart(app_handle: tauri::AppHandle, enabled: bool) -> Result<(), 
     if enabled {
         autostart.enable().map_err(|e| format!("Failed to enable autostart: {}", e))?;
     } else {
-        autostart.disable().map_err(|e| format!("Failed to disable autostart: {}", e))?;
+        match autostart.disable() {
+            Ok(()) => {}
+            Err(e) => {
+                // No autostart entry to remove on Windows → treat as success
+                // (disabling an entry that doesn't exist is a no-op).
+                let lower = e.to_string().to_lowercase();
+                if lower.contains("os error 2")
+                    || lower.contains("file not found")
+                    || lower.contains("cannot find the file")
+                {
+                    return Ok(());
+                }
+                return Err(format!("Failed to disable autostart: {}", e));
+            }
+        }
     }
     Ok(())
 }

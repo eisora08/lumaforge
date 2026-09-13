@@ -176,9 +176,17 @@ export default function PlayNextSidebarCard({ onNavigate }: { onNavigate?: (page
   return (
     <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02]">
       {/* Header */}
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }
+        }}
+        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left"
       >
         <ListPlus className="h-4 w-4 shrink-0 text-(--color-accent)" />
         <span className="flex-1 text-xs font-bold text-(--color-text)">
@@ -200,7 +208,7 @@ export default function PlayNextSidebarCard({ onNavigate }: { onNavigate?: (page
             expanded ? "rotate-180" : ""
           }`}
         />
-      </button>
+      </div>
 
       {/* Content */}
       {expanded && (

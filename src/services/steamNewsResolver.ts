@@ -119,6 +119,12 @@ export async function resolveSteamGameNews(
   appId: string | number
 ): Promise<{ items: SteamNewsItem[]; stale: boolean }> {
   const appIdStr = String(appId);
+  const numericId = Number(appIdStr);
+  // Only numeric Steam app ids have a news feed — skip everything else so we
+  // never hit fetch_steam_news with an invalid id or the CORS-blocked browser fallback.
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return { items: [], stale: false };
+  }
   const cache = loadCache();
   const cached = cache[appIdStr];
 

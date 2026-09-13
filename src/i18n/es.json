@@ -95,6 +95,18 @@
     "maximize": "Maximizar",
     "close": "Cerrar"
   },
+  "app_update": {
+    "title": "Actualización de la App",
+    "available_title": "Actualización disponible: {{version}}",
+    "checking_title": "Buscando actualizaciones…",
+    "available": "Hay una nueva versión de LumaForge disponible.",
+    "downloading": "Descargando actualización…",
+    "updated_to": "Actualizado a {{version}}. Reiniciando…",
+    "try_again": "Reintentar",
+    "later": "Más tarde",
+    "changelog": "Cambios",
+    "update_restart": "Actualizar y Reiniciar"
+  },
   "settings": {
     "general": "General",
     "general_desc": "Rutas de Steam, cuenta y auto-detección",
@@ -165,6 +177,8 @@
     "layout_desc": "Dashboard, diseño de cards y modo de visualización",
     "notifications": "Notificaciones",
     "notifications_desc": "Alertas de logros y overlay de sesión",
+    "emulators": "Emuladores",
+    "emulators_desc": "Configura emuladores para jugar juegos ROM",
     "metadata": "Proveedores de Arte y Metadatos",
     "metadata_desc": "Configura las fuentes de metadatos para enriquecer la información de tus juegos.",
     "extensions": "Extensiones",
@@ -816,7 +830,10 @@
     "file_picker_failed": "Error al seleccionar archivo: {{error}}",
     "tracking_default": "Predeterminado (Predeterminado del Emulador)",
     "tracking_process": "Proceso",
-    "tracking_folder_mode": "Carpeta"
+    "tracking_folder_mode": "Carpeta",
+    "pick_profile": "Seleccionar Perfil",
+    "custom_profile": "Perfil Personalizado",
+    "custom_profile_desc": "Crear desde cero"
   },
   "rom": {
     "import_title": "Importar ROMs",

@@ -812,6 +812,11 @@ class AchievementStoreImpl {
       ?? (summary.source === "crack" ? "steam" : "steam-official");
     try {
       const appIdNum = Number(appId);
+      if (!Number.isFinite(appIdNum) || appIdNum <= 0) {
+        // Non-numeric appId (e.g. non-Steam entries) — nothing to write to the u32 cache.
+        console.debug(`[ACH][CACHE][${traceId}] skipped appid=${appId} reason=non-numeric-appid`);
+        return;
+      }
       // Use IN-MEMORY summary as source of truth (not disk cache)
       const inMemory = this.summariesByAppId.get(key) ?? summary;
 

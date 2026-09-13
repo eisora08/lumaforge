@@ -22,8 +22,11 @@ import {
   upsertGameFilesMedia,
   saveGameMediaFile as saveGameMediaFileTauri,
   listProviderMediaFiles,
+  getGamesV2ByAppId,
+  upsertGameV2,
 } from "./tauri";
 import type { ProviderMediaFileEntry, GameFile, GameFilesMedia } from "./tauri";
+import type { GameV2 } from "../types/gameV2";
 import { invalidateImageCachesForApp } from "../components/common/AsyncImage";
 import {
   parseProviderMediaComponents,
@@ -195,17 +198,123 @@ export async function updateGameAppinfoMediaIfChanged(
   remote?: GameRemoteRefsInput | null,
   mediaSources?: GameMediaSources | null,
   caller?: string,
+  options?: { allowClear?: boolean },
 ): Promise<boolean> {
   const hasChange = await hasAppinfoEffectiveChange(appId, { name, media, remote, mediaSources });
-  if (!hasChange) {
+  if (!hasChange && !options?.allowClear) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][APPINFO_SKIP] appid=${appId} reason=already-synced-before-rust caller=${caller ?? "unknown"}`);
     return false;
   }
-  if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][APPINFO_CALL] caller=${caller ?? "unknown"} appid=${appId}`);
+  if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][APPINFO_CALL] caller=${caller ?? "unknown"} appid=${appId} allowClear=${!!options?.allowClear}`);
   await updateGameAppinfoMedia(appId, name, media, remote, mediaSources);
+  // Persist the same media straight into games_v2 — the store the library
+  // actually reads. The legacy appinfo `games` table is no longer the source
+  // of truth, so without this a freshly downloaded artwork never reaches the
+  // grid (it stayed null until a full remount/disk-scan repair).
+  await persistMediaPathsToGamesV2(appId, media, caller ?? "updateGameAppinfoMediaIfChanged", options);
   // Invalidate session cache so subsequent reads get fresh data
   _sessionAppinfoCache.delete(appId);
   return true;
+}
+
+// ── games_v2 media write-back ──
+// Writes downloaded/applied artwork paths into games_v2, which is the single
+// source of truth the library reads. The merge is built from the CURRENT
+// games_v2 rows so roles already persisted are never lost. By default only
+// non-null values are applied (this path never clears a role). With
+// allowClear=true (used by the edit-dialog remove flow) a null role is written
+// as "" — the one value that actually overwrites the upsert COALESCE — so the
+// deleted artwork is cleared from games_v2 immediately.
+export async function persistMediaPathsToGamesV2(
+  appId: string,
+  patch: Partial<GameMediaPaths>,
+  caller?: string,
+  options?: { allowClear?: boolean },
+): Promise<boolean> {
+  if (!appId) return false;
+  const allowClear = options?.allowClear === true;
+  const mediaKeys: (keyof GameMediaPaths)[] = ["coverPath", "landscapePath", "backgroundPath", "logoPath", "iconPath"];
+  const hasValue = mediaKeys.some((k) => patch[k] !== undefined);
+  if (!hasValue) return false;
+  try {
+    const rows = await getGamesV2ByAppId(appId);
+    if (rows.length === 0) return false;
+
+    // Merge mode fills gaps from the disk scan so roles downloaded by another
+    // flow also land in games_v2.
+    const disk = allowClear ? null : await resolveGameMediaPaths(appId).catch(() => null);
+
+    let wrote = false;
+    for (const row of rows) {
+      const merged: GameV2 = { ...row };
+      let changed = false;
+      for (const k of mediaKeys) {
+        if (allowClear) {
+          // Full-state commit: the patch is authoritative for every role it
+          // mentions. A null role becomes "" (clears via COALESCE); roles not
+          // mentioned keep whatever games_v2 already has.
+          const v = patch[k];
+          if (v === undefined) continue;
+          const target = v ?? "";
+          if (String(target) === String(row[k] ?? null)) continue;
+          merged[k] = target;
+          changed = true;
+        } else {
+          // Explicit non-null patch wins; gaps are filled from disk.
+          const fromDisk = disk?.[k] ?? null;
+          const fromPatch = patch[k];
+          const v = fromPatch !== undefined && fromPatch !== null ? fromPatch : fromDisk;
+          if (v === undefined || v === null) continue;
+          if (v === (row[k] ?? null)) continue;
+          merged[k] = v;
+          changed = true;
+        }
+      }
+      if (!changed) continue;
+      merged.updatedAt = Date.now();
+      await upsertGameV2(merged);
+      wrote = true;
+    }
+    if (wrote) {
+      invalidateResolvedMediaCache(appId);
+      notifyMediaUpdated(appId, { source: caller ?? "media-persist-gamesv2" });
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][GAMESV2_PERSIST] appid=${appId} caller=${caller ?? "unknown"} allowClear=${allowClear}`);
+    }
+    return wrote;
+  } catch (err) {
+    console.warn(`[MEDIA][GAMESV2_PERSIST_FAIL] appid=${appId}`, err);
+    return false;
+  }
+}
+
+// ── Read media paths straight from games_v2 ──
+// games_v2 is the store the library actually reads. Returns the merged
+// non-null role paths across ALL rows that match this app_id, or null when
+// the game has no games_v2 row / no paths at all. Used as the merge base for
+// artwork edits so changing one role never clobbers the others.
+export async function getGamesV2MediaPaths(appId: string): Promise<GameMediaPaths | null> {
+  if (!appId) return null;
+  const media: GameMediaPaths = {
+    coverPath: null,
+    landscapePath: null,
+    backgroundPath: null,
+    logoPath: null,
+    iconPath: null,
+  };
+  try {
+    const rows = await getGamesV2ByAppId(appId);
+    if (rows.length === 0) return null;
+    const keys: (keyof GameMediaPaths)[] = ["coverPath", "landscapePath", "backgroundPath", "logoPath", "iconPath"];
+    for (const row of rows) {
+      for (const k of keys) {
+        if ((row[k] ?? null) && !media[k]) media[k] = row[k] ?? null;
+      }
+    }
+    const hasAny = keys.some((k) => !!media[k]);
+    return hasAny ? media : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── saveGameMediaFile wrapper ──

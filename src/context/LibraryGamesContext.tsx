@@ -231,6 +231,14 @@ function storeSelectedId(id: string | null) {
   } catch { /* ignore */ }
 }
 
+type LibraryGameMediaPatch = {
+  coverPath?: string | null;
+  landscapePath?: string | null;
+  backgroundPath?: string | null;
+  logoPath?: string | null;
+  iconPath?: string | null;
+};
+
 type LibraryGamesState = {
   games: LibraryGame[];
   warnings: string[];
@@ -241,7 +249,7 @@ type LibraryGamesState = {
   selectedGame: LibraryGame | null;
   setSelectedGame: (game: LibraryGame | null) => void;
   refresh: (options?: { force?: boolean }) => Promise<void>;
-  updateGame: (appId: string, updates: Partial<LibraryGame>) => void;
+  updateGame: (appId: string, updates: Omit<Partial<LibraryGame>, "coverPath" | "landscapePath" | "backgroundPath" | "logoPath" | "iconPath"> & LibraryGameMediaPatch) => void;
   checkGameProviderStatus: (appId: string, force?: boolean) => Promise<{ steamInstalled: boolean } | null>;
   appInfoMap: LibraryAppInfoMap;
   status: LibraryRuntimeStatus;
@@ -1477,7 +1485,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     };
   }, []);
 
-  const updateGame = useCallback((appId: string, updates: Partial<LibraryGame>) => {
+  const updateGame = useCallback((appId: string, updates: Omit<Partial<LibraryGame>, "coverPath" | "landscapePath" | "backgroundPath" | "logoPath" | "iconPath"> & LibraryGameMediaPatch) => {
     setGames((prev) => {
       let idx = prev.findIndex((g) => g.appId === appId);
       // Fallback: match by id (e.g. Epic games have appId=undefined but id="epic:...")
@@ -1486,10 +1494,15 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         console.log(`[LIBRARY_CONTEXT][UPDATE_GAME_SKIP] appid=${appId} reason=not-found`);
         return prev;
       }
-      const updated = { ...prev[idx], ...updates };
+      // Only apply defined values. Callers frequently pass partial patches where
+      // untouched roles are undefined/null; spreading them over the row would
+      // erase real media paths (e.g. changing cover killed background). An
+      // explicit null still propagates (edit-dialog remove) to clear the role.
+      const defined = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
+      const updated = { ...prev[idx], ...(defined as Partial<LibraryGame>) };
       const next = [...prev];
       next[idx] = updated;
-      console.log(`[LIBRARY_CONTEXT][UPDATE_GAME] appid=${appId} updates=${Object.keys(updates).join(",")}`);
+      console.log(`[LIBRARY_CONTEXT][UPDATE_GAME] appid=${appId} updates=${Object.keys(updates).join(",")} defined=${Object.keys(defined).join(",")}`);
       return next;
     });
   }, []);

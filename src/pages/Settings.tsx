@@ -28,6 +28,7 @@ import {
   Zap,
   Cloud,
   Volume2,
+  Bell,
   Play,
 } from "lucide-react";
 
@@ -106,7 +107,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
     { key: "appearance", label: t("settings.appearance"), icon: <Palette className="h-4 w-4" />, description: t("settings.appearance_desc") },
     { key: "sound", label: t("settings.sound"), icon: <Volume2 className="h-4 w-4" />, description: t("settings.sound_desc") },
     { key: "library", label: t("settings.layout"), icon: <Library className="h-4 w-4" />, description: t("settings.layout_desc") },
-    { key: "notifications", label: t("settings.notifications"), icon: <Gamepad2 className="h-4 w-4" />, description: t("settings.notifications_desc") },
+    { key: "notifications", label: t("settings.notifications"), icon: <Bell className="h-4 w-4" />, description: t("settings.notifications_desc") },
     { key: "metadata", label: t("settings.metadata"), icon: <Database className="h-4 w-4" />, description: t("settings.metadata_desc") },
     // { key: "extensions", label: t("settings.extensions"), icon: <Puzzle className="h-4 w-4" />, description: t("settings.extensions_desc") },
     { key: "providers", label: t("settings.providers"), icon: <Zap className="h-4 w-4" />, description: t("settings.providers_desc") },

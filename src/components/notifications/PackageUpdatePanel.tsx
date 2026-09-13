@@ -36,16 +36,17 @@ export default function PackageUpdatePanel({ onClose, onNavigate, anchorRef }: P
     return unsub;
   }, []);
 
-  // Click outside to close
+  // Click outside to close (ignore clicks on the bell button itself)
   useEffect(() => {
     function handleClick(e: MouseEvent) {
+      if (anchorRef.current && anchorRef.current.contains(e.target as Node)) return;
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         onClose();
       }
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [onClose]);
+  }, [onClose, anchorRef]);
 
   // Mark notifications as seen when panel opens with updates
   useEffect(() => {
