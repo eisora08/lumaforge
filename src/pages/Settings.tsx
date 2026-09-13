@@ -1550,7 +1550,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                             {t("settings.your_companion")}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-3 text-xs text-(--color-muted)">
-                            <span>{t("settings.version_label")} 0.1.0</span>
+                            <span>{t("settings.version_label")} 1.2.0</span>
                             <span className="text-white/20">|</span>
                             <span>{t("settings.desktop_mode_label")}</span>
                             <span className="text-white/20">|</span>

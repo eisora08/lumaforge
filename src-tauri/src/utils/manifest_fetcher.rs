@@ -331,7 +331,7 @@ pub fn save_manifest_to_depotcache(
 
 fn build_client() -> Result<Client, String> {
     Client::builder()
-        .user_agent("LumaForge/1.1.0")
+        .user_agent("LumaForge/1.2.0")
         .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .connect_timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(5))

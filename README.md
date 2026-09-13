@@ -2,17 +2,17 @@
 
 # LumaForge
 
-**A Desktop game library manager built with Tauri v2.**
+**Open-source desktop game library with Steam, Epic, emulators, Lua extensions, debrid/torrents & more.**
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/version-0.1.0--unreleased-purple)
+![Version](https://img.shields.io/badge/version-1.2.0-purple)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)
 ![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.4+-3178c6?logo=typescript)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-3178c6?logo=typescript)
 ![React](https://img.shields.io/badge/React-19-61dafb?logo=react)
 
-[English](README.md) · [Español](README.es.md)
+[English](README.md) · [Espanol](README.es.md)
 
 </div>
 
@@ -28,91 +28,104 @@ This software is provided strictly for educational and demonstration purposes. U
 
 ---
 
+## Screenshots
+
+> Screenshots coming soon. Drop your images in `docs/screenshots/` to populate this section.
+
+| | |
+|:---:|:---:|
+| ![Library](docs/screenshots/library.png) | ![Dashboard](docs/screenshots/dashboard.png) |
+| **Unified Library** | **Smart Dashboard** |
+| ![Console Mode](docs/screenshots/console.png) | ![Settings](docs/screenshots/settings.png) |
+| **Console Mode** | **Settings & Tools** |
+
+---
+
 ## Features
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-Provider Library** | Unified game library from Steam, Epic Games, Lua scripts, and manually added entries |
+| **Multi-Provider Library** | Unified game library from Steam, Epic Games, 46+ emulators, Lua scripts, and manually added entries |
 | **Native Game Launching** | Direct launching of Steam and Epic games with process tracking and playtime recording |
-| **Debrid/Torrent Integration** | Download and install games via debrid providers (TorBox, Real-Debrid, AllDebrid, Premiumize) or built-in torrent client (librqbit) |
-| **Achievement Tracking** | Real-time achievement monitoring with unlock notifications, progress tracking, and Steam integration |
+| **Emulator Integration** | 46+ emulators with automatic ROM detection, platform badges, IGDB metadata, and per-game profile selection |
+| **Epic Games Store** | Full Epic library detection, protocol-based launching, token management, and install status tracking |
+| **Debrid/Torrent** | Download and install games via debrid providers (TorBox, Real-Debrid, AllDebrid, Premiumize) or built-in torrent client (librqbit) |
+| **Achievement Tracking** | Real-time achievement monitoring with unlock notifications, progress tracking, and cross-provider support |
+| **Steam Keys** | SteamCMD integration with pin/unpin manifest versions, Lua key generation, and depot key lookup |
+| **Cloud Redirect** | Provider-based cloud save redirection with OAuth, variant support, and restart warnings |
+| **Collections** | Nested collections with drag-and-drop, dashboard headers, and context menus |
+| **Play Next** | AI-powered play-next queue with backend scoring, sidebar card, and dashboard section |
 | **Console Mode** | Full-screen gamepad-navigable interface inspired by Steam Big Picture and Solaris |
 | **Game Fixes** | One-click application of SmokeAPI, Steamless, Goldberg Emulator, Online-Fix, and Koaloader |
 | **Media Management** | Automatic artwork resolution from Steam, SteamGridDB, IGDB, and RAWG with priority chains |
 | **Smart Dashboard** | Personalized home screen with Continue Playing, Favorites, Recommendations, and discovery sections |
-| **Extension System** | Lua-based plugin architecture for third-party tool integration and game detection |
-| **Ambient Backgrounds** | Dynamic theme-driven backgrounds with color mode, image mode, and crossfade transitions |
+| **Extension System** | Lua 5.4 sandboxed runtime with `lumaforge.*` API, criteria evaluator, and third-party tool registry |
+| **Ambient Backgrounds** | Dynamic game-art backgrounds with image mode, color-dominant mode, crossfade transitions, and intensity levels |
 | **Universal Download Manager** | Unified queue for Steam installs, debrid downloads, and torrent transfers with live speed charts |
 | **SQLite-First Storage** | All game data, playtime, achievements, and settings persisted in SQLite with JSON migration |
+| **Auto-Updates** | Built-in updater with signed NSIS installer and automatic update checks |
+
+## Screenshots
+
+<!-- Add screenshots to docs/screenshots/ and reference them here -->
+<!-- ![Library](docs/screenshots/library.png) -->
+<!-- ![Dashboard](docs/screenshots/dashboard.png) -->
+
+---
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| **Backend** | Rust (Tauri v2.11.3) |
-| **Frontend** | React 19 + TypeScript 5.4 + Vite 8.2 |
+| **Backend** | Rust (Tauri v2) |
+| **Frontend** | React 19 + TypeScript 5.8 + Vite 8.2 |
 | **Database** | SQLite (via rusqlite) |
 | **Bundler** | Rolldown (Vite 8.2) |
 | **Torrent Engine** | librqbit 8.x (vendored) |
 | **Lua Runtime** | mlua 0.10 (Lua 5.4, vendored) |
 | **Styling** | Tailwind CSS 4.3 |
-| **Installer** | NSIS (Tauri v2 native) |
+| **Installer** | NSIS (Tauri v2 native) with custom artwork |
 
-## Building from Source
+---
 
-### Prerequisites
+## Getting Started
+
+### Requirements
 
 - **Rust** 1.77+ (with `cargo`)
 - **Node.js** 20.19+ or 22.12+
-- **pnpm** (recommended) or npm
+- **npm**
 - **WebView2** (ships with Windows 10/11)
 
-### Setup
+### Development
 
 ```bash
-# Clone the repository
-git clone https://github.com/einey/lumaforge.git
+git clone https://github.com/eisora08/lumaforge.git
 cd lumaforge
-
-# Install frontend dependencies
 npm install
-
-# Build the Tauri app
-npm run tauri build
-
-# Or run in development mode
 npm run tauri dev
 ```
 
-### Development Commands
+### Build
 
 ```bash
-# Type-check TypeScript
-npx tsc --noEmit
-
-# Build frontend only (fast, for linting)
-npx vite build
-
-# Check Rust code
-cargo check
-
-# Run Rust tests
-cargo test
-
-# Run full Tauri dev build
-npm run tauri dev
+npm run tauri build
 ```
+
+The installer will be in `src-tauri/target/release/bundle/nsis/`.
+
+---
 
 ## Project Structure
 
 ```
 LumaForge/
 ├── src/                          # Frontend (React + TypeScript)
-│   ├── components/               # UI components (dashboard, library, store, settings, etc.)
+│   ├── components/               # UI components (dashboard, library, store, settings, console)
 │   ├── context/                  # React contexts (GameSession, Library, Favorites, Settings)
 │   ├── hooks/                    # Custom hooks (playtime, media, controller detection)
-│   ├── services/                 # Business logic (game cache, achievements, debrid, metadata)
-│   ├── features/                 # Feature modules (console mode, profile, debrid, DRM)
+│   ├── services/                 # Business logic (game cache, achievements, debrid, metadata, epic)
+│   ├── features/                 # Feature modules (console mode, profile, debrid, DRM, emulators)
 │   ├── pages/                    # Route pages (Home, Library, Store, Settings, Downloads)
 │   └── types/                    # TypeScript type definitions
 ├── src-tauri/                    # Backend (Rust + Tauri v2)
@@ -126,8 +139,11 @@ LumaForge/
 │   └── tauri.conf.json           # Tauri configuration
 ├── tools/                        # Build tools and catalog generators
 ├── public/                       # Static assets (data catalogs, DRM indexes)
+├── docs/screenshots/             # Screenshots for README
 └── lumaforge-extensions/         # Built-in extension manifests
 ```
+
+---
 
 ## License
 

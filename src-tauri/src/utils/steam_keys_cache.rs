@@ -107,7 +107,7 @@ pub fn update_key_files(app_handle: &AppHandle) -> Result<(), String> {
 
 fn build_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .user_agent("LumaForge/1.1.0")
+        .user_agent("LumaForge/1.2.0")
         .timeout(std::time::Duration::from_secs(60))
         .connect_timeout(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(5))

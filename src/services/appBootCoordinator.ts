@@ -155,12 +155,6 @@ export function subscribeEarlyShow(fn: () => void): () => void {
   return () => { _earlyShowListeners.delete(fn); };
 }
 
-function emitEarlyShow(): void {
-  for (const fn of _earlyShowListeners) {
-    try { fn(); } catch { /* ignore */ }
-  }
-}
-
 export async function runBootTasks(): Promise<void> {
   if (_bootPromise) return _bootPromise;
 

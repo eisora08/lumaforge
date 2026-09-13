@@ -5,18 +5,49 @@ All notable changes to LumaForge will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] — Unreleased
+
+### Added
+- **29 Additional Emulators**: Added 29 emulators from Playnite reference database (46 total, 144 profiles) with automatic ROM detection, platform badges, and per-game profile selection.
+- **Collections System**: Nested collections with drag-and-drop, dashboard headers, context menus, and a dedicated Collections page.
+- **Play Next Queue**: Rust backend scoring, TypeScript service, sidebar card, dashboard section, and context menus.
+- **Cloud Redirect**: Provider system with OAuth, variant support, restart warning, and per-provider cloud save redirection.
+- **Steam Keys Integration**: SteamCMD-based key management with Lua generation, pin/unpin manifests, dynamic context menu, and depot key lookup.
+- **Backup to .zip Format**: File-level restore selection, .bin achievement source backup, and improved backup section UX.
+- **Pin to Latest Version**: Manifest pinning for tracking latest available versions.
+- **Sidebar Filter/Sort**: Auto-scroll to selected game, filter/sort dropdowns, glass blur, and rename header.
+
+### Changed
+- **Visual Identity Overhaul**: New LumaForgeMark component, updated splash screens, mode switch, wizard logo hero, NSIS installer artwork, and app icons.
+- **Settings Version Display**: Now shows 1.2.0 instead of hardcoded 0.1.0.
+- **Boot Performance**: Debounced Epic O(N^2) persist, silent background scan, deferred splash for faster perceived startup.
+- **User-Agent Strings**: Updated to `LumaForge/1.2.0`.
+
+### Fixed
+- **Epic Token File Location**: Relocated to `app_data_dir()` for correct persistence.
+- **Boot Stage 3**: Shows main window at stage 3, removes early overlay fade.
+- **Emulator Config Re-assignment**: Fixed GameEditDialog, LibraryGame change detection, and builtin exe path resolution.
+- **Steam for Emulator Games**: Hide Uninstall in Steam for emulator games, add Uninstall Depot Files to context menus.
+- **Console Mode**: Emulator media resolution, platform badges, and async path resolution.
+
+### Removed
+- **Achievement Migration**: Removed `migrate_achievements_to_provider_folders` (Rust, TypeScript, boot coordinator, gameCacheService). The migration had already run on all installations; the reading code already uses the `steam/` layout.
+- **"Migrating game data..." Status Message**: Removed from splash screen status cycles in both the native splash and React overlay.
+
+---
+
+## [1.1.0] — Unreleased
 
 ### Added
 - **Startup Configuration System**: Persistent startup mode (Windowed/Maximized/Fullscreen) with `startup-config.json` and tray menu integration.
 - **System Tray**: Dynamic tray icon with mode-aware context menu (Desktop/Console), auto-rebuild on mode change.
-- **Dynamic Window Sizing**: Window resizes to 55%×75% of primary monitor at boot, with `window-state` plugin preserving position across sessions.
+- **Dynamic Window Sizing**: Window resizes to 55%x75% of primary monitor at boot, with `window-state` plugin preserving position across sessions.
 - **Fullscreen Mode**: F11 toggle, fullscreen sync between Desktop and Console modes, `Escape` returns to previous mode.
 - **Third-Party Tools Section**: SmokeAPI, Steamless, Goldberg Emulator, Koaloader, Online-Fix with Toggle/Update/Uninstall UI.
 - **Data & Services Revamp**: Six external services (SteamGridDB, IGDB, RAWG, TorBox, Real-Debrid, AllDebrid) with badge system (`configured`/`external`/`always`).
 - **OpenSteamTool Integration**: Custom third-party tool with enable/disable toggle, auto-download from GitHub, in-game activation.
 - **NSIS Installer Polish**: Custom midnight-blue BMP artwork (header, sidebar, uninstaller-header), `currentUser` install mode, LZMA compression, Spanish/English language selector, Start Menu folder, LICENSE display.
-- **Auto-Update Foundation**: `tauri-plugin-updater` wired with endpoint placeholder and zero-byte key for future release server integration.
+- **Auto-Update Foundation**: `tauri-plugin-updater` wired with endpoint and zero-byte key for future release server integration.
 - **FixProgressListener**: Background listener showing success toasts when game fixes (SmokeAPI, Steamless, etc.) complete.
 - **Achievement Toast Dedup**: Session-level dedup with 5-minute auto-cleanup to prevent duplicate toasts.
 - **Game Session HUD Toggle**: User-facing setting to show/hide the floating gameplay pill.
@@ -34,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Store Discover Sections**: Rich curated sections (Featured, For You, Top Picks, New & Noteworthy, Genre Rails).
 - **SQLite-First Storage**: All game data, playtime, achievements, settings, and caches migrated to SQLite with JSON-to-SQLite one-time migration.
 - **Batch Name Writes**: Single SQLite transaction for all boot-time game name updates (eliminates 60-90 sequential IPC calls).
-- **Data Change Bus**: Tauri event bus for SQLite→React reactive notifications.
+- **Data Change Bus**: Tauri event bus for SQLite-to-React reactive notifications.
 - **Epic Games Library Integration**: Epic installed games detected, mapped, and merged into unified Library grid.
 - **Epic Games Launch**: Protocol-based and direct-executable launch with process tracking and playtime.
 - **Manual Game Registry**: Create/edit/remove non-Steam games with metadata from IGDB or Steam search.
@@ -57,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debrid checkpoint resume**: Stable `source_key` prevents CDN rotation from invalidating saved progress.
 - **Torrent metadata stall**: `tokio::time::timeout` wraps `add_torrent` to prevent endless swarm connection.
 - **RAR5 signature detection**: Expanded magic byte check to include RAR5 format.
-- **Gofile download (302→HTML)**: Full `.io` API flow with guest token, website-token, and bearer auth.
+- **Gofile download (302 to HTML)**: Full `.io` API flow with guest token, website-token, and bearer auth.
 - **Download filename os error 3**: `normalize_download_relative_path` preserves nested directory structure.
 - **Goldberg dual-DLL**: Apply fix to all present Steam API DLLs (x64 AND x86).
 - **Steamless multi-exe**: Runs over every candidate executable (Win64 + root), not just main exe.
@@ -70,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Uninstaller**: Uses Tauri's default NSIS uninstaller (includes "Delete app data" checkbox).
 - **Background job queue**: Formalized P0-P6 priority tiers with idle-phase deferral.
 - **Boot performance**: Batch name writes reduce IPC from 60-90 calls to 2 SQLite transactions.
-- **Vite upgrade**: Vite 7 → Vite 8.2 (Rolldown bundler, 3× faster builds).
+- **Vite upgrade**: Vite 7 to Vite 8.2 (Rolldown bundler, 3x faster builds).
 - **Settings simplification**: Removed technical performance tabs, hardcoded auto-sync ON, added HUD toggle.
 - **PackageCard hover**: Simplified to image-only with dark overlay, removed dead action buttons.
 
