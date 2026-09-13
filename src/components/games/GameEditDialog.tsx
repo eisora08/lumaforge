@@ -617,7 +617,11 @@ export default function GameEditDialog({
     if (isCreateMode) return;
     if (!mediaAdapter && !(isManualMode || isCreateMode)) return;
     loadRolePreviews();
-  }, [open, appIdDraft, appInfo, mediaAdapter]);
+  }, [open, appIdDraft, appInfo, mediaAdapter,
+      // Reload previews when the library row media clears (removal updates the
+      // row via updateGame) — without this the Steam card keeps showing the
+      // "missing/pending" badge + Remove button using the stale game prop.
+      game?.coverPath, game?.landscapePath, game?.backgroundPath, game?.logoPath, game?.iconPath]);
 
   // ── Fill drafts from metadata on Download ──
   function fillDraftsFromMetadata(meta: SteamAppMetadata, mergeName?: string) {
@@ -1769,7 +1773,27 @@ export default function GameEditDialog({
           [key]: newPath,
         };
       }
-      const current = appInfo?.media ?? ({} as GameMediaPaths);
+      // Per-role merge: appinfo media wins, everything it leaves null is filled
+      // from the games_v2-backed library row (source of truth). Prevents a
+      // partial/empty appinfo from understating real artwork (allowClear would
+      // otherwise wipe valid roles from games_v2).
+      const appMedia = appInfo?.media ?? ({} as GameMediaPaths);
+      const gameMedia = game
+        ? {
+            coverPath: game.coverPath ?? null,
+            landscapePath: game.landscapePath ?? null,
+            backgroundPath: game.backgroundPath ?? null,
+            logoPath: game.logoPath ?? null,
+            iconPath: game.iconPath ?? null,
+          }
+        : ({} as GameMediaPaths);
+      const current: GameMediaPaths = {
+        coverPath: appMedia.coverPath ?? gameMedia.coverPath ?? null,
+        landscapePath: appMedia.landscapePath ?? gameMedia.landscapePath ?? null,
+        backgroundPath: appMedia.backgroundPath ?? gameMedia.backgroundPath ?? null,
+        logoPath: appMedia.logoPath ?? gameMedia.logoPath ?? null,
+        iconPath: appMedia.iconPath ?? gameMedia.iconPath ?? null,
+      };
       return {
         coverPath: current.coverPath ?? null,
         landscapePath: current.landscapePath ?? null,
@@ -1779,7 +1803,7 @@ export default function GameEditDialog({
         [key]: newPath,
       };
     },
-    [appInfo, manualEntry, epicOverrides, isManualMode, isCreateMode, isEpicMode, manualGameId, createdManualId],
+    [appInfo, game, manualEntry, epicOverrides, isManualMode, isCreateMode, isEpicMode, manualGameId, createdManualId],
   );
 
   const commitMediaUpdate = useCallback(
@@ -1808,11 +1832,11 @@ export default function GameEditDialog({
           notifyMediaUpdated(effectiveAppId);
           setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
           updateGame(effectiveAppId, {
-            coverPath: updatedMedia.coverPath ?? undefined,
-            landscapePath: updatedMedia.landscapePath ?? undefined,
-            backgroundPath: updatedMedia.backgroundPath ?? undefined,
-            logoPath: updatedMedia.logoPath ?? undefined,
-            iconPath: updatedMedia.iconPath ?? undefined,
+            coverPath: updatedMedia.coverPath ?? null,
+            landscapePath: updatedMedia.landscapePath ?? null,
+            backgroundPath: updatedMedia.backgroundPath ?? null,
+            logoPath: updatedMedia.logoPath ?? null,
+            iconPath: updatedMedia.iconPath ?? null,
           });
           onMediaChanged?.();
         }
@@ -1846,32 +1870,52 @@ export default function GameEditDialog({
       if (isEpicMode && epicProviderGameId) {
         const { writeEpicOverrides } = await import("../../services/epicOverrideStore");
         writeEpicOverrides(epicProviderGameId, {
-          coverPath: updatedMedia.coverPath ?? undefined,
-          landscapePath: updatedMedia.landscapePath ?? undefined,
-          backgroundPath: updatedMedia.backgroundPath ?? undefined,
-          logoPath: updatedMedia.logoPath ?? undefined,
-          iconPath: updatedMedia.iconPath ?? undefined,
+          coverPath: updatedMedia.coverPath ?? null,
+          landscapePath: updatedMedia.landscapePath ?? null,
+          backgroundPath: updatedMedia.backgroundPath ?? null,
+          logoPath: updatedMedia.logoPath ?? null,
+          iconPath: updatedMedia.iconPath ?? null,
         });
         if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][EPIC_OVERRIDES_WRITTEN] providerGameId=${epicProviderGameId} roles=${Object.keys(updatedMedia).filter(k => updatedMedia[k as keyof GameMediaPaths]).join(",")}`);
         // Keep React state in sync with disk store so loadRolePreviews /
         // refreshRolePreview read the freshly-saved paths (mirrors setManualEntry).
         const epicMediaPatch = {
-          coverPath: updatedMedia.coverPath ?? undefined,
-          landscapePath: updatedMedia.landscapePath ?? undefined,
-          backgroundPath: updatedMedia.backgroundPath ?? undefined,
-          logoPath: updatedMedia.logoPath ?? undefined,
-          iconPath: updatedMedia.iconPath ?? undefined,
+          coverPath: updatedMedia.coverPath ?? null,
+          landscapePath: updatedMedia.landscapePath ?? null,
+          backgroundPath: updatedMedia.backgroundPath ?? null,
+          logoPath: updatedMedia.logoPath ?? null,
+          iconPath: updatedMedia.iconPath ?? null,
         };
         setEpicOverrides((prev) => (prev ? { ...prev, ...epicMediaPatch } : prev));
         // Refresh UI — same as Manual/Steam branches
         const epicGameId = `epic:${epicProviderGameId}`;
         const mediaPatch = {
-          coverPath: updatedMedia.coverPath ?? undefined,
-          landscapePath: updatedMedia.landscapePath ?? undefined,
-          backgroundPath: updatedMedia.backgroundPath ?? undefined,
-          logoPath: updatedMedia.logoPath ?? undefined,
-          iconPath: updatedMedia.iconPath ?? undefined,
+          coverPath: updatedMedia.coverPath ?? null,
+          landscapePath: updatedMedia.landscapePath ?? null,
+          backgroundPath: updatedMedia.backgroundPath ?? null,
+          logoPath: updatedMedia.logoPath ?? null,
+          iconPath: updatedMedia.iconPath ?? null,
         };
+        // Persist the clear into the epic games_v2 row FIRST (empty string wins
+        // the upsert COALESCE) so any sqlite-refresh / boot rebuild re-reads the
+        // cleared value instead of resurrecting the stale cover from games_v2.
+        try {
+          const { getGameV2, upsertGameV2 } = await import("../../services/tauri");
+          const epicRow = await getGameV2(epicGameId);
+          if (epicRow) {
+            await upsertGameV2({
+              ...epicRow,
+              coverPath: updatedMedia.coverPath ?? "",
+              landscapePath: updatedMedia.landscapePath ?? "",
+              backgroundPath: updatedMedia.backgroundPath ?? "",
+              logoPath: updatedMedia.logoPath ?? "",
+              iconPath: updatedMedia.iconPath ?? "",
+              updatedAt: Date.now(),
+            });
+          }
+        } catch (err) {
+          console.warn(`[GAME_EDIT_MEDIA][EPIC_GAMES_V2_CLEAR_FAIL] id=${epicGameId}`, err);
+        }
         if (effectiveAppId) {
           invalidateResolvedMediaCache(effectiveAppId);
           notifyMediaUpdated(effectiveAppId);
@@ -1879,9 +1923,17 @@ export default function GameEditDialog({
         setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
         // Update by Epic id (appId is undefined for Epic games)
         updateGame(epicGameId, mediaPatch);
-        // Also try Steam appId in case the game has one
+        // Also try Steam appId in case the game has one — only apply non-null
+        // values so Steam-only roles aren't wiped by Epic's edit.
         if (effectiveAppId && effectiveAppId !== epicGameId) {
-          updateGame(effectiveAppId, mediaPatch);
+          const steamPatch = {
+            coverPath: updatedMedia.coverPath ?? undefined,
+            landscapePath: updatedMedia.landscapePath ?? undefined,
+            backgroundPath: updatedMedia.backgroundPath ?? undefined,
+            logoPath: updatedMedia.logoPath ?? undefined,
+            iconPath: updatedMedia.iconPath ?? undefined,
+          };
+          updateGame(effectiveAppId, steamPatch);
         }
         onMediaChanged?.();
       }
@@ -1895,16 +1947,22 @@ export default function GameEditDialog({
         appInfo?.remote ?? null,
         appInfo?.mediaSources ?? null,
         "gameEditDialog",
+        // Epic games fall through to this branch when they have a linked Steam
+        // appId — keep their commits conservative (never wipe Steam-only roles).
+        { allowClear: !isEpicMode },
       );
       invalidateResolvedMediaCache(effectiveAppId);
       notifyMediaUpdated(effectiveAppId);
       setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
+      // null (not undefined) so updateGame propagates the clear onto the live
+      // React row — without this the shelf/detail keep the old artwork until a
+      // full remount re-reads games_v2.
       updateGame(effectiveAppId, {
-        coverPath: updatedMedia.coverPath ?? undefined,
-        landscapePath: updatedMedia.landscapePath ?? undefined,
-        backgroundPath: updatedMedia.backgroundPath ?? undefined,
-        logoPath: updatedMedia.logoPath ?? undefined,
-        iconPath: updatedMedia.iconPath ?? undefined,
+        coverPath: updatedMedia.coverPath ?? null,
+        landscapePath: updatedMedia.landscapePath ?? null,
+        backgroundPath: updatedMedia.backgroundPath ?? null,
+        logoPath: updatedMedia.logoPath ?? null,
+        iconPath: updatedMedia.iconPath ?? null,
       });
       onMediaChanged?.();
     },
@@ -2366,12 +2424,25 @@ export default function GameEditDialog({
       setSaving(true);
       try {
         if (mediaAdapter) {
-          await mediaAdapter.removeRole(role);
+          const removed = await mediaAdapter.removeRole(role);
+          if (!removed) {
+            console.error(`[GAME_EDIT_MEDIA][REMOVE_ADAPTER_FAIL] appid=${effectiveId} role=${role}`);
+            showError(t("game_edit.role_remove_failed", `Failed to remove {{role}}`, { role }));
+            setSaving(false);
+            return;
+          }
         }
         if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][FILE_DELETED] appid=${effectiveId} role=${role}`);
         const updatedMedia = buildUpdatedMedia(role, null);
         if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][EDITOR_SET] manualId=${manualGameId ?? createdManualId} role=${role} savedPath=null (removing) updatedMedia=${JSON.stringify(updatedMedia)}`);
-        await commitMediaUpdate(updatedMedia);
+        // The file is already gone — a commit failure is a persistence issue,
+        // not a removal failure. Log it and keep the success flow so the user
+        // is not told "failed" after the artwork was actually deleted.
+        try {
+          await commitMediaUpdate(updatedMedia);
+        } catch (commitErr) {
+          console.error(`[GAME_EDIT_MEDIA][COMMIT_FAIL] appid=${effectiveId} role=${role}`, commitErr);
+        }
         // Re-read from store to ensure consistency
         const targetId = manualGameId ?? createdManualId;
         if (targetId) {
@@ -2380,12 +2451,13 @@ export default function GameEditDialog({
         }
         await refreshRolePreview(role, null);
         showSuccess(t("game_edit.role_removed", `{{role}} removed`, { role }));
-      } catch {
+      } catch (err) {
+        console.error(`[GAME_EDIT_MEDIA][REMOVE_FAIL] appid=${effectiveId} role=${role}`, err);
         showError(t("game_edit.role_remove_failed", `Failed to remove {{role}}`, { role }));
       }
       setSaving(false);
     },
-    [effectiveId, buildUpdatedMedia, commitMediaUpdate, mediaAdapter, manualGameId, createdManualId],
+    [effectiveId, buildUpdatedMedia, commitMediaUpdate, mediaAdapter, manualGameId, createdManualId, t, showError],
   );
 
   // ── Role preview resolution ──
@@ -2457,7 +2529,7 @@ export default function GameEditDialog({
       if (state.hasFile && state.previewUrl) {
         previews[role] = { url: state.previewUrl, status: "set" };
       } else {
-        const appPath = appInfo?.media?.[key];
+        const appPath = appInfo?.media?.[key] ?? game?.[key];
         previews[role] = { url: null, status: appPath ? "missing" : "unset" };
       }
     }
@@ -2465,6 +2537,12 @@ export default function GameEditDialog({
   }
 
   async function refreshRolePreview(role: MediaRole, overrideRelPath?: string | null) {
+    // Explicit force-unset (removal) — deterministic in every provider branch,
+    // including Steam where the game/appInfo props may briefly be stale.
+    if (overrideRelPath === null) {
+      setRolePreviews((prev) => ({ ...prev, [role]: { url: null, status: "unset" } }));
+      return;
+    }
     // Manual WITHOUT appId → read from manual store; Manual WITH appId → falls through to mediaAdapter
     if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
       const targetId = manualGameId ?? createdManualId!;
@@ -2554,7 +2632,7 @@ export default function GameEditDialog({
         [role]: { url: state.previewUrl ?? null, status: "set" },
       }));
     } else {
-      const appPath = appInfo?.media?.[key];
+      const appPath = appInfo?.media?.[key] ?? game?.[key];
       setRolePreviews((prev) => ({
         ...prev,
         [role]: { url: null, status: appPath ? "missing" : "unset" },
@@ -2626,8 +2704,10 @@ export default function GameEditDialog({
       const entry = getEmulatorGame(emulatorProviderGameId);
       return entry ? ((entry as Record<string, unknown>)[key] as string ?? null) : null;
     }
-    // Steam, Debrid+appId → read from appInfo (Steam appinfo)
-    return appInfo?.media?.[key] ?? null;
+    // Steam, Debrid+appId → read from appInfo (Steam appinfo), falling back to
+    // the games_v2-backed library row (source of truth) so artwork set outside
+    // the dialog still shows the Remove option.
+    return appInfo?.media?.[key] ?? (game?.[key] || null);
   };
 
   // ── Tab content renderers ──

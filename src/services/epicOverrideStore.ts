@@ -45,12 +45,13 @@ export type EpicOverrideData = {
   linkedSteamAppId?: string;
   /** User-set linked IGDB ID. */
   linkedIgdbId?: string;
-  /** Media paths — relative paths within games/epic/<providerGameId>/media/. */
-  coverPath?: string;
-  landscapePath?: string;
-  backgroundPath?: string;
-  logoPath?: string;
-  iconPath?: string;
+  /** Media paths — relative paths within games/epic/<providerGameId>/media/.
+   *  null means an explicitly-cleared role. */
+  coverPath?: string | null;
+  landscapePath?: string | null;
+  backgroundPath?: string | null;
+  logoPath?: string | null;
+  iconPath?: string | null;
   /** Screenshots URLs resolved from Steam cross-reference. */
   screenshots?: string[];
   /** Trailers/movies resolved from Steam cross-reference. */

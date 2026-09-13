@@ -92,11 +92,11 @@ export function manualGameEntryToGameV2(entry: ManualGameEntry): GameV2 {
     playCount: 0,
     lastPlayedAt: undefined,
 
-    coverPath: entry.coverPath,
-    landscapePath: entry.landscapePath,
-    backgroundPath: entry.backgroundPath,
-    logoPath: entry.logoPath,
-    iconPath: entry.iconPath,
+    coverPath: entry.coverPath ?? "",
+    landscapePath: entry.landscapePath ?? "",
+    backgroundPath: entry.backgroundPath ?? "",
+    logoPath: entry.logoPath ?? "",
+    iconPath: entry.iconPath ?? "",
 
     releaseDate: entry.releaseDate,
     description: entry.description,

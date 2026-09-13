@@ -1373,12 +1373,18 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 libGame.executablePath = existing.executablePath;
                 // Only preserve installDir if game is still installed (don't restore stale path after uninstall)
                 if (libGame.isInstalled) libGame.installDir = existing.installDir;
-                // Preserve media paths — gameV2ToLibraryGame populates from games_v2
-                libGame.landscapePath = existing.landscapePath ?? libGame.landscapePath;
-                libGame.coverPath = existing.coverPath ?? libGame.coverPath;
-                libGame.backgroundPath = existing.backgroundPath ?? libGame.backgroundPath;
-                libGame.logoPath = existing.logoPath ?? libGame.logoPath;
-                libGame.iconPath = existing.iconPath ?? libGame.iconPath;
+                // Preserve media — games_v2 is authoritative (including an
+                // explicit "" clear written by the edit-dialog remove). existing
+                // only fills roles that games_v2 does NOT store at all (epic
+                // overrides, pre-migration rows) so a cleared role can never be
+                // resurrected by a stale existing path.
+                const v2Media = (lv: string | null | undefined, ev: string | null | undefined): string | undefined =>
+                  lv !== null && lv !== undefined ? lv : (ev ?? undefined);
+                libGame.landscapePath = v2Media(libGame.landscapePath, existing.landscapePath);
+                libGame.coverPath = v2Media(libGame.coverPath, existing.coverPath);
+                libGame.backgroundPath = v2Media(libGame.backgroundPath, existing.backgroundPath);
+                libGame.logoPath = v2Media(libGame.logoPath, existing.logoPath);
+                libGame.iconPath = v2Media(libGame.iconPath, existing.iconPath);
               }
               return libGame;
             });

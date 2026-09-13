@@ -268,11 +268,11 @@ export function manualGameEntryToGameV2(entry: {
     playtimeSeconds: 0,
     playCount: 0,
 
-    coverPath: entry.coverPath,
-    landscapePath: entry.landscapePath,
-    backgroundPath: entry.backgroundPath,
-    logoPath: entry.logoPath,
-    iconPath: entry.iconPath,
+    coverPath: entry.coverPath ?? "",
+    landscapePath: entry.landscapePath ?? "",
+    backgroundPath: entry.backgroundPath ?? "",
+    logoPath: entry.logoPath ?? "",
+    iconPath: entry.iconPath ?? "",
 
     genres: JSON.stringify(mergedGenres),
     developers: JSON.stringify(entry.developers ?? []),
@@ -683,11 +683,11 @@ export function emulatorGameEntryToGameV2(entry: {
     playCount: 0,
     lastPlayedAt: entry.lastPlayedAt,
 
-    coverPath: entry.coverPath,
-    landscapePath: entry.landscapePath,
-    backgroundPath: entry.backgroundPath,
-    logoPath: entry.logoPath,
-    iconPath: entry.iconPath,
+    coverPath: entry.coverPath ?? "",
+    landscapePath: entry.landscapePath ?? "",
+    backgroundPath: entry.backgroundPath ?? "",
+    logoPath: entry.logoPath ?? "",
+    iconPath: entry.iconPath ?? "",
 
     genres: JSON.stringify(entry.genres ?? []),
     developers: JSON.stringify(entry.developers ?? []),

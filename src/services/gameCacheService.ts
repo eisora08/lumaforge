@@ -206,7 +206,16 @@ export async function updateGameAppinfoMediaIfChanged(
     return false;
   }
   if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][APPINFO_CALL] caller=${caller ?? "unknown"} appid=${appId} allowClear=${!!options?.allowClear}`);
-  await updateGameAppinfoMedia(appId, name, media, remote, mediaSources);
+  // The legacy SQLite `games` table was dropped in the v5 games_v2 migration,
+  // so update_game_appinfo_media always fails its final INSERT. That failure
+  // must NOT abort the commit — games_v2 below is the real source of truth the
+  // library reads. Log it and carry on (mirrors mediaDownloadQueue's own
+  // `.catch(() => {})` + direct games_v2 writeback fallback).
+  try {
+    await updateGameAppinfoMedia(appId, name, media, remote, mediaSources);
+  } catch (appinfoErr) {
+    console.warn(`[GAME_EDIT_MEDIA][APPINFO_WRITE_FAIL] caller=${caller ?? "unknown"} appid=${appId}`, appinfoErr);
+  }
   // Persist the same media straight into games_v2 — the store the library
   // actually reads. The legacy appinfo `games` table is no longer the source
   // of truth, so without this a freshly downloaded artwork never reaches the
