@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowDownToLine, ArrowUpCircle, Check, ExternalLink, Loader2 } from "lucide-react";
 import { useAppUpdate } from "../../hooks/useAppUpdate";
+import { openExternalUrl } from "../../services/externalLinks";
 import { checkForUpdate, downloadAndInstallUpdate, dismissUpdate } from "../../services/appUpdateStore";
 
 export default function AppUpdateIcon() {
@@ -54,7 +55,7 @@ export default function AppUpdateIcon() {
   }, []);
 
   const handleViewChangelog = useCallback(() => {
-    window.open("https://github.com/anomalyco/LumaForge/releases", "_blank");
+    openExternalUrl("https://github.com/eisora08/lumaforge/releases/tag/v1.2.1");
   }, []);
 
   // Don't render when no update available and not checking

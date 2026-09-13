@@ -38,7 +38,7 @@ const APP_USER_AGENT: &str = concat!(
     env!("CARGO_PKG_NAME"),
     "/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/user/luma-lite)"
+    " (+https://github.com/eisora08/lumaforge)"
 );
 
 // ---------------------------------------------------------------------------
