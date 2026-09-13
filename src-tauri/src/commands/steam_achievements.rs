@@ -515,7 +515,6 @@ fn kv_extract_user_stats(data: &serde_json::Map<String, serde_json::Value>) -> V
 /// Stat definitions are nodes with a "name" but NOT "bits" (i.e., not an achievements node).
 /// The statId is the numeric path component of the stat node.
 fn extract_stat_definitions(data: &serde_json::Value) -> std::collections::HashMap<String, (u32, Option<f64>, Option<f64>)> {
-  use serde_json::Value;
   let mut defs = std::collections::HashMap::new();
   extract_stat_definitions_walk(data, &["root"], &mut defs);
   defs
@@ -3460,77 +3459,6 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
 
   // Unknown format → reject
   None
-}
-
-// ===================================================================
-// Migration: achievements/<appid>/ → achievements/steam/<appid>/
-// ===================================================================
-
-#[tauri::command]
-pub fn migrate_achievements_to_provider_folders(app_handle: AppHandle) -> Result<Value, String> {
-  let app_dir = app_handle.path().app_data_dir()
-    .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-  let achievements_dir = app_dir.join("achievements");
-
-  if !achievements_dir.exists() {
-    return Ok(serde_json::json!({ "found": 0, "migrated": 0, "errors": [] }));
-  }
-
-  let mut found = 0u32;
-  let mut migrated = 0u32;
-  let mut errors: Vec<String> = vec![];
-  let migration_marker = achievements_dir.join(".provider_migration_v1");
-
-  if migration_marker.exists() {
-    migration_log!("[ACH][MIGRATE] migration already completed, skipping");
-    return Ok(serde_json::json!({ "found": 0, "migrated": 0, "errors": [], "already_migrated": true }));
-  }
-
-  let entries = match fs::read_dir(&achievements_dir) {
-    Ok(e) => e,
-    Err(e) => {
-      return Ok(serde_json::json!({ "found": 0, "migrated": 0, "errors": [format!("Cannot read achievements dir: {}", e)] }));
-    }
-  };
-
-  for entry in entries.flatten() {
-    let path = entry.path();
-    if !path.is_dir() { continue; }
-    let dir_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-    if dir_name == "steam" { continue; }
-    if !dir_name.chars().all(|c| c.is_ascii_digit()) { continue; }
-
-    found += 1;
-    migration_log!("[ACH][MIGRATE] old folder appid={}", dir_name);
-    let steam_dir = achievements_dir.join("steam").join(&dir_name);
-    if steam_dir.exists() {
-      migration_log!("[ACH][MIGRATE] appid={} target already exists, skipping", dir_name);
-      continue;
-    }
-    if let Err(e) = fs::create_dir_all(steam_dir.parent().unwrap()) {
-      errors.push(format!("appid={} cannot create parent: {}", dir_name, e));
-      continue;
-    }
-    match fs::rename(&path, &steam_dir) {
-      Ok(()) => {
-        migrated += 1;
-        migration_log!("[ACH][MIGRATE] moved achievements/{} -> achievements/steam/{}", dir_name, dir_name);
-      }
-      Err(e) => {
-        errors.push(format!("appid={} rename failed: {}", dir_name, e));
-      }
-    }
-  }
-
-  // Write migration marker
-  let now_secs = std::time::SystemTime::now()
-    .duration_since(std::time::UNIX_EPOCH)
-    .map(|d| d.as_secs())
-    .unwrap_or(0);
-  let _ = fs::write(&migration_marker, format!("migrated {} folders at {}", migrated, now_secs));
-  migration_log!("[ACH][MIGRATE] complete count={}", migrated);
-
-  Ok(serde_json::json!({ "found": found, "migrated": migrated, "errors": errors }))
 }
 
 // ===================================================================

@@ -13,7 +13,7 @@ import os
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-LOGO_PATH = os.path.join(PROJECT_ROOT, "..", "Logo", "LumaForge_1024.png")
+LOGO_PATH = os.path.join(PROJECT_ROOT, "assets", "logo", "lumaforge-nsis.png")
 NSIS_DIR = os.path.join(PROJECT_ROOT, "src-tauri", "nsis")
 
 # Splash-matching colors

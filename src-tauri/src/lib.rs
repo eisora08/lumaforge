@@ -420,7 +420,6 @@ pub fn run() {
             commands::steam_achievements::parse_librarycache_achievements,
             commands::steam_achievements::check_achievement_librarycache_metadata,
             commands::steam_achievements::cleanup_achievement_orphan_images,
-            commands::steam_achievements::migrate_achievements_to_provider_folders,
             commands::steam_achievements::validate_portable_paths,
             commands::steam_achievements::validate_generated_achievement_schema,
             commands::steam_achievements::resolve_achievement_path,

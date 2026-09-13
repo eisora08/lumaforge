@@ -582,19 +582,6 @@ export async function cleanupAchievementOrphanImages(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Achievement folder migration
-// ---------------------------------------------------------------------------
-
-export type AchievementFolderMigrationResult = {
-  found: number;
-  migrated: number;
-  errors: string[];
-};
-
-export async function migrateAchievementsToProviderFolders(): Promise<AchievementFolderMigrationResult> {
-  return await invoke<AchievementFolderMigrationResult>("migrate_achievements_to_provider_folders");
-}
-
 // ---------------------------------------------------------------------------
 // Portable paths validation
 // ---------------------------------------------------------------------------

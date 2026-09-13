@@ -18,7 +18,6 @@ export type BootStatus =
 
 export type BootTaskId =
   | "load-settings"
-  | "migrate-portable-paths"
   | "load-startup-snapshot"
   | "load-manual-games"
   | "load-debrid-games"
@@ -203,25 +202,6 @@ export async function runBootTasks(): Promise<void> {
             } catch {
               // Non-critical — Lua backup gracefully returns empty when accessor is missing
             }
-          });
-
-          // Stage 2: Migrate portable paths (safe, non-blocking)
-          await track("migrate-portable-paths", async () => {
-            logBoot("running portable path migration");
-            try {
-              const { migrateAchievementsToProviderFolders } = await import("./tauri");
-              const result = await migrateAchievementsToProviderFolders();
-              if (result.migrated > 0) {
-                logBoot(`migrated ${result.migrated} achievement folders`);
-              }
-              if (result.errors && result.errors.length > 0) {
-                console.warn("[BOOT] migration errors:", result.errors);
-              }
-            } catch (err) {
-              // Migration is optional — log but don't block
-              console.warn("[BOOT] migration skipped:", String(err));
-            }
-            logBoot("portable path migration done");
           });
 
           // Stage 3: Load startup snapshot (instant from file)

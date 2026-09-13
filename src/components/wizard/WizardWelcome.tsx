@@ -1,5 +1,5 @@
-import { Flame } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import LumaForgeMark from "../../brand/LumaForgeMark";
 
 type WizardWelcomeProps = {
   onGetStarted: () => void;
@@ -22,10 +22,8 @@ export default function WizardWelcome({ onGetStarted }: WizardWelcomeProps) {
       </div>
 
       {/* Logo */}
-      <div className="relative mb-8 flex items-center gap-4">
-        <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-(--color-accent)/15 shadow-lg shadow-(--color-accent)/10">
-          <Flame className="h-10 w-10 text-(--color-accent)" />
-        </div>
+      <div className="relative mb-8">
+        <LumaForgeMark className="h-40 w-40" />
       </div>
 
       <h1 className="relative text-4xl font-extrabold tracking-tight text-(--color-text) md:text-5xl">

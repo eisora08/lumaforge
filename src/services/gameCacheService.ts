@@ -2669,11 +2669,9 @@ export async function runMigration(): Promise<void> {
   }
   // Run portable path migration for game media
   try {
-    const { migrateGameMediaToRelative, migrateAchievementsToProviderFolders } = await import("./tauri");
+    const { migrateGameMediaToRelative } = await import("./tauri");
     const fixed = await migrateGameMediaToRelative();
     console.log(`[GameCache] game media absolute->relative migration: ${fixed} appinfos fixed`);
-    const achResult = await migrateAchievementsToProviderFolders();
-    console.log(`[GameCache] achievement folder migration: found=${achResult.found} migrated=${achResult.migrated}`);
   } catch (e) {
     console.warn("[GameCache] portable path migration error:", e);
   }
