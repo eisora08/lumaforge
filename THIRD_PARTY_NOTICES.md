@@ -143,6 +143,13 @@ These tools are **not bundled** with LumaForge. They are downloaded at runtime w
 - **Purpose:** Steam emulation for offline play
 - **Usage:** Provides `steam_api64.dll` and SteamConfig for offline operation
 
+### CloudRedirect
+
+- **Repository:** [Selectively11/CloudRedirect](https://github.com/Selectively11/CloudRedirect)
+- **License:** MIT
+- **Purpose:** Steam Cloud save redirection for injected/lua games
+- **Usage:** Hooks Steam's cloud save RPC handlers to sync saves to Google Drive, OneDrive, S3-compatible or local folders
+
 ---
 
 ## External APIs

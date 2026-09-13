@@ -226,6 +226,7 @@
     "api_key": "Steam Web API Key",
     "api_key_desc": "Requerido para el seguimiento de logros de Steam.",
     "api_key_placeholder": "Ingresa tu Steam Web API key",
+    "get_api_key": "Obtener clave de API",
     "steam_id64": "SteamID64",
     "steam_id64_desc": "Requerido con Steam Web API Key para progreso de logros por usuario.",
     "steam_id32": "SteamID32 / Account ID (opcional)",
@@ -511,6 +512,7 @@
     "service_onlinefix_desc": "Parches multijugador y cooperativo para juego local y LAN.",
     "service_koaloader_desc": "Cargador de plugins para directorios de juegos. Se instala automáticamente cuando es necesario.",
     "service_opentool_desc": "Herramienta de gestión de biblioteca Steam y modificación de juegos.",
+    "service_cloudredirect_desc": "Redirige los guardados de Steam Cloud a carpetas locales o servicios externos.",
     "service_github_desc": "Código fuente del proyecto LumaForge y seguimiento de issues.",
     "themes": {
       "crimson_dark": {

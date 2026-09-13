@@ -1,5 +1,6 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { getVersion } from "@tauri-apps/api/app";
 
 import ThirdPartyToolsSection from "../components/settings/ThirdPartyToolsSection";
 import CloudSyncSection from "../components/settings/CloudSyncSection";
@@ -87,6 +88,13 @@ type SettingsProps = {
 
 export default function Settings({ onSectionChange }: SettingsProps) {
   const { t, i18n } = useTranslation();
+
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(""));
+  }, []);
 
   const navSections: {
     key: SettingsSectionId;
@@ -324,6 +332,14 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         {showSteamApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => openExternalUrl("https://steamcommunity.com/dev/apikey")}
+                      className="mt-2 inline-flex items-center gap-2 text-xs font-medium text-(--color-accent) transition hover:opacity-80"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      {t("settings.get_api_key")}
+                    </button>
                   </label>
 
                   <label className="block">
@@ -1550,7 +1566,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                             {t("settings.your_companion")}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-3 text-xs text-(--color-muted)">
-                            <span>{t("settings.version_label")} 1.2.0</span>
+                            <span>{t("settings.version_label")} {appVersion}</span>
                             <span className="text-white/20">|</span>
                             <span>{t("settings.desktop_mode_label")}</span>
                             <span className="text-white/20">|</span>
@@ -1563,7 +1579,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     <div className="flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() => openExternalUrl("https://github.com/anomalyco/LumaForge")}
+                        onClick={() => openExternalUrl("https://github.com/eisora08/lumaforge")}
                         className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
                       >
                         <Code className="h-4 w-4" />
@@ -1572,7 +1588,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => openExternalUrl("https://github.com/anomalyco/LumaForge/blob/main/LICENSE")}
+                        onClick={() => openExternalUrl("https://github.com/eisora08/lumaforge/blob/main/LICENSE")}
                         className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
                       >
                         <ExternalLink className="h-4 w-4" />
@@ -1696,9 +1712,15 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         badge: "external" as const,
                       },
                       {
+                        name: "CloudRedirect",
+                        description: t("settings.service_cloudredirect_desc"),
+                        url: "https://github.com/Selectively11/CloudRedirect",
+                        badge: "external" as const,
+                      },
+                      {
                         name: "GitHub",
                         description: t("settings.service_github_desc"),
-                        url: "https://github.com/anomalyco/LumaForge",
+                        url: "https://github.com/eisora08/lumaforge",
                         badge: "always" as const,
                       },
                     ].map((service) => (

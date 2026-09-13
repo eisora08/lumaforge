@@ -8,6 +8,6 @@ if (-not (Test-Path $keyPath)) {
 
 Write-Host "Signing with key: $keyPath"
 $env:TAURI_SIGNING_PRIVATE_KEY = $keyPath
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "LumaForge_Signing_2026"
 
 npm run tauri build

@@ -71,6 +71,10 @@ export function getAppUpdateSnapshot(): AppUpdateSnapshot {
 }
 
 // ── Check for update ───────────────────────────────────────────────
+const UPDATE_TIMEOUT_MS = 20000;
+const UPDATE_RETRY_DELAY_MS = 1500;
+const UPDATE_MAX_ATTEMPTS = 2;
+
 export async function checkForUpdate(silent = true): Promise<void> {
   if (_checking) return;
   _checking = true;
@@ -78,7 +82,21 @@ export async function checkForUpdate(silent = true): Promise<void> {
   emit();
 
   try {
-    const update = await check({ timeout: 15000 });
+    let update: Update | null = null;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < UPDATE_MAX_ATTEMPTS; attempt++) {
+      try {
+        update = await check({ timeout: UPDATE_TIMEOUT_MS });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < UPDATE_MAX_ATTEMPTS - 1) {
+          await new Promise((r) => setTimeout(r, UPDATE_RETRY_DELAY_MS));
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
 
     if (update) {
       _updateAvailable = true;

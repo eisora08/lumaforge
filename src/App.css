@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+/* Prevent text selection while dragging (launcher UI), keep it in text fields and code blocks. */
+*,
+*::before,
+*::after {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+pre,
+code {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 @font-face {
   font-family: "InterVariable";
   src: url("/fonts/InterVariable.woff2") format("woff2-variations");
@@ -245,16 +262,16 @@ body {
 .lf-shell {
   background: var(--shell-bg);
   border-color: var(--shell-border);
-  backdrop-filter: var(--shell-blur);
   -webkit-backdrop-filter: var(--shell-blur);
+  backdrop-filter: var(--shell-blur);
 }
 
 .lf-surface {
   background: var(--surface-active);
   border-color: var(--surface-active-border);
   box-shadow: var(--surface-active-shadow);
-  backdrop-filter: var(--surface-active-blur);
   -webkit-backdrop-filter: var(--surface-active-blur);
+  backdrop-filter: var(--surface-active-blur);
 }
 
 .lf-surface-hover:hover {
@@ -1189,8 +1206,8 @@ html {
 .lf-hud-surface {
   background: var(--surface-active);
   border-color: var(--surface-active-border);
-  backdrop-filter: var(--surface-active-blur);
   -webkit-backdrop-filter: var(--surface-active-blur);
+  backdrop-filter: var(--surface-active-blur);
   box-shadow: var(--surface-active-shadow);
   transition: background 200ms ease, border-color 200ms ease, box-shadow 200ms ease, backdrop-filter 200ms ease, opacity 300ms ease, transform 300ms ease;
 }
@@ -1206,8 +1223,8 @@ html {
 .lf-toast-surface {
   background: var(--surface-active);
   border-color: var(--surface-active-border);
-  backdrop-filter: var(--surface-active-blur);
   -webkit-backdrop-filter: var(--surface-active-blur);
+  backdrop-filter: var(--surface-active-blur);
   box-shadow:
     0 24px 70px rgba(0, 0, 0, 0.45),
     0 0 0 1px color-mix(in srgb, var(--color-accent) 12%, transparent),
@@ -2326,13 +2343,13 @@ html[data-compact="true"] .lf-launch-bar {
 
 /* Backdrop blur ramp */
 @keyframes mode-blur-in {
-  from { backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
-  to   { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  from { -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px); }
+  to   { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
 }
 
 @keyframes mode-blur-out {
-  from { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-  to   { backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+  from { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  to   { -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px); }
 }
 
 /* Reduced motion: kill mode switch animations */
