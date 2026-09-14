@@ -34,8 +34,10 @@ pnpm-debug.log*
 opencode.json
 AGENTS.md
 
+# Scripts (contains signing key path)
+scripts/
+
 # OS / Editor
 .DS_Store
 Thumbs.db
-.vscode/*
-!.vscode/extensions.json
+.vscode/
