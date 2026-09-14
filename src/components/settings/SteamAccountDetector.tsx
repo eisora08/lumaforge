@@ -4,10 +4,22 @@ import { Crosshair, Users } from "lucide-react";
 import { scanSteamLoginUsers } from "../../services/tauri";
 import type { SteamLoginUser } from "../../types/steamLoginUser";
 
+const STEAM_ID64_BASE = 76561197960265728n;
+
+export function steamId64ToAccountId(steamId64: string): string | null {
+  try {
+    const val = BigInt(steamId64);
+    if (val >= STEAM_ID64_BASE) {
+      return (val - STEAM_ID64_BASE).toString();
+    }
+  } catch { /* not a valid BigInt */ }
+  return null;
+}
+
 type Props = {
   steamRoot: string;
   currentSteamId64: string;
-  onSelect: (steamId64: string) => void;
+  onSelect: (steamId64: string, steamAccountId: string) => void;
 };
 
 export default function SteamAccountDetector({ steamRoot, currentSteamId64, onSelect }: Props) {
@@ -63,7 +75,10 @@ export default function SteamAccountDetector({ steamRoot, currentSteamId64, onSe
             <button
               key={acc.steamId}
               type="button"
-              onClick={() => onSelect(acc.steamId)}
+              onClick={() => {
+                const id32 = steamId64ToAccountId(acc.steamId) ?? "";
+                onSelect(acc.steamId, id32);
+              }}
               className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${
                 currentSteamId64 === acc.steamId
                   ? "bg-(--color-accent)/10 text-(--color-accent)"

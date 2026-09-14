@@ -30,8 +30,6 @@ Este software se proporciona estrictamente con fines educativos y de demostracio
 
 ## Capturas de Pantalla
 
-> Proximamente. Coloca tus imagenes en `docs/screenshots/` para completar esta seccion.
-
 | | |
 |:---:|:---:|
 | ![Biblioteca](docs/screenshots/library.png) | ![Panel](docs/screenshots/dashboard.png) |

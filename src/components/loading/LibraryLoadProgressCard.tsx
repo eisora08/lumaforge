@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLibraryProgress, reportLibraryProgress } from "../../services/libraryProgressService";
-import { Loader2, CheckCircle2, AlertCircle, X } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle, X, Image } from "lucide-react";
 
 const SHOW_DELAY_MS = 500;
 const DONE_VISIBLE_MS = 3000;
@@ -83,7 +83,16 @@ export default function LibraryLoadProgressCard() {
       >
         {/* header */}
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs font-medium text-(--color-text)">Loading library</span>
+          <span className="text-xs font-medium text-(--color-text)">
+            {progress.phase === "downloading-artwork" ? (
+              <span className="flex items-center gap-1.5">
+                <Image className="h-3 w-3 text-(--color-accent)" />
+                Scanning artwork
+              </span>
+            ) : (
+              "Loading library"
+            )}
+          </span>
           {isError && (
             <button
               type="button"
@@ -100,6 +109,13 @@ export default function LibraryLoadProgressCard() {
         <p className="text-[11px] leading-relaxed text-(--color-muted)">
           {progress.message || "Loading library\u2026"}
         </p>
+
+        {/* current game name (artwork phase) */}
+        {progress.phase === "downloading-artwork" && progress.currentGame && (
+          <p className="mt-0.5 truncate text-[10px] font-medium text-(--color-text)">
+            {progress.currentGame}
+          </p>
+        )}
 
         {/* progress bar */}
         {showProgress && (
@@ -165,7 +181,9 @@ export default function LibraryLoadProgressCard() {
         {showProgress && !hasTotal && !determinate && (
           <div className="mt-2 flex items-center gap-1.5">
             <Loader2 className="h-3 w-3 animate-spin text-(--color-accent)" />
-            <span className="text-[10px] text-(--color-muted)">Working{"\u2026"}</span>
+            <span className="text-[10px] text-(--color-muted)">
+              {progress.phase === "downloading-artwork" ? "Scanning\u2026" : "Working\u2026"}
+            </span>
           </div>
         )}
       </div>

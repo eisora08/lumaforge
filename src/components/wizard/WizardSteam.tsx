@@ -4,6 +4,7 @@ import { FolderSearch, Key, ExternalLink, Check, AlertTriangle } from "lucide-re
 import { useSettings } from "../../context/SettingsContext";
 import { detectSteamPaths } from "../../services/tauri";
 import WizardStep from "./WizardStep";
+import SteamAccountDetector from "../settings/SteamAccountDetector";
 
 type Props = {
   currentStep: number;
@@ -132,6 +133,16 @@ export default function WizardSteam({ currentStep, totalSteps, onBack, onContinu
           placeholder="76561198000000000"
           className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-(--color-text) placeholder-(--color-muted) outline-none transition focus:border-(--color-accent)/50 focus:ring-1 focus:ring-(--color-accent)/30"
         />
+        {settings.steamRoot && (
+          <SteamAccountDetector
+            steamRoot={settings.steamRoot}
+            currentSteamId64={settings.steamId64}
+            onSelect={(steamId64, steamAccountId) => {
+              updateSetting("steamId64", steamId64);
+              if (steamAccountId) updateSetting("steamAccountId", steamAccountId);
+            }}
+          />
+        )}
       </div>
     </WizardStep>
   );

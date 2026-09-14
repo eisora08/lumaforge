@@ -32,6 +32,7 @@ import LibraryFilterPanel from "../components/library/LibraryFilterPanel";
 import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFilterPanel";
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
 import { GridSkeleton, LibrarySectionSkeleton } from "../components/common/Skeleton";
+import { reportLibraryProgress } from "../services/libraryProgressService";
 
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../context/SettingsContext";
@@ -303,7 +304,7 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
   }, [visibleGames, settings.steamGridDbApiKey, settings.steamGridDbArtworkEnabled]);
 
   // Idle-phase bulk artwork download — runs once after boot is ready + 10s idle
-  // Downloads missing artworks for ALL library games in batches of 8
+  // Scans all library games for missing artwork and enqueues downloads
   const IDLE_BULK_BATCH = 8;
   const IDLE_BULK_DELAY_MS = 10_000; // 10s after boot
   useEffect(() => {
@@ -317,24 +318,52 @@ export default function LibraryPage({ onNavigate, activePage }: Props) {
         await new Promise((r) => setTimeout(r, 1000));
       }
       if (cancelled) return;
+
+      // Load persisted media health from SQLite before scanning
+      const { loadMediaHealthFromSQLite } = await import("../services/gameCacheService");
+      await loadMediaHealthFromSQLite();
+
       // Wait additional idle time
       await new Promise((r) => { timer = setTimeout(r, IDLE_BULK_DELAY_MS); });
       if (cancelled) return;
 
       // Process all games with appId in batches
       const allGames = games.filter((g) => g.appId && !isSystemToolApp(g.appId));
+      const totalGames = allGames.length;
+      if (totalGames === 0) return;
+
+      // Import skip check for persistent 404 errors
+      const { shouldSkipIdleBulk } = await import("../services/gameCacheService");
+
+      let queuedCount = 0;
+
       for (let i = 0; i < allGames.length; i += IDLE_BULK_BATCH) {
         if (cancelled) break;
         const batch = allGames.slice(i, i + IDLE_BULK_BATCH);
-        await Promise.allSettled(
-          batch.map((g) =>
-            detectAndQueueMissingMedia(g.appId!, "idle-bulk").catch(() => {})
-          )
-        );
+
+        // Process games sequentially within batch
+        for (const g of batch) {
+          if (cancelled) break;
+          // Skip games with persistent 404 errors (7-day cooldown from SQLite)
+          if (shouldSkipIdleBulk(g.appId!)) continue;
+          try {
+            const roles = await detectAndQueueMissingMedia(g.appId!, "idle-bulk");
+            if (roles.length > 0) {
+              queuedCount++;
+            }
+          } catch { /* ignore per-game errors */ }
+        }
+
         // Small delay between batches to avoid disk thrashing
         if (!cancelled && i + IDLE_BULK_BATCH < allGames.length) {
           await new Promise((r) => { timer = setTimeout(r, 2000); });
         }
+      }
+
+      // Only show progress card when artwork was actually queued for download
+      if (!cancelled && queuedCount > 0) {
+        reportLibraryProgress({ phase: "downloading-artwork", source: "steam", message: `${queuedCount} game${queuedCount > 1 ? "s" : ""} need artwork — downloading\u2026` });
+        setTimeout(() => reportLibraryProgress({ phase: "idle", source: "steam" }), 3000);
       }
     };
 

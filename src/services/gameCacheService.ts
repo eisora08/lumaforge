@@ -365,14 +365,18 @@ export type MediaHealth = {
   missing: string[];
   lastRepairAttemptAt?: number;
   lastRepairError?: string;
+  downloadError?: string; // "http-404" | "no-source-url" | undefined
 };
 
 const MEDIA_COMPLETE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MEDIA_INCOMPLETE_RETRY_MS = 10 * 60 * 1000;   // 10 minutes
 const MEDIA_FAILED_COOLDOWN_MS = 5 * 60 * 1000;     // 5 minutes after failed repair
 const MEDIA_NO_SOURCE_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes for no-source-url failures
+const MEDIA_HTTP_404_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days for HTTP 404 errors
 
 const _mediaHealthStore = new Map<string, MediaHealth>();
+let _mediaHealthDirty = false;
+let _mediaHealthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function getMediaHealth(appId: string): MediaHealth | undefined {
   return _mediaHealthStore.get(appId);
@@ -380,6 +384,61 @@ export function getMediaHealth(appId: string): MediaHealth | undefined {
 
 export function setMediaHealth(appId: string, health: MediaHealth): void {
   _mediaHealthStore.set(appId, health);
+  _mediaHealthDirty = true;
+  scheduleMediaHealthSave();
+}
+
+function scheduleMediaHealthSave(): void {
+  if (_mediaHealthSaveTimer) return;
+  _mediaHealthSaveTimer = setTimeout(() => {
+    _mediaHealthSaveTimer = null;
+    flushMediaHealthToSQLite();
+  }, 2000);
+}
+
+async function flushMediaHealthToSQLite(): Promise<void> {
+  if (!_mediaHealthDirty) return;
+  _mediaHealthDirty = false;
+  try {
+    const { batchUpsertMediaHealth } = await import("./tauri");
+    const records: import("./tauri").MediaHealthRecord[] = [];
+    for (const [appId, h] of _mediaHealthStore) {
+      records.push({
+        appId,
+        complete: h.complete,
+        missing: JSON.stringify(h.missing),
+        checkedAt: h.checkedAt,
+        lastRepairAttemptAt: h.lastRepairAttemptAt ?? null,
+        lastRepairError: h.lastRepairError ?? null,
+        downloadError: h.downloadError ?? null,
+      });
+    }
+    if (records.length > 0) {
+      await batchUpsertMediaHealth(records);
+    }
+  } catch (err) {
+    console.warn("[MEDIA][HEALTH] failed to flush to SQLite:", err);
+  }
+}
+
+export async function loadMediaHealthFromSQLite(): Promise<void> {
+  try {
+    const { loadMediaHealth } = await import("./tauri");
+    const records = await loadMediaHealth();
+    for (const r of records) {
+      _mediaHealthStore.set(r.appId, {
+        complete: r.complete,
+        missing: JSON.parse(r.missing || "[]"),
+        checkedAt: r.checkedAt,
+        lastRepairAttemptAt: r.lastRepairAttemptAt ?? undefined,
+        lastRepairError: r.lastRepairError ?? undefined,
+        downloadError: r.downloadError ?? undefined,
+      });
+    }
+    console.log(`[MEDIA][HEALTH] loaded ${records.length} records from SQLite`);
+  } catch (err) {
+    console.warn("[MEDIA][HEALTH] failed to load from SQLite:", err);
+  }
 }
 
 export function isMediaHealthStale(appId: string): boolean {
@@ -393,16 +452,40 @@ export function isMediaRepairOnCooldown(appId: string): boolean {
   const h = _mediaHealthStore.get(appId);
   if (!h) return false;
   if (!h.lastRepairAttemptAt) return false;
-  const cooldown = h.lastRepairError === "no-source-url" ? MEDIA_NO_SOURCE_COOLDOWN_MS : MEDIA_FAILED_COOLDOWN_MS;
+  let cooldown: number;
+  if (h.downloadError === "http-404") {
+    cooldown = MEDIA_HTTP_404_COOLDOWN_MS;
+  } else if (h.lastRepairError === "no-source-url") {
+    cooldown = MEDIA_NO_SOURCE_COOLDOWN_MS;
+  } else {
+    cooldown = MEDIA_FAILED_COOLDOWN_MS;
+  }
   return Date.now() - h.lastRepairAttemptAt < cooldown;
 }
 
 export function isNoSourceCooldown(appId: string): boolean {
   const h = _mediaHealthStore.get(appId);
   if (!h) return false;
-  if (h.lastRepairError !== "no-source-url") return false;
   if (!h.lastRepairAttemptAt) return false;
+  // HTTP 404 errors have a much longer cooldown (7 days)
+  if (h.downloadError === "http-404") {
+    return Date.now() - h.lastRepairAttemptAt < MEDIA_HTTP_404_COOLDOWN_MS;
+  }
+  // No-source-url errors have a 30-minute cooldown
+  if (h.lastRepairError !== "no-source-url") return false;
   return Date.now() - h.lastRepairAttemptAt < MEDIA_NO_SOURCE_COOLDOWN_MS;
+}
+
+/** Check if a game should be permanently skipped by idle-bulk (persistent errors). */
+export function shouldSkipIdleBulk(appId: string): boolean {
+  const h = _mediaHealthStore.get(appId);
+  if (!h) return false;
+  if (!h.lastRepairAttemptAt) return false;
+  // Skip games with HTTP 404 errors (7-day cooldown, persists across restarts)
+  if (h.downloadError === "http-404") {
+    return Date.now() - h.lastRepairAttemptAt < MEDIA_HTTP_404_COOLDOWN_MS;
+  }
+  return false;
 }
 
 /** Known Steam system/tool appIds that should not have media repair applied. */
@@ -1966,6 +2049,12 @@ export function getUninstallPendingScanTtl(): number {
 }
 
 export async function detectAndQueueMissingMedia(appId: string, source: MediaRepairSource = "visible-details"): Promise<string[]> {
+  // Persistent 404 cooldown — skip repair if game has HTTP404 errors (7-day cooldown)
+  if (isMediaRepairOnCooldown(appId)) {
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_COOLDOWN] appid=${appId} reason=http-404`);
+    return [];
+  }
+
   // No-source-url cooldown — skip repair if recently found no source URLs.
   // idle-bulk bypasses cooldown — it runs during idle and should always retry.
   if (source !== "idle-bulk" && isNoSourceCooldown(appId)) {
@@ -2159,6 +2248,7 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
   } else if (missing.length > 0 && queuedRoles.length === 0) {
     health.lastRepairAttemptAt = Date.now();
     health.lastRepairError = "no-source-url";
+    health.downloadError = "no-source-url";
   }
   setMediaHealth(appId, health);
   if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][HEALTH_UPDATE] appid=${appId} complete=${isComplete} missing=${missing.length} error=${health.lastRepairError ?? "null"}`);

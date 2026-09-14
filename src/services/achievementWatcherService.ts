@@ -51,7 +51,7 @@ export const ACHIEVEMENT_WATCHER_FULL_SCAN_ON_STARTUP = true;
 export const ACHIEVEMENT_LIBRARYCACHE_SCAN_ON_BOOT = false;
 export const ACHIEVEMENT_PROCESS_MISSING_CACHE_ON_BOOT = false;
 export const DEBUG_ACH_LIBRARYCACHE = false;
-export const DEBUG_ACH_WATCHER = false;
+export const DEBUG_ACH_WATCHER = true;
 
 /**
  * committed: librarycache processing disabled — binary-stats (usergamestats)
@@ -359,8 +359,8 @@ class AchievementWatcherService {
     steamAccountId?: string,
     steamWebApiKey?: string,
   ): Promise<void> {
-    if (!steamPath || !steamAccountId) {
-      console.debug("[ACH][WATCHER] not started reason=missing-steam-root-or-account-id");
+    if (!steamPath) {
+      console.debug("[ACH][WATCHER] not started reason=missing-steam-root");
       return;
     }
 
@@ -391,17 +391,15 @@ class AchievementWatcherService {
     this._startingInProgress = true;
 
     this._steamPath = steamPath;
-    this._steamAccountId = steamAccountId;
+    this._steamAccountId = steamAccountId ?? "";
     this._steamWebApiKey = steamWebApiKey ?? "";
     // Invalidate cached appid list when path/account changes (PART 15)
     this._cachedAppIds = null;
     this._cachedAppIdsAt = 0;
 
-    const librarycachePath = `${steamPath}\\userdata\\${steamAccountId}\\config\\librarycache`;
     const appcacheStatsPath = `${steamPath}\\appcache\\stats`;
     console.debug(`[ACH][WATCHER] steamRoot=${steamPath}`);
-    console.debug(`[ACH][WATCHER] accountId=${steamAccountId}`);
-    console.debug(`[ACH][WATCHER] watchingLibrarycache=${librarycachePath}`);
+    console.debug(`[ACH][WATCHER] accountId=${steamAccountId ?? "(auto-detect)"}`);
     console.debug(`[ACH][WATCHER] watchingAppcacheStats=${appcacheStatsPath}`);
 
     // Start Rust-side watcher
@@ -432,7 +430,7 @@ class AchievementWatcherService {
     try {
       await invoke("start_achievement_watcher", {
         steamPath: steamPath ?? null,
-        steamAccountId,
+        steamAccountId: steamAccountId || null,
         extraWatchDirMap: extraWatchDirMap.length > 0 ? extraWatchDirMap : null,
       });
     } catch (err) {

@@ -584,15 +584,17 @@ function GameLauncherTileInner({
         {mediaLoading ? (
           <SkeletonBox className="h-full w-full" />
         ) : resolvedSrc ? (
-          <AsyncImage
-            src={resolvedSrc}
-            alt={displayTitle}
-            className="h-full w-full object-cover"
-            fallbackLocalPath={fallbackLocalPath}
-            fallback={
-              <Gamepad2 className="h-8 w-8 text-(--color-muted)/40" />
-            }
-          />
+          <div className="lf-fade-in h-full w-full">
+            <AsyncImage
+              src={resolvedSrc}
+              alt={displayTitle}
+              className="h-full w-full object-cover"
+              fallbackLocalPath={fallbackLocalPath}
+              fallback={
+                <Gamepad2 className="h-8 w-8 text-(--color-muted)/40" />
+              }
+            />
+          </div>
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-white/[0.02]">
             <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />

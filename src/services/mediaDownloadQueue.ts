@@ -84,6 +84,21 @@ const listeners = new Set<QueueListener>();
 const dedupKey = (job: MediaDownloadJob) =>
   `${job.provider}:${job.appId}:${job.mediaType}:${job.target}`;
 
+/** Track download failure in media health store for persistent cooldown. */
+function trackDownloadFailure(appId: string): void {
+  // Import dynamically to avoid circular dependency
+  import("./gameCacheService").then(({ getMediaHealth, setMediaHealth }) => {
+    const existing = getMediaHealth(appId);
+    if (existing) {
+      setMediaHealth(appId, {
+        ...existing,
+        lastRepairAttemptAt: Date.now(),
+        downloadError: "http-404",
+      });
+    }
+  }).catch(() => {});
+}
+
 function notify(event: MediaQueueEvent) {
   for (const listener of listeners) {
     try { listener(event); } catch { /* ignore */ }
@@ -534,6 +549,8 @@ async function performDownload(entry: InternalJob, key: string) {
       DOWNLOAD_LOG("DOWNLOAD_FAIL", `reason=rust-returned-null forceRefresh=${job.forceRefresh ?? false}`);
       recentlyFailed.add(key);
       recentlyCompleted.delete(key);
+      // Track HTTP 404 errors in media health for persistent cooldown
+      trackDownloadFailure(job.appId);
       notify({ type: "failed", job, result: { success: false, appId: job.appId, mediaType: job.mediaType, error: "Rust returned null (rejected by classifier or download error)" }, queueSize: pendingQueue.length });
       entry.resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Rust returned null (rejected by classifier or download error)" });
     }
@@ -553,6 +570,8 @@ async function performDownload(entry: InternalJob, key: string) {
     DOWNLOAD_LOG("DOWNLOAD_FAIL", `error=${message}`);
     recentlyFailed.add(key);
     recentlyCompleted.delete(key);
+    // Track download failure in media health for persistent cooldown
+    trackDownloadFailure(job.appId);
     notify({ type: "failed", job, result: { success: false, appId: job.appId, mediaType: job.mediaType, error: message }, queueSize: pendingQueue.length });
     entry.resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: message });
   } finally {

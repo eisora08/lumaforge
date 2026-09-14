@@ -3692,6 +3692,36 @@ export async function removeImportExclusion(id: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Media health — artwork download state persistence (v16+)
+// ---------------------------------------------------------------------------
+
+export type MediaHealthRecord = {
+  appId: string;
+  complete: boolean;
+  missing: string;       // JSON array of role names
+  checkedAt: number;
+  lastRepairAttemptAt?: number | null;
+  lastRepairError?: string | null;
+  downloadError?: string | null;
+};
+
+export async function loadMediaHealth(): Promise<MediaHealthRecord[]> {
+  try {
+    return await invoke<MediaHealthRecord[]>("load_media_health_cmd");
+  } catch {
+    return [];
+  }
+}
+
+export async function batchUpsertMediaHealth(records: MediaHealthRecord[]): Promise<void> {
+  try {
+    await invoke("batch_upsert_media_health_cmd", { records });
+  } catch {
+    // silent
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Game actions — custom actions per game (v14+)
 // ---------------------------------------------------------------------------
 

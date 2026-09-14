@@ -805,6 +805,8 @@ pub fn run() {
             commands::sqlite_cache::import_exclusions::is_game_excluded_cmd,
             commands::sqlite_cache::import_exclusions::is_folder_excluded_cmd,
             commands::sqlite_cache::import_exclusions::remove_import_exclusion_cmd,
+            commands::sqlite_cache::media_health::load_media_health_cmd,
+            commands::sqlite_cache::media_health::batch_upsert_media_health_cmd,
             commands::sqlite_cache::upsert_store_review,
             commands::sqlite_cache::get_store_review,
             commands::sqlite_cache::batch_get_store_reviews,

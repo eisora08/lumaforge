@@ -42,9 +42,9 @@ export const ACHIEVEMENT_AUTO_SYNC_ENABLED = true;
 
 // ── Debug logging flags (all default false) ──
 
-export const DEBUG_ACH_VERBOSE = false;
-export const DEBUG_ACH_SCHEMA = false;
-export const DEBUG_ACH_STATS = false;
+export const DEBUG_ACH_VERBOSE = true;
+export const DEBUG_ACH_SCHEMA = true;
+export const DEBUG_ACH_STATS = true;
 export const DEBUG_ACH_MIGRATION = false;
 export const DEBUG_ACH_CACHE_IO = false;
 

@@ -21,6 +21,7 @@ export type LibraryLoadPhase =
   | "scanning-lua"
   | "scanning-local-exe"
   | "merging-library"
+  | "downloading-artwork"
   | "updating-cache"
   | "done"
   | "error";
@@ -39,6 +40,8 @@ export type LibraryLoadProgress = {
   errors?: string[];
   startedAt?: number;
   updatedAt?: number;
+  currentGame?: string;
+  queuedRoles?: string[];
 };
 
 type ProgressListener = (state: LibraryLoadProgress) => void;
@@ -74,6 +77,7 @@ function getProgressMessage(_source: LibraryLoadSource, phase: LibraryLoadPhase,
   if (phase === "scanning-lua") return "Scanning Lua scripts\u2026";
   if (phase === "scanning-local-exe") return "Scanning local executables\u2026";
   if (phase === "merging-library") return "Merging library sources\u2026";
+  if (phase === "downloading-artwork") return "Scanning artwork\u2026";
   if (phase === "updating-cache") return "Updating cache\u2026";
   return "Loading library\u2026";
 }
@@ -99,6 +103,8 @@ export function reportLibraryProgress(update: Partial<LibraryLoadProgress> & { p
     console.log(`[LIB_PROGRESS] clear reason=${String(update.source)}`);
   }
 
+  const isArtworkPhase = update.phase === "downloading-artwork";
+
   _state = {
     ..._state,
     ...update,
@@ -106,6 +112,8 @@ export function reportLibraryProgress(update: Partial<LibraryLoadProgress> & { p
     active: !isEnding,
     updatedAt: now,
     startedAt: !wasActive && !isEnding && update.phase !== "idle" ? now : _state.startedAt,
+    currentGame: isArtworkPhase ? (update.currentGame ?? _state.currentGame) : undefined,
+    queuedRoles: isArtworkPhase ? (update.queuedRoles ?? _state.queuedRoles) : undefined,
   };
 
   notify();

@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use super::steam_achievements::resolve_steam_root;
 
 // Disable verbose watcher event logs by default
-const DEBUG_ACH_WATCHER: bool = false;
+const DEBUG_ACH_WATCHER: bool = true;
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -711,16 +711,14 @@ pub fn start_achievement_watcher(
   app_handle: AppHandle,
   state: tauri::State<'_, AchievementWatcherState>,
   steam_path: Option<String>,
-  steam_account_id: String,
+  steam_account_id: Option<String>,
   extra_watch_dir_map: Option<Vec<(String, u32)>>,
 ) -> Result<(), String> {
   let steam_root = resolve_steam_root(steam_path.as_deref())?;
 
-  let librarycache_path = steam_root
-    .join("userdata")
-    .join(&steam_account_id)
-    .join("config")
-    .join("librarycache");
+  let librarycache_path = steam_account_id.as_deref()
+    .map(|id| steam_root.join("userdata").join(id).join("config").join("librarycache"))
+    .unwrap_or_default();
 
   let appcache_stats_path = steam_root.join("appcache").join("stats");
 
@@ -734,11 +732,13 @@ pub fn start_achievement_watcher(
   eprintln!("[ACH][WATCHER] starting watcher");
   if DEBUG_ACH_WATCHER {
     eprintln!("[ACH][WATCHER] steamRoot={}", steam_root.display());
-    eprintln!("[ACH][WATCHER] accountId={}", steam_account_id);
-    eprintln!(
-      "[ACH][WATCHER] watchingLibrarycache={}",
-      librarycache_path.display()
-    );
+    eprintln!("[ACH][WATCHER] accountId={}", steam_account_id.as_deref().unwrap_or("(not set)"));
+    if librarycache_path.exists() {
+      eprintln!(
+        "[ACH][WATCHER] watchingLibrarycache={}",
+        librarycache_path.display()
+      );
+    }
     eprintln!(
       "[ACH][WATCHER] watchingAppcacheStats={}",
       appcache_stats_path.display()
@@ -753,12 +753,6 @@ pub fn start_achievement_watcher(
     }
   }
 
-  if !librarycache_path.exists() {
-    eprintln!(
-      "[ACH][WATCHER] MISSING path={}",
-      librarycache_path.display()
-    );
-  }
   if !appcache_stats_path.exists() {
     eprintln!(
       "[ACH][WATCHER] MISSING path={}",

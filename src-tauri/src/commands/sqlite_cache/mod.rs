@@ -18,6 +18,7 @@ pub mod games_v2;
 pub mod import_exclusions;
 pub mod launcher_achievements_cache;
 pub mod library_cache;
+pub mod media_health;
 pub mod media_manifests;
 pub mod play_queue;
 pub mod playtime;
@@ -92,6 +93,9 @@ pub use game_actions::{
 pub use import_exclusions::{
     ImportExclusion, add_import_exclusion_inner, get_import_exclusions_inner,
     is_game_excluded_inner, is_folder_excluded_inner, remove_import_exclusion_inner,
+};
+pub use media_health::{
+    MediaHealthRecord, load_all_media_health, batch_upsert_media_health,
 };
 pub use library_cache::{delete_library_cache, read_library_cache, write_library_cache};
 pub use startup_snapshots::{
@@ -237,6 +241,10 @@ pub use provider_status::__tauri_command_name_get_provider_status_from_db;
 pub use provider_status::__tauri_command_name_get_all_provider_statuses;
 pub use catalog_blobs::__tauri_command_name_upsert_game_catalog_blob;
 pub use catalog_blobs::__tauri_command_name_get_game_catalog_blob;
+pub use media_health::__cmd__load_media_health_cmd;
+pub use media_health::__cmd__batch_upsert_media_health_cmd;
+pub use media_health::__tauri_command_name_load_media_health_cmd;
+pub use media_health::__tauri_command_name_batch_upsert_media_health_cmd;
 
 // ---------------------------------------------------------------------------
 // Debug flags
@@ -665,6 +673,11 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_import_exclusions_type ON import_exclusions(exclusion_type);
         ",
     ).map_err(|e| eprintln!("[SqliteCache] import_exclusions init failed: {}", e)).ok();
+
+    // Media health — tracks artwork download state per game
+    if let Err(e) = media_health::create_tables(conn) {
+        eprintln!("[SqliteCache] media_health init failed: {}", e);
+    }
 
     Ok(())
 }
@@ -1323,7 +1336,7 @@ pub fn initialize_store_sqlite(app_handle: &AppHandle) -> SqliteStoreDb {
 // ---------------------------------------------------------------------------
 
 /// Current target schema version. Increment when adding a new migration.
-const CURRENT_DB_VERSION: u32 = 15;
+const CURRENT_DB_VERSION: u32 = 16;
 
 /// Run all pending migrations in order. Called once on boot after opening core.db.
 fn run_migrations(conn: &Connection) -> Result<(), String> {
@@ -1363,6 +1376,9 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
     }
     if current_version < 15 {
         migrate_v14_to_v15(conn)?;
+    }
+    if current_version < 16 {
+        migrate_v15_to_v16(conn)?;
     }
 
     conn.execute_batch(&format!("PRAGMA user_version = {};", CURRENT_DB_VERSION))
@@ -2397,6 +2413,36 @@ fn migrate_v14_to_v15(conn: &Connection) -> Result<(), String> {
     }
 
     println!("[SqliteCache] migration v14 ΓåÆ v15 complete");
+    Ok(())
+}
+
+fn migrate_v15_to_v16(conn: &Connection) -> Result<(), String> {
+    println!("[SqliteCache] running migration v15 -> v16: creating media_health table");
+
+    if let Err(e) = media_health::create_tables(conn) {
+        eprintln!("[SqliteCache] media_health migration failed: {}", e);
+        return Err(e);
+    }
+
+    // Add download_error column if it doesn't exist (for existing databases)
+    let has_col: bool = conn
+        .prepare("PRAGMA table_info(media_health)")
+        .ok()
+        .map(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .ok()
+                .map(|rows| rows.filter_map(|r| r.ok()).any(|name| name == "download_error"))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    if !has_col {
+        conn.execute_batch("ALTER TABLE media_health ADD COLUMN download_error TEXT;")
+            .map_err(|e| format!("Failed to add download_error column: {}", e))?;
+        println!("[SqliteCache] added download_error column to media_health");
+    }
+
+    println!("[SqliteCache] migration v15 -> v16 complete");
     Ok(())
 }
 

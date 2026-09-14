@@ -382,7 +382,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                   <SteamAccountDetector
                     steamRoot={settings.steamRoot}
                     currentSteamId64={settings.steamId64}
-                    onSelect={(steamId64) => updateSetting("steamId64", steamId64)}
+                    onSelect={(steamId64, steamAccountId) => {
+                      updateSetting("steamId64", steamId64);
+                      if (steamAccountId) updateSetting("steamAccountId", steamAccountId);
+                    }}
                   />
                 </div>
               </SettingsSection>
