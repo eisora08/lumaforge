@@ -779,6 +779,7 @@ pub fn focus_game_window(pid: u32) -> Result<(), String> {
     }
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn enum_window_callback(
     hwnd: windows::Win32::Foundation::HWND,
     lparam: windows::Win32::Foundation::LPARAM,
