@@ -210,5 +210,189 @@ pub fn scan_installed_programs() -> Result<Vec<InstalledProgram>, String> {
 #[cfg(target_os = "linux")]
 #[tauri::command]
 pub fn scan_installed_programs() -> Result<Vec<InstalledProgram>, String> {
-    Ok(Vec::new())
+    let mut results: Vec<InstalledProgram> = Vec::new();
+    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let mut desktop_dirs: Vec<std::path::PathBuf> = Vec::new();
+
+    // Standard XDG application directories
+    if let Ok(home) = std::env::var("HOME") {
+        let home = std::path::PathBuf::from(&home);
+        desktop_dirs.push(home.join(".local/share/applications"));
+        desktop_dirs.push(home.join(".local/share/flatpak/exports/share/applications"));
+        desktop_dirs.push(home.join(".var/app/*/share/applications"));
+    }
+    desktop_dirs.push(std::path::PathBuf::from("/usr/share/applications"));
+    desktop_dirs.push(std::path::PathBuf::from("/usr/local/share/applications"));
+    desktop_dirs.push(std::path::PathBuf::from("/var/lib/flatpak/exports/share/applications"));
+    desktop_dirs.push(std::path::PathBuf::from("/opt/*/share/applications"));
+    desktop_dirs.push(std::path::PathBuf::from("/snap/*/current/meta/gui"));
+
+    // Also check for AppImage desktop files
+    if let Ok(home) = std::env::var("HOME") {
+        desktop_dirs.push(std::path::PathBuf::from(&home).join("Desktop"));
+    }
+
+    for dir in &desktop_dirs {
+        // Handle glob patterns by expanding them
+        let expanded_dirs = if dir.to_string_lossy().contains('*') {
+            expand_glob_dirs(dir)
+        } else {
+            vec![dir.clone()]
+        };
+
+        for expanded_dir in &expanded_dirs {
+            if !expanded_dir.exists() {
+                continue;
+            }
+
+            let entries = match fs::read_dir(expanded_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if ext != "desktop" {
+                    continue;
+                }
+
+                if let Some(program) = parse_desktop_file(&path) {
+                    let name_lower = program.name.to_lowercase();
+                    // Skip system/hidden entries
+                    if name_lower.starts_with("gnome-")
+                        || name_lower.starts_with("org.gnome.")
+                        || name_lower.starts_with("kde-")
+                        || name_lower.starts_with("org.kde.")
+                    {
+                        continue;
+                    }
+                    if !seen_names.insert(name_lower) {
+                        continue;
+                    }
+                    results.push(program);
+                }
+            }
+        }
+    }
+
+    results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(results)
+}
+
+fn expand_glob_dirs(pattern: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let pattern_str = pattern.to_string_lossy().to_string();
+    let parts: Vec<&str> = pattern_str.splitn(2, '*').collect();
+    if parts.len() < 2 {
+        return vec![pattern.to_path_buf()];
+    }
+    let prefix = parts[0];
+    let suffix = parts[1];
+
+    let prefix_path = std::path::Path::new(prefix);
+    if !prefix_path.exists() {
+        return vec![];
+    }
+
+    let mut results = Vec::new();
+    if let Ok(entries) = fs::read_dir(prefix_path) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let candidate = entry.path().join(suffix.trim_start_matches('/'));
+                if candidate.exists() {
+                    results.push(candidate);
+                }
+            }
+        }
+    }
+    results
+}
+
+fn parse_desktop_file(path: &std::path::Path) -> Option<InstalledProgram> {
+    let content = fs::read_to_string(path).ok()?;
+    let mut name: Option<String> = None;
+    let mut exec: Option<String> = None;
+    let mut icon: Option<String> = None;
+    let mut no_display = false;
+    let mut in_desktop_entry = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_desktop_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_desktop_entry {
+            continue;
+        }
+        if line.starts_with("NoDisplay=true") {
+            no_display = true;
+        }
+        if let Some(val) = line.strip_prefix("Name=") {
+            if name.is_none() {
+                name = Some(val.to_string());
+            }
+        }
+        if let Some(val) = line.strip_prefix("Exec=") {
+            // Exec can contain %f, %u, etc. — strip those
+            let exec_clean = val
+                .split_whitespace()
+                .filter(|arg| !arg.starts_with('%'))
+                .collect::<Vec<_>>()
+                .join(" ");
+            exec = Some(exec_clean);
+        }
+        if let Some(val) = line.strip_prefix("Icon=") {
+            icon = Some(val.to_string());
+        }
+    }
+
+    if no_display {
+        return None;
+    }
+
+    let name = name?;
+    let exec_path = exec.as_deref().unwrap_or("");
+
+    // Resolve the executable path
+    let exe_path = if exec_path.starts_with('/') {
+        Some(exec_path.to_string())
+    } else if !exec_path.is_empty() {
+        // Try to find it in PATH
+        std::process::Command::new("which")
+            .arg(exec_path.split_whitespace().next().unwrap_or(""))
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+    } else {
+        None
+    };
+
+    // Get install path from the .desktop file location
+    let install_path = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    Some(InstalledProgram {
+        name,
+        install_path,
+        exe_path,
+        display_icon: icon,
+        estimated_size_kb: None,
+    })
 }

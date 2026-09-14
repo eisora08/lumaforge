@@ -23,25 +23,37 @@ pub fn detect_steam_paths() -> Option<SteamPaths> {
 fn get_search_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
-    if let Ok(program_files_x86) = env::var("ProgramFiles(x86)") {
-        roots.push(PathBuf::from(program_files_x86));
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(program_files_x86) = env::var("ProgramFiles(x86)") {
+            roots.push(PathBuf::from(program_files_x86));
+        }
+        if let Ok(program_files) = env::var("ProgramFiles") {
+            roots.push(PathBuf::from(program_files));
+        }
+        if let Ok(system_drive) = env::var("SystemDrive") {
+            roots.push(PathBuf::from(format!("{}\\", system_drive)));
+        }
+        roots.push(PathBuf::from("C:\\Program Files (x86)"));
+        roots.push(PathBuf::from("C:\\Program Files"));
+        roots.push(PathBuf::from("C:\\"));
+        roots.push(PathBuf::from("D:\\"));
+        roots.push(PathBuf::from("E:\\"));
+        roots.push(PathBuf::from("F:\\"));
     }
 
-    if let Ok(program_files) = env::var("ProgramFiles") {
-        roots.push(PathBuf::from(program_files));
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(home) = env::var("HOME") {
+            let home = PathBuf::from(&home);
+            roots.push(home.join(".steam/steam"));
+            roots.push(home.join(".steam/debian-installation"));
+            roots.push(home.join(".local/share/Steam"));
+        }
+        roots.push(PathBuf::from("/usr/lib/steam"));
+        roots.push(PathBuf::from("/usr/local/lib/steam"));
+        roots.push(PathBuf::from("/opt/steam"));
     }
-
-    if let Ok(system_drive) = env::var("SystemDrive") {
-        roots.push(PathBuf::from(format!("{}\\", system_drive)));
-    }
-
-    // Fallbacks comunes
-    roots.push(PathBuf::from("C:\\Program Files (x86)"));
-    roots.push(PathBuf::from("C:\\Program Files"));
-    roots.push(PathBuf::from("C:\\"));
-    roots.push(PathBuf::from("D:\\"));
-    roots.push(PathBuf::from("E:\\"));
-    roots.push(PathBuf::from("F:\\"));
 
     roots
 }
@@ -102,9 +114,28 @@ fn find_steam_one_level_deep(root: &Path) -> Option<SteamPaths> {
 }
 
 fn build_paths_if_steam_root(root: &Path) -> Option<SteamPaths> {
-    let steam_exe = root.join("steam.exe");
+    // On Windows look for steam.exe, on Linux look for steam.sh or the steam binary
+    let steam_exe = if cfg!(target_os = "windows") {
+        root.join("steam.exe")
+    } else {
+        let steam_sh = root.join("steam.sh");
+        let steam_bin = root.join("ubuntu12_32/steam");
+        if steam_sh.exists() {
+            steam_sh
+        } else if steam_bin.exists() {
+            steam_bin
+        } else {
+            // Check if the root itself is a valid Steam directory by looking for config/loginusers.vdf
+            let config = root.join("config").join("loginusers.vdf");
+            if config.exists() {
+                root.join("steam")
+            } else {
+                return None;
+            }
+        }
+    };
 
-    if !steam_exe.exists() {
+    if !steam_exe.exists() && !root.join("config").join("loginusers.vdf").exists() {
         return None;
     }
 
