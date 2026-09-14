@@ -42,7 +42,9 @@ function formatTimeWithOptions(date: Date, format: ConsoleTimeFormat, showSecond
       return "";
   }
 
-  return new Intl.DateTimeFormat(navigator.language || "en-US", opts).format(date);
+  const rawLang = navigator.language || "en-US";
+  const safeLang = /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,})*$/.test(rawLang) ? rawLang : "en-US";
+  return new Intl.DateTimeFormat(safeLang, opts).format(date);
 }
 
 function useClock(format: ConsoleTimeFormat, showSeconds: boolean): string {
