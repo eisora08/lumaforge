@@ -5,7 +5,7 @@
 **Open-source desktop game library with Steam, Epic, emulators, Lua extensions, debrid/torrents & more.**
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/version-1.2.2-purple)
+![Version](https://img.shields.io/badge/version-1.2.3-purple)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)
 ![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri)

@@ -5,6 +5,23 @@ All notable changes to LumaForge will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] — Released
+
+### Added
+- **SQLite media health persistence**: Artwork download state (404 errors, no-source-url, repair attempts) now persists across restarts via SQLite `media_health` table.
+- **Persistent download cooldowns**: HTTP 404 errors trigger a 7-day cooldown that survives app restarts (stored in SQLite).
+- **Steam account auto-conversion**: SteamId64 is automatically converted to SteamAccountId (32-bit) in Settings and Wizard.
+- **Artwork fade-in animation**: Game tiles now have a smooth fade-in when artwork loads.
+
+### Fixed
+- **Achievement watcher now works in production**: `steamAccountId` is now optional, allowing the watcher to run without it configured.
+- **Artwork progress card during scan**: The mini progress card no longer shows during the idle-bulk scan phase — only appears when artwork is actually being downloaded.
+
+### Changed
+- **idle-bulk scan is silent**: No more false-positive progress cards during the artwork scanning loop.
+
+---
+
 ## [1.2.2] — Released
 
 ### Fixed
