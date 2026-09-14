@@ -129,6 +129,7 @@ pub async fn power_restart() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String> {
     use windows::{
@@ -143,7 +144,6 @@ pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String>
     };
 
     unsafe {
-    
         CoInitializeEx(None, COINIT_APARTMENTTHREADED)
             .ok()
             .map_err(|e| format!("COM init failed: {:?}", e))?;
@@ -157,12 +157,10 @@ pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String>
             }
         };
 
-  
         if !Path::new(&exe_path).exists() {
             CoUninitialize();
             return Err(format!("Invalid executable path: {}", exe_path));
         }
-
 
         if let Err(e) = shell_link.SetPath(&HSTRING::from(&exe_path)) {
             CoUninitialize();
@@ -178,7 +176,6 @@ pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String>
             }
         }
 
-
         let user = std::env::var("USERPROFILE").map_err(|_| "USERPROFILE not found")?;
 
         let one_drive_desktop = PathBuf::from(&user).join("OneDrive").join("Desktop");
@@ -189,14 +186,12 @@ pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String>
             PathBuf::from(user).join("Desktop")
         };
 
-
         if !desktop.exists() {
             std::fs::create_dir_all(&desktop)
                 .map_err(|e| format!("Failed to create desktop dir: {}", e))?;
         }
 
         let shortcut_path = desktop.join(format!("{}.lnk", name));
-
 
         let persist: IPersistFile = match shell_link.cast() {
             Ok(p) => p,
@@ -206,7 +201,6 @@ pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String>
             }
         };
 
-  
         if let Err(e) = persist.Save(
             &HSTRING::from(shortcut_path.to_string_lossy().to_string()),
             true,
@@ -215,9 +209,29 @@ pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String>
             return Err(format!("Save failed: {:?}", e));
         }
 
-
         CoUninitialize();
 
         Ok(shortcut_path.to_string_lossy().to_string())
     }
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn create_shortcut(exe_path: String, name: String) -> Result<String, String> {
+    let desktop_dir = dirs::home_dir()
+        .ok_or("No home directory found")?
+        .join(".local/share/applications");
+    std::fs::create_dir_all(&desktop_dir)
+        .map_err(|e| format!("Failed to create applications dir: {}", e))?;
+
+    let content = format!(
+        "[Desktop Entry]\nType=Application\nName={}\nExec={}\nTerminal=false\n",
+        name, exe_path
+    );
+
+    let shortcut_path = desktop_dir.join(format!("{}.desktop", name));
+    std::fs::write(&shortcut_path, &content)
+        .map_err(|e| format!("Failed to write .desktop file: {}", e))?;
+
+    Ok(shortcut_path.to_string_lossy().to_string())
 }

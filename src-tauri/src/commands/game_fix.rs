@@ -1226,6 +1226,7 @@ enum RarExtractor {
     SevenZip(String),
 }
 
+#[cfg(windows)]
 fn find_winrar_path() -> Option<String> {
     use winreg::enums::HKEY_LOCAL_MACHINE;
     use winreg::RegKey;
@@ -1250,6 +1251,11 @@ fn find_winrar_path() -> Option<String> {
         }
     }
 
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn find_winrar_path() -> Option<String> {
     None
 }
 

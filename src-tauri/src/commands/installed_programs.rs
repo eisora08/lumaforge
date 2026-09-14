@@ -2,7 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(windows)]
 use winreg::enums::*;
+#[cfg(windows)]
 use winreg::RegKey;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +18,7 @@ pub struct InstalledProgram {
     pub estimated_size_kb: Option<u32>,
 }
 
+#[cfg(windows)]
 const REGISTRY_UNINSTALL_PATHS: &[(&str, bool)] = &[
     // (path, is_hkcu)
     (
@@ -200,4 +204,10 @@ pub fn scan_installed_programs() -> Result<Vec<InstalledProgram>, String> {
     results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     Ok(results)
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn scan_installed_programs() -> Result<Vec<InstalledProgram>, String> {
+    Ok(Vec::new())
 }

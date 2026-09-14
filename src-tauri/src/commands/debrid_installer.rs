@@ -9,7 +9,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::commands::process::hide_window;
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
 use winreg::enums::*;
+#[cfg(windows)]
 use winreg::RegKey;
 
 use tokio::io::AsyncWriteExt;
@@ -3997,6 +3999,7 @@ pub struct RegistryMatch {
 /// Scan Windows Uninstall registry for a game matching the given title.
 /// Checks both 64-bit and 32-bit (WOW6432Node) registry paths.
 /// Returns the best match by confidence, or None if no match found.
+#[cfg(windows)]
 #[tauri::command]
 pub fn detect_install_path_from_registry(game_title: String) -> Result<Option<RegistryMatch>, String> {
     let candidates = [
@@ -4067,6 +4070,12 @@ pub fn detect_install_path_from_registry(game_title: String) -> Result<Option<Re
     }
 
     Ok(best)
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn detect_install_path_from_registry(_game_title: String) -> Result<Option<RegistryMatch>, String> {
+    Ok(None)
 }
 
 #[cfg(test)]
