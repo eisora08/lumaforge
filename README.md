@@ -5,7 +5,7 @@
 **Open-source desktop game library with Steam, Epic, emulators, Lua extensions, debrid/torrents & more.**
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/version-1.2.0-purple)
+![Version](https://img.shields.io/badge/version-1.2.2-purple)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)
 ![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri)
@@ -29,8 +29,6 @@ This software is provided strictly for educational and demonstration purposes. U
 ---
 
 ## Screenshots
-
-> Screenshots coming soon. Drop your images in `docs/screenshots/` to populate this section.
 
 | | |
 |:---:|:---:|
@@ -64,12 +62,6 @@ This software is provided strictly for educational and demonstration purposes. U
 | **Universal Download Manager** | Unified queue for Steam installs, debrid downloads, and torrent transfers with live speed charts |
 | **SQLite-First Storage** | All game data, playtime, achievements, and settings persisted in SQLite with JSON migration |
 | **Auto-Updates** | Built-in updater with signed NSIS installer and automatic update checks |
-
-## Screenshots
-
-<!-- Add screenshots to docs/screenshots/ and reference them here -->
-<!-- ![Library](docs/screenshots/library.png) -->
-<!-- ![Dashboard](docs/screenshots/dashboard.png) -->
 
 ---
 
