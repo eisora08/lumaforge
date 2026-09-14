@@ -46,7 +46,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
     "category": "Game",
     "copyright": "Copyright 2026 LumaForge",
     "shortDescription": "Gestor de juegos open-source con soporte Steam, Lua, Epic, Debrid y mas",
@@ -55,6 +55,7 @@
     "publisher": "LumaForge",
     "icon": [
       "icons/32x32.png",
+      "icons/64x64.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
@@ -86,6 +87,15 @@
         "installerIcon": "icons/icon.ico",
         "startMenuFolder": "LumaForge"
       }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1"],
+        "section": "games"
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
     }
   },
   "plugins": {
@@ -93,6 +103,9 @@
       "endpoints": ["https://github.com/eisora08/lumaforge/releases/latest/download/latest.json"],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJEMzA4Q0Q3OTU4NzZEMgpSV1RTZGxoNXpRalRDOGJ0YzZndkdOTWYwWjVjNThEYmtUNGQ0M3ZDeEErd3kxNTZlY0dBc1RBWQo=",
       "windows": {
+        "installMode": "passive"
+      },
+      "linux": {
         "installMode": "passive"
       }
     }
