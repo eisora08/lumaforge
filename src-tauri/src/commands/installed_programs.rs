@@ -115,6 +115,7 @@ fn find_main_exe_in_dir(dir: &str) -> Option<String> {
 
 /// Scan Windows Uninstall registry for ALL installed programs.
 /// Returns a comprehensive list with name, install path, exe, icon, and size.
+#[cfg(windows)]
 #[tauri::command]
 pub fn scan_installed_programs() -> Result<Vec<InstalledProgram>, String> {
     let mut results: Vec<InstalledProgram> = Vec::new();

@@ -739,6 +739,7 @@ pub fn pick_folder(
   }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn focus_game_window(pid: u32) -> Result<(), String> {
     unsafe {
@@ -813,4 +814,27 @@ unsafe extern "system" fn enum_window_callback(
         }
     }
     TRUE
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn focus_game_window(pid: u32) -> Result<(), String> {
+    let output = std::process::Command::new("xdotool")
+        .args(["search", "--pid", &pid.to_string()])
+        .output();
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            if let Some(win_id) = stdout.lines().next() {
+                let win_id = win_id.trim();
+                if !win_id.is_empty() {
+                    let _ = std::process::Command::new("xdotool")
+                        .args(["windowactivate", win_id])
+                        .output();
+                }
+            }
+            Ok(())
+        }
+        Err(e) => Err(format!("xdotool not available: {}", e)),
+    }
 }

@@ -3275,10 +3275,6 @@ fn find_in_path(exe_name: &str) -> Option<PathBuf> {
 ///   c. Copy with rollback to the final destination
 /// Returns `Ok(())` on the first successful extraction.
 pub(crate) fn extract_rar_with_cli(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
-    #[cfg(windows)]
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // FitGirl and many repack groups use "1234" as the archive password
     const RAR_PASSWORD: &str = "1234";
 
@@ -3308,33 +3304,33 @@ pub(crate) fn extract_rar_with_cli(rar_path: &Path, dest_dir: &Path) -> Result<(
         // Build the CLI command
         let output = match tool {
             RarCliTool::UnRar(_) => {
-                Command::new(exe)
-                    .arg("x")        // extract with full paths
+                let mut cmd = Command::new(exe);
+                cmd.arg("x")        // extract with full paths
                     .arg(format!("-p{}", RAR_PASSWORD))
                     .arg("-y")       // assume yes
                     .arg(rar_path)
-                    .arg(&extract_root)  // destination
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
+                    .arg(&extract_root);  // destination
+                hide_window(&mut cmd);
+                cmd.output()
             }
             RarCliTool::SevenZip(_) => {
-                Command::new(exe)
-                    .arg("x")
+                let mut cmd = Command::new(exe);
+                cmd.arg("x")
                     .arg(format!("-p{}", RAR_PASSWORD))
                     .arg(format!("-o{}", extract_root.display()))
                     .arg("-y")
-                    .arg(rar_path)
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
+                    .arg(rar_path);
+                hide_window(&mut cmd);
+                cmd.output()
             }
             RarCliTool::Unar(_) => {
-                Command::new(exe)
-                    .arg(format!("-p{}", RAR_PASSWORD))
+                let mut cmd = Command::new(exe);
+                cmd.arg(format!("-p{}", RAR_PASSWORD))
                     .arg("-o")
                     .arg(&extract_root)
-                    .arg(rar_path)
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
+                    .arg(rar_path);
+                hide_window(&mut cmd);
+                cmd.output()
             }
         };
 
@@ -3474,14 +3470,9 @@ pub(crate) fn extract_7z_native(zip_path: &Path, dest_dir: &Path) -> Result<(), 
 /// Fallback: extract a RAR archive via `7z.exe` (7-Zip CLI) with the CMD window hidden.
 ///
 /// Only called when `extract_rar_with_unrar` fails.
-/// Uses `CREATE_NO_WINDOW` so the console flash doesn't appear.
 pub(crate) fn extract_rar_via_7z(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
-    #[cfg(windows)]
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
     let candidates = [
+        "7z",
         r#"C:\Program Files\7-Zip\7z.exe"#,
         r#"C:\Program Files (x86)\7-Zip\7z.exe"#,
         "7z.exe",
@@ -3489,19 +3480,31 @@ pub(crate) fn extract_rar_via_7z(rar_path: &Path, dest_dir: &Path) -> Result<(),
 
     let seven_zip = candidates
         .iter()
-        .find(|p| Path::new(p).is_file())
+        .find(|p| {
+            if p.contains('/') || p.contains('\\') {
+                Path::new(p).is_file()
+            } else {
+                std::process::Command::new(p)
+                    .arg("--help")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok()
+            }
+        })
         .ok_or_else(|| {
             "7-Zip not found. Install 7-Zip (https://7-zip.org) to extract RAR archives automatically."
                 .to_string()
         })?;
 
-    let output = Command::new(seven_zip)
-        .arg("x")
+    let mut cmd = Command::new(seven_zip);
+    cmd.arg("x")
         .arg(rar_path)
         .arg(format!("-o{}", dest_dir.display()))
-        .arg("-y")
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .arg("-y");
+    hide_window(&mut cmd);
+
+    let output = cmd.output()
         .map_err(|e| format!("Failed to launch 7-Zip: {}", e))?;
 
     if output.status.success() {

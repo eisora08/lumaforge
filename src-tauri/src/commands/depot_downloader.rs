@@ -122,9 +122,9 @@ fn kill_by_job_id(job_id: &str) -> bool {
     // Kill on Unix
     #[cfg(not(target_os = "windows"))]
     {
-        unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
-        }
+        let _ = std::process::Command::new("kill")
+            .args(["-15", &pid.to_string()])
+            .output();
     }
 
     true
