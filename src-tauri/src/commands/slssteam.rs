@@ -56,10 +56,10 @@ pub fn find_steam_install() -> Option<String> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(key) = winreg::OpenKey::with_predef(
-            winreg::HKEY_CURRENT_USER,
-            r"Software\Valve\Steam",
-        ) {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(key) = hcu.open_subkey(r"Software\Valve\Steam") {
             if let Ok(val) = key.get_value::<String, _>("SteamPath") {
                 return Some(std::path::Path::new(&val)
                     .to_string_lossy()

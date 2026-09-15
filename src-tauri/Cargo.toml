@@ -84,9 +84,3 @@ winapi = { version = "0.3", features = ["shellapi", "winuser", "processthreadsap
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk-nvidia-quirk = "2"
 
-# Patch: tao 0.35.3 panics on transparent windows (CursorIgnoreEvents unwrap)
-# https://github.com/tauri-apps/tao/issues/1178
-# Remove when tao releases a fix.
-[patch.crates-io]
-tao = { path = "../patches/tao" }
-
