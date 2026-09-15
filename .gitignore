@@ -32,10 +32,10 @@ pnpm-debug.log*
 # OpenCode (AI tool — dev artifacts, not project code)
 .opencode/
 opencode.json
-AGENTS.md
 
 # Scripts (contains signing key path)
-scripts/
+scripts/*
+!scripts/depotdownloadermod-linux-build.yml
 
 # OS / Editor
 .DS_Store
