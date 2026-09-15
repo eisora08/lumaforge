@@ -229,7 +229,7 @@ async function handleDepotDownloadComplete(job: DownloadJob): Promise<void> {
       }
       if (depotsMap.length > 0) {
         try {
-          const moved = await steamLibraryMoveManifests(installDir, targetLib.path, depotsMap);
+          const moved = await steamLibraryMoveManifests(installDir, targetLib.path, depotsMap, numericAppId);
           console.log(`[DepotComplete] Moved ${moved} manifest(s) to depotcache`);
         } catch (err) {
           console.warn("[DepotComplete] Failed to move manifests to depotcache:", err);

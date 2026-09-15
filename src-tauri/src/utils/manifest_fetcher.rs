@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use flate2::read::DeflateDecoder;
@@ -9,6 +9,7 @@ use regex::Regex;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use tauri::AppHandle;
+use tauri::Manager;
 
 use crate::utils::manifest_parser;
 
@@ -22,6 +23,8 @@ const GITHUB_REPO: &str = "ManifestHub3";
 const API_TIMEOUT_SECS: u64 = 30;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 120;
 const MAX_DECOMPRESS_BYTES: u64 = 512 * 1024 * 1024; // 512 MB safety limit
+
+const BACKUP_DIR_NAME: &str = "manifest-backup";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,6 +67,14 @@ pub fn fetch_manifests_for_game(
     depot_ids: &[u64],
     pics_gids: &HashMap<u64, String>,
 ) -> Result<Vec<FetchedManifest>, String> {
+    // 1. Try local backup first (silent, no network)
+    if let Ok(Some(local)) = try_restore_from_backup(app_handle, app_id, depot_ids) {
+        if !local.is_empty() {
+            return Ok(local);
+        }
+    }
+
+    // 2. Fetch from ManifestHub3
     let client = build_client()?;
     let branch_files = get_branch_files(&client, app_id)?;
 
@@ -93,6 +104,7 @@ pub fn fetch_manifests_for_game(
         if let Some(ref bytes) = get_manifest_bytes(&client, app_id, manifest) {
             if let Ok(path) = save_manifest_to_depotcache(app_handle, manifest.depot_id, &manifest.manifest_gid, bytes) {
                 manifest.placed_path = Some(path);
+                backup_manifest(app_handle, app_id, manifest.depot_id, &manifest.manifest_gid);
             }
         }
     }
@@ -301,7 +313,7 @@ pub fn try_prepare_manifest(raw: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-/// Save manifest bytes to Steam's depotcache directory.
+/// Save manifest bytes to Steam's depotcache directory and LumaForge backup.
 pub fn save_manifest_to_depotcache(
     app_handle: &AppHandle,
     depot_id: u64,
@@ -323,6 +335,93 @@ pub fn save_manifest_to_depotcache(
         .map_err(|e| format!("Failed to write manifest: {e}"))?;
 
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// Backup a manifest file to LumaForge's backup directory.
+/// Called after writing to depotcache. Silent, no error propagation.
+pub fn backup_manifest(
+    app_handle: &AppHandle,
+    app_id: u64,
+    depot_id: u64,
+    manifest_gid: &str,
+) {
+    let Ok(app_data) = app_handle.path().app_data_dir() else { return };
+    let backup_dir = app_data.join(BACKUP_DIR_NAME).join(app_id.to_string());
+    let _ = std::fs::create_dir_all(&backup_dir);
+
+    let filename = format!("{}_{}.manifest", depot_id, manifest_gid);
+    let paths = match crate::utils::path_utils::detect_steam_paths() {
+        Some(p) => p,
+        None => return,
+    };
+    let source = Path::new(&paths.depotcache_path).join(&filename);
+    if source.exists() {
+        let _ = std::fs::copy(&source, backup_dir.join(&filename));
+    }
+}
+
+/// Try to restore manifests from local backup (no network needed).
+/// Returns Some(results) if any manifests were found and restored.
+fn try_restore_from_backup(
+    app_handle: &AppHandle,
+    app_id: u64,
+    depot_ids: &[u64],
+) -> Result<Option<Vec<FetchedManifest>>, String> {
+    let app_data = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot get app data dir: {e}"))?;
+
+    let backup_dir = app_data.join(BACKUP_DIR_NAME).join(app_id.to_string());
+    if !backup_dir.exists() {
+        return Ok(None);
+    }
+
+    let paths = crate::utils::path_utils::detect_steam_paths()
+        .ok_or("Steam installation not found")?;
+    let depotcache = Path::new(&paths.depotcache_path);
+
+    let mut results = Vec::new();
+
+    for &depot_id in depot_ids {
+        // Scan backup dir for files matching this depot_id
+        if let Ok(entries) = std::fs::read_dir(&backup_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !name.ends_with(".manifest") {
+                    continue;
+                }
+                // Parse depot_id from filename: {depot_id}_{gid}.manifest
+                let stem = name.strip_suffix(".manifest").unwrap_or(&name);
+                let parts: Vec<&str> = stem.splitn(2, '_').collect();
+                if parts.len() != 2 {
+                    continue;
+                }
+                if let Ok(file_depot_id) = parts[0].parse::<u64>() {
+                    if file_depot_id == depot_id {
+                        let gid = parts[1].to_string();
+                        // Copy to depotcache if not already there
+                        let dest = depotcache.join(&name);
+                        if !dest.exists() {
+                            let _ = std::fs::copy(entry.path(), &dest);
+                        }
+                        results.push(FetchedManifest {
+                            depot_id,
+                            manifest_gid: gid,
+                            is_latest: true,
+                            placed_path: Some(dest.to_string_lossy().to_string()),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(results))
+    }
 }
 
 // ---------------------------------------------------------------------------

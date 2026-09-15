@@ -62,7 +62,12 @@ pub fn add_additional_app(app_id: &str, comment: &str) -> Result<bool, String> {
         return Ok(true);
     }
 
-    let content = read_config(&path)?;
+    let mut content = read_config(&path)?;
+
+    // Fix any corrupted YAML (e.g. inline first entries) before processing
+    if normalize_config().unwrap_or(false) {
+        content = read_config(&path)?;
+    }
 
     // Check if already present
     let existing = Regex::new(&format!(
@@ -485,4 +490,67 @@ pub fn get_additional_apps() -> Result<Vec<String>, String> {
 /// Ensure the API setting is enabled in config.
 pub fn ensure_api_enabled() -> Result<bool, String> {
     update_yaml_boolean("API", true)
+}
+
+// ---------------------------------------------------------------------------
+// Config normalization
+// ---------------------------------------------------------------------------
+
+/// Fix `SectionName:  - VALUE` → `SectionName:\n  - VALUE`.
+/// This is the most common YAML corruption: the first list entry ends up on the
+/// same line as the key, which yaml-cpp rejects with "sequence entries are not
+/// allowed here", causing the entire config to fail to load.
+fn fix_inline_first_entry(content: &str, section_name: &str) -> String {
+    // Step 1: Fix "SectionName:  - VALUE" → "SectionName:\n  - VALUE"
+    // Group 1 captures only key+colon; whitespace+dash discarded.
+    let re_inline = match Regex::new(&format!(
+        r"(?m)^({}:)[ \t]+- ",
+        regex::escape(section_name)
+    )) {
+        Ok(r) => r,
+        Err(_) => return content.to_string(),
+    };
+    let result = re_inline.replace_all(content, "$1\n  - ");
+
+    // Step 2: Clean up trailing whitespace on key-only lines like "SectionName:    \n"
+    // that were left by a previous fix or manual editing.
+    let re_trailing = match Regex::new(&format!(
+        r"(?m)^({}):[ \t]+$",
+        regex::escape(section_name)
+    )) {
+        Ok(r) => r,
+        Err(_) => return result.to_string(),
+    };
+    re_trailing.replace_all(&result, "$1:").to_string()
+}
+
+/// Normalize the SLSsteam config.yaml to ensure valid YAML syntax.
+/// Returns the fixed content (may be identical to input if already valid).
+/// Also returns whether any changes were made.
+pub fn normalize_config() -> Result<bool, String> {
+    let path = get_config_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = read_config(&path)?;
+    let mut fixed = content.clone();
+
+    // Fix inline first entries for all list-type sections
+    for section in &[
+        "AdditionalApps",
+        "AppIds",
+        "FakeOffline",
+        "DepotBlacklist",
+        "ManifestIds",
+    ] {
+        fixed = fix_inline_first_entry(&fixed, section);
+    }
+
+    if fixed == content {
+        return Ok(false);
+    }
+
+    atomic_write(&path, &fixed)?;
+    Ok(true)
 }

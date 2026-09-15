@@ -5275,11 +5275,13 @@ export async function steamLibraryMoveManifests(
   sourceDir: string,
   libraryPath: string,
   depots: [number, string][],
+  appId?: number,
 ): Promise<number> {
   return await invoke<number>("steam_library_move_manifests", {
     sourceDir,
     libraryPath,
     depots,
+    appId,
   });
 }
 

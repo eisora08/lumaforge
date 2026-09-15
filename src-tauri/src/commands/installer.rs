@@ -1,6 +1,9 @@
 use std::collections::HashMap;
+use std::path::Path;
 
+use regex::Regex;
 use tauri::AppHandle;
+use tauri::Manager;
 
 use crate::models::install_result::InstallResult;
 use crate::utils::progress_utils::emit_installer_progress;
@@ -81,6 +84,11 @@ pub async fn download_and_install_package(
         create_backups,
     )?;
 
+    // Backup manifests to LumaForge backup dir
+    if let Some(app_id) = extract_app_id_from_url(&download_url) {
+        backup_extracted_manifests(&extracted_folder, &app_handle, app_id);
+    }
+
     emit_installer_progress(
         &app_handle,
         &job_id,
@@ -105,4 +113,47 @@ pub async fn download_and_install_package(
             counts.backups_created
         ),
     })
+}
+
+// ---------------------------------------------------------------------------
+// Manifest backup helpers
+// ---------------------------------------------------------------------------
+
+/// Extract appId from download URL.
+/// HubCap: https://hubcapmanifest.com/api/v1/manifest/480 → Some(480)
+/// Ryuu: https://generator.ryuu.lol/api/download/480 → Some(480)
+fn extract_app_id_from_url(url: &str) -> Option<u64> {
+    let re = Regex::new(r"/(\d+)(?:\?|$|#)").ok()?;
+    let caps = re.captures(url)?;
+    caps.get(1)?.as_str().parse().ok()
+}
+
+/// Copy all .manifest files from extracted folder to LumaForge backup dir.
+fn backup_extracted_manifests(
+    extracted_folder: &Path,
+    app_handle: &AppHandle,
+    app_id: u64,
+) {
+    let Ok(app_data) = app_handle.path().app_data_dir() else {
+        return;
+    };
+    let backup_dir = app_data.join("manifest-backup").join(app_id.to_string());
+    let _ = std::fs::create_dir_all(&backup_dir);
+
+    for entry in walkdir::WalkDir::new(extracted_folder)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                == Some("manifest")
+        {
+            if let Some(name) = path.file_name() {
+                let _ = std::fs::copy(path, backup_dir.join(name));
+            }
+        }
+    }
 }

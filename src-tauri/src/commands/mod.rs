@@ -64,3 +64,4 @@ pub mod cloud;
 pub mod slssteam;
 pub mod steam_acf;
 pub mod steam_library;
+pub mod manifest_watcher;

@@ -4,6 +4,7 @@ mod models;
 mod utils;
 
 use commands::achievement_watcher::{AchievementWatcher, AchievementWatcherState};
+use commands::manifest_watcher::{ManifestWatcher, ManifestWatcherState};
 use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -190,6 +191,9 @@ pub fn run() {
 
             // ── Achievement file watcher state ─────────────────────────────
             app.manage(AchievementWatcherState(Mutex::new(AchievementWatcher::new())));
+
+            // ── Manifest backup watcher state ────────────────────────────
+            app.manage(ManifestWatcherState(Mutex::new(ManifestWatcher::new())));
 
             // ── SQLite cache databases ─────────────────────────────────────
             {
@@ -497,6 +501,9 @@ pub fn run() {
             commands::achievement_watcher::stop_achievement_watcher,
             commands::achievement_watcher::get_achievement_watcher_status,
             commands::achievement_watcher::list_librarycache_appids,
+            commands::manifest_watcher::start_manifest_watcher,
+            commands::manifest_watcher::stop_manifest_watcher,
+            commands::manifest_watcher::get_manifest_watcher_status,
             commands::game::scan_local_games,
             commands::game::scan_local_game_folders,
             commands::process::launch_executable,

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use tauri::Manager;
+
 use crate::utils::path_utils;
 
 // ---------------------------------------------------------------------------
@@ -98,6 +100,32 @@ pub fn move_manifests_to_depotcache(
     }
 
     Ok(moved_count)
+}
+
+/// Move manifests and backup copies to LumaForge backup dir.
+pub fn move_manifests_to_depotcache_with_backup(
+    app_handle: &tauri::AppHandle,
+    app_id: u64,
+    source_dir: &str,
+    library_path: &str,
+    depots: &[(u64, String)],
+) -> Result<u32, String> {
+    let count = move_manifests_to_depotcache(source_dir, library_path, depots)?;
+
+    // Backup copies
+    if let Ok(app_data) = app_handle.path().app_data_dir() {
+        let backup_dir = app_data.join("manifest-backup").join(app_id.to_string());
+        let _ = fs::create_dir_all(&backup_dir);
+        for (depot_id, manifest_gid) in depots {
+            let filename = format!("{}_{}.manifest", depot_id, manifest_gid);
+            let source = Path::new(source_dir).join(&filename);
+            if source.exists() {
+                let _ = fs::copy(&source, backup_dir.join(&filename));
+            }
+        }
+    }
+
+    Ok(count)
 }
 
 /// Update libraryfolders.vdf to include an app in this library.
@@ -232,11 +260,17 @@ pub async fn steam_library_install_game(
 
 #[tauri::command]
 pub async fn steam_library_move_manifests(
+    app_handle: tauri::AppHandle,
     source_dir: String,
     library_path: String,
     depots: Vec<(u64, String)>,
+    app_id: Option<u64>,
 ) -> Result<u32, String> {
-    move_manifests_to_depotcache(&source_dir, &library_path, &depots)
+    if let Some(id) = app_id {
+        move_manifests_to_depotcache_with_backup(&app_handle, id, &source_dir, &library_path, &depots)
+    } else {
+        move_manifests_to_depotcache(&source_dir, &library_path, &depots)
+    }
 }
 
 #[tauri::command]
