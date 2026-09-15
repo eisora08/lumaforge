@@ -4,6 +4,7 @@ mod models;
 mod utils;
 
 use commands::achievement_watcher::{AchievementWatcher, AchievementWatcherState};
+use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 use tauri::Emitter;
 use tauri::Listener;
@@ -131,6 +132,27 @@ fn default_window_mode() -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Custom panic hook: log the full panic before abort (glib can't unwind panics)
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Box<dyn Any>".to_string()
+        };
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        eprintln!("[PANIC] thread '{}': {} at {}", thread_name, payload, location);
+        // Call the default hook to also print the backtrace
+        default_hook(info);
+    }));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -152,7 +174,16 @@ pub fn run() {
         })
         .setup(|app| {
             // ── Single-instance lock ──────────────────────────────────────
-            let startup_cfg = read_startup_config(app.handle());
+            let startup_cfg = {
+                let app = app.handle().clone();
+                match std::panic::catch_unwind(AssertUnwindSafe(|| read_startup_config(&app))) {
+                    Ok(cfg) => cfg,
+                    Err(_) => {
+                        eprintln!("[Boot] Panic reading startup config, using defaults");
+                        StartupConfig::default()
+                    }
+                }
+            };
 
             // ── Epic Auth: global AppHandle for token path resolution ────
             commands::epic_auth::init_app_handle(app.handle().clone());
@@ -161,9 +192,26 @@ pub fn run() {
             app.manage(AchievementWatcherState(Mutex::new(AchievementWatcher::new())));
 
             // ── SQLite cache databases ─────────────────────────────────────
-            app.manage(commands::sqlite_cache::initialize_core_sqlite(app.handle()));
-            app.manage(commands::sqlite_cache::initialize_achievements_sqlite(app.handle()));
-            app.manage(commands::sqlite_cache::initialize_store_sqlite(app.handle()));
+            {
+                let handle = app.handle().clone();
+                match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    (
+                        commands::sqlite_cache::initialize_core_sqlite(&handle),
+                        commands::sqlite_cache::initialize_achievements_sqlite(&handle),
+                        commands::sqlite_cache::initialize_store_sqlite(&handle),
+                    )
+                })) {
+                    Ok((core, achievements, store)) => {
+                        app.manage(core);
+                        app.manage(achievements);
+                        app.manage(store);
+                    }
+                    Err(_) => {
+                        eprintln!("[Boot] PANIC initializing SQLite — aborting");
+                        std::process::exit(1);
+                    }
+                }
+            }
 
             // ── Close-to-tray: system tray icon + context menu + intercept close ──
             if startup_cfg.close_to_tray {
@@ -176,8 +224,27 @@ pub fn run() {
                 let initial_menu = build_tray_menu(&handle_for_menu, is_console);
 
                 let handle_clone = app.handle().clone();
+                let icon = match app.default_window_icon().cloned() {
+                    Some(icon) => icon,
+                    None => {
+                        eprintln!("[Boot] No default window icon found — skipping tray");
+                        // Skip tray icon creation entirely
+                        if let Some(main) = app.get_webview_window("main") {
+                            let main_clone = main.clone();
+                            let handle_emit = app.handle().clone();
+                            main.on_window_event(move |event| {
+                                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                                    api.prevent_close();
+                                    let _ = main_clone.hide();
+                                    let _ = handle_emit.emit("lumaforge-minimized-to-tray", ());
+                                }
+                            });
+                        }
+                        return Ok(());
+                    }
+                };
                 let mut tray = TrayIconBuilder::with_id("lumaforge-tray")
-                    .icon(app.default_window_icon().cloned().expect("no icon in app bundle"))
+                    .icon(icon)
                     .tooltip("LumaForge — click to restore");
 
                 // Only attach menu if it built successfully
@@ -829,6 +896,26 @@ pub fn run() {
             commands::depot_downloader::depot_downloader_status,
             commands::depot_downloader::depot_downloader_default_output_dir,
             commands::depot_downloader::depot_downloader_parse_lua_manifests,
+            commands::slssteam::slssteam_status,
+            commands::slssteam::slssteam_kill_steam,
+            commands::slssteam::slssteam_start_steam,
+            commands::slssteam::slssteam_api_send,
+            commands::slssteam::slssteam_patch_steam_sh,
+            commands::slssteam::slssteam_full_setup,
+            commands::slssteam::slssteam_config_add_additional_app,
+            commands::slssteam::slssteam_config_remove_additional_app,
+            commands::slssteam::slssteam_config_add_app_token,
+            commands::slssteam::slssteam_config_add_fake_app_id,
+            commands::slssteam::slssteam_config_remove_fake_app_id,
+            commands::slssteam::slssteam_config_is_in_additional_apps,
+            commands::slssteam::slssteam_config_get_additional_apps,
+            commands::slssteam::slssteam_config_fix_indentation,
+            commands::steam_acf::steam_acf_create,
+            commands::steam_library::steam_library_install_game,
+            commands::steam_library::steam_library_move_manifests,
+            commands::steam_library::steam_library_update_vdf,
+            commands::steam_library::steam_library_detect,
+            commands::steam_library::steam_library_ensure_structure,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

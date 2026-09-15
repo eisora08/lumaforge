@@ -41,3 +41,5 @@ scripts/
 .DS_Store
 Thumbs.db
 .vscode/
+# Patched tao (local vendor-patch for tao#1178)
+patches/

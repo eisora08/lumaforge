@@ -5135,6 +5135,161 @@ export async function depotDownloaderParseLuaManifests(appId: number): Promise<R
   return await invoke<Record<string, string>>("depot_downloader_parse_lua_manifests", { appId });
 }
 
+// ── SLS Steam ────────────────────────────────────────────────────────────
+
+export interface SLSSteamStatus {
+  installed: boolean;
+  slssteamSoPath?: string;
+  libraryInjectSoPath?: string;
+  configExists: boolean;
+  steamPath?: string;
+  steamInstallType?: string;
+}
+
+export interface SteamLaunchResult {
+  success: boolean;
+  message: string;
+}
+
+export async function slssteamStatus(): Promise<SLSSteamStatus> {
+  return await invoke<SLSSteamStatus>("slssteam_status");
+}
+
+export async function slssteamKillSteam(): Promise<boolean> {
+  return await invoke<boolean>("slssteam_kill_steam");
+}
+
+export async function slssteamStartSteam(): Promise<SteamLaunchResult> {
+  return await invoke<SteamLaunchResult>("slssteam_start_steam");
+}
+
+export async function slssteamApiSend(command: string): Promise<boolean> {
+  return await invoke<boolean>("slssteam_api_send", { command });
+}
+
+export async function slssteamPatchSteamSh(): Promise<boolean> {
+  return await invoke<boolean>("slssteam_patch_steam_sh");
+}
+
+export async function slssteamFullSetup(): Promise<string> {
+  return await invoke<string>("slssteam_full_setup");
+}
+
+export async function slssteamConfigAddAdditionalApp(appId: string, comment?: string): Promise<boolean> {
+  return await invoke<boolean>("slssteam_config_add_additional_app", { appId, comment });
+}
+
+export async function slssteamConfigRemoveAdditionalApp(appId: string): Promise<boolean> {
+  return await invoke<boolean>("slssteam_config_remove_additional_app", { appId });
+}
+
+export async function slssteamConfigAddAppToken(appId: string, token: string): Promise<boolean> {
+  return await invoke<boolean>("slssteam_config_add_app_token", { appId, token });
+}
+
+export async function slssteamConfigAddFakeAppId(appId: string, fakeAppid?: string, comment?: string): Promise<boolean> {
+  return await invoke<boolean>("slssteam_config_add_fake_app_id", { appId, fakeAppid, comment });
+}
+
+export async function slssteamConfigRemoveFakeAppId(appId: string, fakeAppid?: string): Promise<boolean> {
+  return await invoke<boolean>("slssteam_config_remove_fake_app_id", { appId, fakeAppid });
+}
+
+export async function slssteamConfigIsInAdditionalApps(appId: string): Promise<boolean> {
+  return await invoke<boolean>("slssteam_config_is_in_additional_apps", { appId });
+}
+
+export async function slssteamConfigGetAdditionalApps(): Promise<string[]> {
+  return await invoke<string[]>("slssteam_config_get_additional_apps");
+}
+
+export async function slssteamConfigFixIndentation(): Promise<boolean> {
+  return await invoke<boolean>("slssteam_config_fix_indentation");
+}
+
+// ── Steam ACF ──────────────────────────────────────────────────────────────
+
+export interface DepotInfo {
+  depot_id: number;
+  manifest_gid: string;
+  size: number;
+  os?: string;
+}
+
+export async function steamAcfCreate(
+  libraryPath: string,
+  appId: number,
+  gameName: string,
+  installdir: string,
+  buildid: string,
+  sizeOnDisk: number,
+  depots: DepotInfo[],
+  isProtonGame: boolean,
+): Promise<string> {
+  return await invoke<string>("steam_acf_create", {
+    libraryPath,
+    appId,
+    gameName,
+    installdir,
+    buildid,
+    sizeOnDisk,
+    depots,
+    isProtonGame,
+  });
+}
+
+// ── Steam Library ──────────────────────────────────────────────────────────
+
+export interface SteamLibraryInfo {
+  path: string;
+  is_primary: boolean;
+  has_steamapps: boolean;
+  disk_space_available: number;
+}
+
+export async function steamLibraryDetect(): Promise<SteamLibraryInfo[]> {
+  return await invoke<SteamLibraryInfo[]>("steam_library_detect");
+}
+
+export async function steamLibraryEnsureStructure(libraryPath: string): Promise<void> {
+  return await invoke<void>("steam_library_ensure_structure", { libraryPath });
+}
+
+export async function steamLibraryInstallGame(
+  sourceDir: string,
+  libraryPath: string,
+  appId: number,
+  gameName: string,
+  installdir: string,
+): Promise<string> {
+  return await invoke<string>("steam_library_install_game", {
+    sourceDir,
+    libraryPath,
+    appId,
+    gameName,
+    installdir,
+  });
+}
+
+export async function steamLibraryMoveManifests(
+  sourceDir: string,
+  libraryPath: string,
+  depots: [number, string][],
+): Promise<number> {
+  return await invoke<number>("steam_library_move_manifests", {
+    sourceDir,
+    libraryPath,
+    depots,
+  });
+}
+
+export async function steamLibraryUpdateVdf(
+  libraryPath: string,
+  appId: number,
+): Promise<void> {
+  return await invoke<void>("steam_library_update_vdf", { libraryPath, appId });
+}
+
 // ── Tray menu ─────────────────────────────────────────────────────────────
 // Tray menu is rebuilt automatically via Tauri event `lumaforge-mode-changed`.
 // Emit this event from TS when the app mode changes (console ↔ desktop).

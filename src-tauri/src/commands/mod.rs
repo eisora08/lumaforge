@@ -61,3 +61,6 @@ pub mod web_image_search;
 pub mod depot_downloader;
 pub mod steam_keys;
 pub mod cloud;
+pub mod slssteam;
+pub mod steam_acf;
+pub mod steam_library;

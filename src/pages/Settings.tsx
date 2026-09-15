@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 
 import ThirdPartyToolsSection from "../components/settings/ThirdPartyToolsSection";
+import SLSSteamStatusCard from "../components/settings/SLSSteamStatusCard";
 import CloudSyncSection from "../components/settings/CloudSyncSection";
 import { EpicAuthPanel } from "../features/epic/EpicAuthPanel";
 import { setAmbientEnabled, setAmbientIntensity, setAmbientMode, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
@@ -1231,6 +1232,10 @@ export default function Settings({ onSectionChange }: SettingsProps) {
 
                 <div className="mt-6">
                   <ThirdPartyToolsSection />
+                </div>
+
+                <div className="mt-4">
+                  <SLSSteamStatusCard />
                 </div>
 
                 <SettingsSection

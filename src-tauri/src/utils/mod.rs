@@ -15,3 +15,4 @@ pub mod steamcmd_api;
 pub mod cloud_redirect;
 pub mod cloud_config;
 pub mod oauth2;
+pub mod slssteam_config;

@@ -13,6 +13,7 @@ import {
   Code,
   Download,
   Cloud,
+  Gamepad2,
 } from "lucide-react";
 
 import {
@@ -45,6 +46,8 @@ function toolIcon(id: string): React.ReactNode {
       return <Download className="h-5 w-5" />;
     case "cloud_redirect":
       return <Cloud className="h-5 w-5" />;
+    case "slssteam":
+      return <Gamepad2 className="h-5 w-5" />;
     default:
       return <HardDrive className="h-5 w-5" />;
   }

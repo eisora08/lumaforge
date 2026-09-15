@@ -142,10 +142,15 @@ fn get_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn depot_downloader_exe(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_app_data_dir(app_handle)?
+    let base = get_app_data_dir(app_handle)?
         .join("thirdparty")
-        .join("depotdownloader")
-        .join("DepotDownloaderMod.exe"))
+        .join("depotdownloader");
+
+    #[cfg(target_os = "windows")]
+    { Ok(base.join("DepotDownloaderMod.exe")) }
+
+    #[cfg(target_os = "linux")]
+    { Ok(base.join("DepotDownloaderMod")) }
 }
 
 fn staging_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
@@ -653,10 +658,40 @@ pub async fn depot_downloader_start(
     let keys = resolve_keys(&app_handle, job.app_id);
     let keys_file = write_keys_file(&app_handle, &keys)?;
 
-    // Create output directory — always append appId subfolder to keep games separated
-    let output_dir = PathBuf::from(&job.output_dir).join(job.app_id.to_string());
-    std::fs::create_dir_all(&output_dir)
-        .map_err(|e| format!("Failed to create output dir: {e}"))?;
+    // Create output directory
+    // On Linux: download directly to steamapps/common/<game_name> (like ACCELA does)
+    // On Windows: keep the old behavior (appId subfolder)
+    #[cfg(target_os = "linux")]
+    let output_dir = {
+        // Sanitize game name for filesystem (replace special chars with _)
+        let safe_name: String = job
+            .game_name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '.' { c } else { '_' })
+            .collect::<String>()
+            .trim()
+            .replace(' ', "_");
+        let installdir = if safe_name.is_empty() {
+            format!("App_{}", job.app_id)
+        } else {
+            safe_name
+        };
+        let dir = PathBuf::from(&job.output_dir)
+            .join("steamapps")
+            .join("common")
+            .join(&installdir);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create output dir: {e}"))?;
+        dir
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let output_dir = {
+        let dir = PathBuf::from(&job.output_dir).join(job.app_id.to_string());
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create output dir: {e}"))?;
+        dir
+    };
 
     // Acquire serialization gate
     let _permit = run_gate()

@@ -30,6 +30,7 @@ import type { DepotInfo, DepotSelection } from "../../types/download";
 import { showError } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { resolveGameMediaUrl } from "../../services/gameCacheService";
+import SteamLibraryPicker from "../downloads/SteamLibraryPicker";
 
 type Props = {
   open: boolean;
@@ -99,6 +100,8 @@ export default function DepotPickerModal({
     () => new Set(["DLC", "Shared Redistributables"])
   );
   const [resolvedImageUrl, setResolvedImageUrl] = useState<string | null>(null);
+  const [selectedLibraryPath, setSelectedLibraryPath] = useState<string | null>(null);
+  const isLinux = typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("linux");
 
   const fallbackImage = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
 
@@ -530,30 +533,43 @@ export default function DepotPickerModal({
           )}
         </div>
 
-        {/* Fixed Footer: Output Directory + Actions */}
+        {/* Fixed Footer: Output Directory / Steam Library + Actions */}
         {!loading && depots.length > 0 && (
           <div className="shrink-0 border-t border-(--surface-active-border) px-6 py-4">
-            {/* Output Directory */}
-            <div className="mb-3">
-              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-(--color-muted)">
-                {t("store.depot_output_dir", "Output Directory")}
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={outputDir}
-                  onChange={(e) => handleOutputDirChange(e.target.value)}
-                  placeholder="Select output directory..."
-                  className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder:text-white/20 focus:border-(--color-accent)/50 focus:outline-none"
+            {/* Output Directory / Steam Library */}
+            {isLinux ? (
+              <div className="mb-3">
+                <SteamLibraryPicker
+                  selectedPath={selectedLibraryPath}
+                  onSelect={(path) => {
+                    setSelectedLibraryPath(path);
+                    setOutputDir(path);
+                    localStorage.setItem("lumaforge-depot-output-dir", path);
+                  }}
                 />
-                <button
-                  onClick={handlePickFolder}
-                  className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-(--color-muted) transition hover:bg-white/10"
-                >
-                  <FolderOpen size={14} />
-                </button>
               </div>
-            </div>
+            ) : (
+              <div className="mb-3">
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-(--color-muted)">
+                  {t("store.depot_output_dir", "Output Directory")}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={outputDir}
+                    onChange={(e) => handleOutputDirChange(e.target.value)}
+                    placeholder="Select output directory..."
+                    className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-(--color-text) placeholder:text-white/20 focus:border-(--color-accent)/50 focus:outline-none"
+                  />
+                  <button
+                    onClick={handlePickFolder}
+                    className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-(--color-muted) transition hover:bg-white/10"
+                  >
+                    <FolderOpen size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex items-center justify-between">
@@ -573,7 +589,7 @@ export default function DepotPickerModal({
                     onDownloadStart?.(e.currentTarget as HTMLElement);
                     handleDownload();
                   }}
-                  disabled={!outputDir || selectedDepots.size === 0 || downloading}
+                  disabled={(!outputDir && !selectedLibraryPath) || selectedDepots.size === 0 || downloading}
                   className="flex items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-2 text-sm font-bold text-(--color-accent-text) transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {downloading ? (

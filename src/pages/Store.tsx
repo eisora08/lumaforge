@@ -839,8 +839,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           console.error("[Store] Failed to load steamdb.json", err);
         });
     };
-    const idleId = requestIdleCallback(loadCatalog, { timeout: 2000 });
-    return () => { cancelled = true; cancelIdleCallback(idleId); };
+    let idleId: number | undefined;
+    if ("requestIdleCallback" in window) {
+      idleId = (window as any).requestIdleCallback(loadCatalog, { timeout: 2000 });
+    } else {
+      loadCatalog();
+    }
+    return () => { cancelled = true; if (idleId !== undefined) (window as any).cancelIdleCallback?.(idleId); };
   }, [skipCatalogFetch]);
 
   // Restore Store UI state from module-level cache on mount
@@ -2627,8 +2632,9 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // Pre-populate Store image cache for visible app IDs (display-only, no local media index)
   // Re-runs when metadata loads so URLs become available for cached Discover sections.
   // resolveStoreDisplayImage is idempotent — calls for already-cached entries are no-ops.
-  // Defer via requestIdleCallback to avoid blocking the main thread on mount.
-  useEffect(() => {
+    // Defer via requestIdleCallback to avoid blocking the main thread on mount.
+    // WebKitGTK (Linux) doesn't support requestIdleCallback — fallback to immediate.
+    useEffect(() => {
     if (!storeFirstPaintDone) return;
     if (visibleAppIds.length === 0) return;
     if (!_mountedRef.current) return;
@@ -2636,7 +2642,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][IMAGE_CACHE_SEED_SKIP] reason=interaction-busy`);
       return;
     }
-    const rafId = requestIdleCallback(() => {
+    const seedImages = () => {
       if (!_mountedRef.current) return;
       let seeded = 0;
       for (const appIdNum of visibleAppIds) {
@@ -2665,8 +2671,14 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       if (seeded > 0) {
         if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][IMAGE_CACHE_SEED] newlySeeded=${seeded}/${visibleAppIds.length} cacheSize=${getStoreImageCacheSize()}`);
       }
-    }, { timeout: 500 });
-    return () => cancelIdleCallback(rafId);
+    };
+    let rafId: number | undefined;
+    if ("requestIdleCallback" in window) {
+      rafId = (window as any).requestIdleCallback(seedImages, { timeout: 500 });
+    } else {
+      seedImages();
+    }
+    return () => { if (rafId !== undefined) (window as any).cancelIdleCallback?.(rafId); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleAppIdsKey, storeMetadataByAppId]);
 

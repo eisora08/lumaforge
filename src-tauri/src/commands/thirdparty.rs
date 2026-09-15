@@ -64,6 +64,12 @@ struct ToolDef {
     /// fallback. Used by tools like OpenSteamTool where the version is in
     /// the asset name (e.g. `OpenSteamTool-1.4.8-Release.zip`).
     preferred_asset_contains: Option<&'static str>,
+    /// Linux-specific GitHub owner. When set, overrides `github_owner` on Linux.
+    linux_github_owner: Option<&'static str>,
+    /// Linux-specific GitHub repo. When set, overrides `github_repo` on Linux.
+    linux_github_repo: Option<&'static str>,
+    /// Linux-specific preferred asset filename.
+    linux_preferred_asset: Option<&'static str>,
     /// Additional repos to download and extract into the same tool directory.
     /// Used by goldberg_fork which needs gbe_fork_tools for generate_emu_config.exe.
     extra_repos: Option<&'static [ExtraRepo]>,
@@ -78,6 +84,33 @@ struct ToolDef {
     variants: Option<&'static [ToolVariant]>,
 }
 
+impl ToolDef {
+    /// Resolve the effective GitHub owner/repo/asset for the current platform,
+    /// taking variants and Linux overrides into account.
+    fn resolve_github(&self, variant_id: Option<&str>) -> (&str, &str, Option<&str>, Option<&str>) {
+        // 1. Check user-selected variant first
+        if let Some(vid) = variant_id {
+            if let Some(vs) = self.variants {
+                if let Some(v) = vs.iter().find(|v| v.id == vid) {
+                    return (v.github_owner, v.github_repo, v.preferred_asset, v.preferred_asset_contains);
+                }
+            }
+        }
+        // 2. Linux overrides
+        #[cfg(target_os = "linux")]
+        if let Some(owner) = self.linux_github_owner {
+            return (
+                owner,
+                self.linux_github_repo.unwrap_or(self.github_repo),
+                self.linux_preferred_asset,
+                self.preferred_asset_contains,
+            );
+        }
+        // 3. Default
+        (self.github_owner, self.github_repo, self.preferred_asset, self.preferred_asset_contains)
+    }
+}
+
 const TOOL_DEFS: &[ToolDef] = &[
     ToolDef {
         id: "smokeapi",
@@ -87,6 +120,9 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_repo: "SmokeAPI",
         preferred_asset: None,
         preferred_asset_contains: None,
+        linux_github_owner: None,
+        linux_github_repo: None,
+        linux_preferred_asset: None,
         extra_repos: None,
         install_to_steam_root: false,
         steam_dll_names: &[],
@@ -100,6 +136,9 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_repo: "Steamless",
         preferred_asset: None,
         preferred_asset_contains: None,
+        linux_github_owner: None,
+        linux_github_repo: None,
+        linux_preferred_asset: None,
         extra_repos: None,
         install_to_steam_root: false,
         steam_dll_names: &[],
@@ -113,6 +152,9 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_repo: "gbe_fork",
         preferred_asset: Some("emu-win-release.7z"),
         preferred_asset_contains: None,
+        linux_github_owner: None,
+        linux_github_repo: None,
+        linux_preferred_asset: None,
         extra_repos: Some(&[ExtraRepo {
             owner: "Detanup01",
             repo: "gbe_fork_tools",
@@ -130,6 +172,9 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_repo: "OpenSteamTool",
         preferred_asset: None,
         preferred_asset_contains: Some("Release"),
+        linux_github_owner: None,
+        linux_github_repo: None,
+        linux_preferred_asset: None,
         extra_repos: None,
         install_to_steam_root: true,
         steam_dll_names: &["dwmapi.dll", "xinput1_4.dll", "OpenSteamTool.dll"],
@@ -160,6 +205,9 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_repo: "DepotDownloaderMod",
         preferred_asset: Some("DepotDownloaderMod-win-x64.zip"),
         preferred_asset_contains: None,
+        linux_github_owner: Some("eisora08"),
+        linux_github_repo: Some("depotdownloadermod-linux"),
+        linux_preferred_asset: None,
         extra_repos: None,
         install_to_steam_root: false,
         steam_dll_names: &[],
@@ -173,9 +221,28 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_repo: "CloudRedirect",
         preferred_asset: Some("cloud_redirect.dll"),
         preferred_asset_contains: None,
+        linux_github_owner: None,
+        linux_github_repo: None,
+        linux_preferred_asset: None,
         extra_repos: None,
         install_to_steam_root: true,
         steam_dll_names: &["cloud_redirect.dll"],
+        variants: None,
+    },
+    ToolDef {
+        id: "slssteam",
+        name: "SLS Steam",
+        description: "Steam client modification for Linux — enables playing unowned games via LD_AUDIT injection",
+        github_owner: "AceSLS",
+        github_repo: "SLSsteam",
+        preferred_asset: Some("SLSsteam-Any.7z"),
+        preferred_asset_contains: None,
+        linux_github_owner: None,
+        linux_github_repo: None,
+        linux_preferred_asset: None,
+        extra_repos: None,
+        install_to_steam_root: false,
+        steam_dll_names: &[],
         variants: None,
     },
 ];
@@ -653,15 +720,8 @@ pub async fn list_thirdparty_tools(
         let mut installed_version = state.tools.get(def.id).map(|e| e.version.clone());
 
         // Resolve variant for version check
-        let (gh_owner, gh_repo, pref_asset, pref_asset_contains) =
-            if let Some(variant_id) = state.tools.get(def.id).and_then(|e| e.variant.as_deref()) {
-                def.variants
-                    .and_then(|vs| vs.iter().find(|v| v.id == variant_id))
-                    .map(|v| (v.github_owner, v.github_repo, v.preferred_asset, v.preferred_asset_contains))
-                    .unwrap_or((def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains))
-            } else {
-                (def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
-            };
+        let variant_id = state.tools.get(def.id).and_then(|e| e.variant.as_deref());
+        let (gh_owner, gh_repo, pref_asset, pref_asset_contains) = def.resolve_github(variant_id);
 
         let latest_version =
             get_github_release_tag(&client, gh_owner, gh_repo, pref_asset, pref_asset_contains)
@@ -747,20 +807,9 @@ pub async fn install_thirdparty_tool(
 
     // Resolve variant: use selected variant's GitHub info if available
     let state = load_state(&app_handle);
-    let resolved = if let Some(variant_id) = state.tools.get(def.id).and_then(|e| e.variant.as_deref()) {
-        def.variants
-            .and_then(|vs| vs.iter().find(|v| v.id == variant_id))
-            .map(|v| (v.github_owner, v.github_repo, v.preferred_asset, v.preferred_asset_contains))
-    } else {
-        None
-    };
-    let (gh_owner, gh_repo, pref_asset, pref_asset_contains) = resolved.unwrap_or((
-        def.github_owner,
-        def.github_repo,
-        def.preferred_asset,
-        def.preferred_asset_contains,
-    ));
+    let variant_id = state.tools.get(def.id).and_then(|e| e.variant.as_deref()).map(|s| s.to_string());
     drop(state);
+    let (gh_owner, gh_repo, pref_asset, pref_asset_contains) = def.resolve_github(variant_id.as_deref());
 
     let target_dir = thirdparty_dir(&app_handle)?.join(def.id);
 
@@ -885,6 +934,23 @@ pub async fn install_thirdparty_tool(
         let effective_src = flatten_extracted_dir(&extract_dir).unwrap_or(extract_dir);
         all_installed = copy_dir_recursive(&effective_src, &target_dir)
             .map_err(|e| format!("Failed to copy files: {e}"))?;
+    }
+
+    // On Linux, chmod +x all files to ensure executables work
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(entries) = std::fs::read_dir(&target_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let _ = std::fs::set_permissions(
+                        &path,
+                        std::fs::Permissions::from_mode(0o755),
+                    );
+                }
+            }
+        }
     }
 
     // Download extra repos (e.g. gbe_fork_tools for goldberg_fork)

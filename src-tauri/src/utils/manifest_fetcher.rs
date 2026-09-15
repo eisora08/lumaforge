@@ -16,8 +16,8 @@ use crate::utils::manifest_parser;
 // Constants
 // ---------------------------------------------------------------------------
 
-const GITHUB_OWNER: &str = "P-ToyStore";
-const GITHUB_REPO: &str = "SteamManifestCache_Pro";
+const GITHUB_OWNER: &str = "steamtools-games";
+const GITHUB_REPO: &str = "ManifestHub3";
 
 const API_TIMEOUT_SECS: u64 = 30;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 120;
@@ -423,8 +423,8 @@ mod tests {
     #[test]
     fn test_branch_raw_url() {
         let url = branch_raw_url(730, "2555350_12345.manifest");
-        assert!(url.contains("P-ToyStore"));
-        assert!(url.contains("SteamManifestCache_Pro"));
+        assert!(url.contains("steamtools-games"));
+        assert!(url.contains("ManifestHub3"));
         assert!(url.contains("/730/"));
         assert!(url.contains("2555350_12345.manifest"));
     }
